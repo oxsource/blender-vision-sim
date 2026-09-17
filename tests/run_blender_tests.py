@@ -988,12 +988,14 @@ def test_avm_io():
     bpy.ops.opencv_cam.avm_apply_json()
     check("import restored the field", approx(settings.core_w, 240.0, 1e-6))
 
+    height_before = settings.car_height
     settings.io_text = io_mod.dumps({"border": "10x10", "corner": 50,
                                      "inner": "0x0", "car": "262x474"})
     check("apply compact JSON", bpy.ops.opencv_cam.avm_apply_json() == {"FINISHED"})
     check("compact changed the field",
           approx(settings.corner, 50.0, 1e-6) and approx(settings.core_w, 262.0, 1e-6))
-    check("compact left the car alone", approx(settings.car_height, 1.6, 1e-6))
+    check("compact left the car alone",
+          approx(settings.car_height, height_before, 1e-6))
 
     before = io_mod.to_full(settings)
     settings.io_text = '{"car": "not-a-size"}'

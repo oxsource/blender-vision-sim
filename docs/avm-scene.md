@@ -14,7 +14,7 @@
 | B | 参数存储 | **Scene 级** `scene.avm_scene`，面板无需选中对象；面板在 AVM Scene 建立后才显示（§5.2） |
 | C | 3D 视口 | **提供 N 面板侧栏** |
 | D | 黑块实现 | **几何面片**（真实四边形 + 独立材质，非程序化贴图） |
-| E | 车模 | **立方体**，长宽 = `core`（可独立覆盖） |
+| E | 车模 | **程序化迷你巴士**（车身 + 斜挡风 + 车顶 + 车窗 + 4 车轮 + 前后灯），长宽 = `core`，高 ≥ 相机安装高度 |
 | F | 相机内外参 | `K`/`D` 从 minibus 配置取；`location`/`rotation` 由**离线** `points_3d` + PnP 反算一次，固化成内置预设（§6.6） |
 | G | 相机参数 | **每台独立** |
 | H | `core` / 车长来源 | **面板滑杆设置**（不从 GLB 反推） |
@@ -65,7 +65,7 @@
 | # | 元素 | 数量 | 说明 |
 | --- | --- | --- | --- |
 | 1 | 地面 ground | 1 | 大平面，承载车模与标定块 |
-| 2 | 车模 car | 1 | **立方体**占位（长宽 = `core`，高可调） |
+| 2 | 车模 car | 1 | **程序化迷你巴士**（单 mesh、5 个材质槽：车身/玻璃/轮胎/前灯/尾灯），长宽 = `core`，高默认由相机安装高度推出 |
 | 3 | 鱼眼相机 fisheye camera | 4 | front / back / left / right，复用 `opencv_camera` fisheye 模型，**每台独立内外参** |
 | 4 | 标定布 / 标定块 cloth=block | 4 | **规格相同的纯黑方块**（边长 `corner`），放在车四周四对角，位置由场地方程决定 |
 
@@ -163,7 +163,7 @@ hy     = cOutY  + borderH/100 # 场地半长
 | --- | --- |
 | 地面 | **−2 mm**（`GROUND_DROP`）：渲染用的地面略低于标称平面，标定块与标定几何仍在 `z≈0`，两者不共面、不会闪烁 |
 | 标定块（= 布） | `block_lift`（默认 +1 mm，再叠在标称平面之上） |
-| 车模 | `[0, carH]`，`carH` 默认 1.6 m |
+| 车模 | `[0, carH]`，`carH` 默认 **2.88 m**（= 最高相机 z + 0.05，刚好把 4 台相机装在车身上） |
 | 相机 | 由内置预设给出（minibus 前相机 z ≈ 2.69 m） |
 
 ---
@@ -188,7 +188,7 @@ hy     = cOutY  + borderH/100 # 场地半长
 | | `inner_w` / `inner_h` | 20 / 80 cm | 0–200 | `inner`（车缘到块内沿） |
 | | `core_w` / `core_h` | 240 / 480 cm | 100–500 / 100–800 | `car`（= core，**滑杆设置**，决策 H） |
 | 车辆 | `car_length` / `car_width` | 跟随 `core_h` / `core_w` | 可覆盖 | HTML 的 `car ≡ core` |
-| | `car_height` | 1.60 m | 0.2–4.0 | —（HTML 无高度） |
+| | `car_height` | 2.88 m | 0.05–10.0 | —（HTML 无高度；载入预设时按 `max(相机 z) + 0.05` 推导） |
 | | `car_clearance` | 0.00 m | 0–0.5 | — |
 | 地面 | `ground_w` / `ground_d` | 30 / 30 m | 2–200 | — |
 | 标定块 | `block_lift` | 0.001 m | 0–0.05 | —（离地抬升） |
@@ -237,7 +237,7 @@ avm_controller.schedule_rebuild(scene)      ← bpy.app.timers，0.2 s 去抖
         ▼
 avm_builder.rebuild(scene, settings)        ← 幂等：只改 mesh/transform，不重建对象
         ├── 地面：改 plane 尺寸
-        ├── 车模：改 cube 尺寸与高度
+        ├── 车模：按长/宽/高重算迷你巴士 mesh（材质槽不变）
         ├── 标定块 ×4：重算 mesh（单个四边形面片）
         └── 相机 ×4：按 `location` / `rotation` 写物体变换（R/t 由插件自动同步）
 ```
@@ -476,7 +476,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | 对象 | 网格 | 材质 |
 | --- | --- | --- |
 | 地面 | 大 plane（1 面，z = −2 mm） | **纯色浅灰**（无网格/贴图：任何印刷网格都会干扰黑块检测，且浅灰与黑块对比度高） |
-| 车模 | cube | 浅灰车身 |
+| 车模 | 单 mesh：车身 + 斜挡风 + 车顶盖 + 侧/后车窗 + 4 车轮 + 前/尾灯 | 5 个材质槽：车身**青绿**（对齐真实 minibus）、玻璃深灰、轮胎近黑、前灯米白、尾灯红 |
 | 标定块 ×4 | **几何面片**（独立四边形，抬高 `block_lift`） | 纯黑（对照 `--cloth-ink`） |
 | 太阳 `AVM_Sun` | — | 随场景创建的 SUN 灯，**默认不投影阴影**（`sun_shadow` 开关）：投影会被黑色区域检测器误判为标定块 |
 
@@ -512,7 +512,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
   "car": "240x480",
   "avm": {
     "units": "m",
-    "car_height": 1.6,
+    "car_height": 2.88,
     "car_clearance": 0.0,
     "ground": "30x30",
     "block_lift": 0.001,

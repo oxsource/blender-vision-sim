@@ -112,8 +112,11 @@ class AVMSceneSettings(bpy.types.PropertyGroup):
                               unit="LENGTH", update=_schedule)
     car_width: FloatProperty(name="Width", default=2.4, min=0.1, max=30.0,
                              unit="LENGTH", update=_schedule)
-    car_height: FloatProperty(name="Height", default=1.6, min=0.05, max=10.0,
-                              unit="LENGTH", update=_schedule)
+    car_height: FloatProperty(
+        name="Height", default=2.9, min=0.05, max=10.0, unit="LENGTH",
+        description="Body height; keep it at or above the camera mount height so "
+                    "the cameras sit on the body",
+        update=_schedule)
     car_clearance: FloatProperty(name="Clearance", default=0.0, min=0.0, max=2.0,
                                  unit="LENGTH", update=_schedule)
 

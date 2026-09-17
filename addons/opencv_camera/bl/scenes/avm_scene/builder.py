@@ -79,6 +79,148 @@ def _replace_mesh(obj: bpy.types.Object, mesh: bpy.types.Mesh) -> None:
 
 
 # ---------------------------------------------------------------------------
+# the car: a small minibus built from primitives (one mesh, several materials)
+# ---------------------------------------------------------------------------
+#: material slot indices of the car mesh
+CAR_BODY, CAR_GLASS, CAR_TIRE, CAR_HEAD, CAR_TAIL = range(5)
+
+
+def _add_box(bm, x0, x1, y0, y1, z0, z1, material: int) -> None:
+    verts = [bm.verts.new(position) for position in (
+        (x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0),
+        (x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1))]
+    for face in ((0, 1, 2, 3), (4, 5, 6, 7), (0, 1, 5, 4),
+                 (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)):
+        bm.faces.new([verts[i] for i in face]).material_index = material
+
+
+def _add_quad(bm, p0, p1, p2, p3, material: int) -> None:
+    verts = [bm.verts.new(position) for position in (p0, p1, p2, p3)]
+    bm.faces.new(verts).material_index = material
+
+
+def _add_prism(bm, bottom, top, material: int) -> None:
+    """A closed solid from two matching rings of four points (bottom, top)."""
+    lower = [bm.verts.new(position) for position in bottom]
+    upper = [bm.verts.new(position) for position in top]
+    bm.faces.new(lower).material_index = material
+    bm.faces.new(upper).material_index = material
+    for index in range(4):
+        nxt = (index + 1) % 4
+        bm.faces.new((lower[index], lower[nxt], upper[nxt], upper[index])).material_index = material
+
+
+def _add_wheel(bm, centre_x: float, centre_y: float, radius: float,
+               half_width: float, segments: int, material: int) -> None:
+    """A cylinder whose axis runs along X (the wheel axle)."""
+    rings = []
+    for side in (-half_width, half_width):
+        rings.append([
+            bm.verts.new((centre_x + side,
+                          centre_y + radius * math.cos(2.0 * math.pi * i / segments),
+                          radius + radius * math.sin(2.0 * math.pi * i / segments)))
+            for i in range(segments)
+        ])
+    inner, outer = rings
+    for i in range(segments):
+        nxt = (i + 1) % segments
+        bm.faces.new((inner[i], inner[nxt], outer[nxt], outer[i])).material_index = material
+    bm.faces.new(list(reversed(inner))).material_index = material
+    bm.faces.new(outer).material_index = material
+
+
+def _minibus_mesh(name: str, length: float, width: float, height: float) -> bpy.types.Mesh:
+    """A rough minibus silhouette: body, raked windshield, roof, windows, wheels.
+
+    Everything is generated at real size with the origin on the ground under the
+    car centre, ``+Y`` = front, so the object scale stays 1.  The wheels reach
+    ``z = 0`` and stick out of the body sides; the front is readable from the
+    windshield rake, the roof cap and the head/tail lights.
+    """
+    mesh = bpy.data.meshes.new(name)
+    bm = bmesh.new()
+
+    length = max(1.0, float(length))
+    width = max(0.5, float(width))
+    height = max(0.5, float(height))
+
+    wheel_radius = min(0.50, max(0.28, height * 0.16))
+    floor = wheel_radius * 0.7
+    beltline = floor + (height - floor) * 0.55
+
+    # lower body (full length) and the cabin above the beltline
+    _add_box(bm, -width / 2, width / 2, -length / 2, length / 2, floor, beltline, CAR_BODY)
+
+    cabin_half = width * 0.47
+    cabin_front = length * 0.46
+    cabin_back = -length * 0.47
+    rake = min(0.45, length * 0.09)
+    rear_rake = 0.12
+    bottom = [(-cabin_half, cabin_back, beltline), (cabin_half, cabin_back, beltline),
+              (cabin_half, cabin_front, beltline), (-cabin_half, cabin_front, beltline)]
+    top = [(-cabin_half, cabin_back + rear_rake, height),
+           (cabin_half, cabin_back + rear_rake, height),
+           (cabin_half, cabin_front - rake, height),
+           (-cabin_half, cabin_front - rake, height)]
+    _add_prism(bm, bottom, top, CAR_BODY)
+
+    # roof cap, slightly proud of the cabin so the silhouette reads as a bus
+    _add_box(bm, -width * 0.48, width * 0.48,
+             -length * 0.46, length * 0.44, height, height + 0.06, CAR_BODY)
+
+    # windshield: on the raked front plane, pushed out along its normal
+    rise = height - beltline
+    normal = math.hypot(rise, rake) or 1.0
+    offset_y, offset_z = rise / normal * 0.015, rake / normal * 0.015
+    glass_half = cabin_half - 0.07
+    _add_quad(bm,
+              (-glass_half, cabin_front + offset_y, beltline + offset_z),
+              (glass_half, cabin_front + offset_y, beltline + offset_z),
+              (glass_half, cabin_front - rake + offset_y, height + offset_z),
+              (-glass_half, cabin_front - rake + offset_y, height + offset_z), CAR_GLASS)
+
+    # side windows, one quad per side (just outside the cabin wall)
+    for side in (-1.0, 1.0):
+        x = side * (cabin_half + 0.015)
+        y0, y1 = cabin_back + 0.40, cabin_front - 0.50
+        z0, z1 = beltline + 0.16, height - 0.14
+        points = [(x, y0, z0), (x, y1, z0), (x, y1, z1), (x, y0, z1)]
+        _add_quad(bm, *(points if side > 0 else list(reversed(points))), CAR_GLASS)
+
+    # rear window, on the raked back plane
+    _add_quad(bm,
+              (-glass_half, cabin_back - 0.015, beltline + 0.20),
+              (glass_half, cabin_back - 0.015, beltline + 0.20),
+              (glass_half, cabin_back + rear_rake - 0.015, height - 0.14),
+              (-glass_half, cabin_back + rear_rake - 0.015, height - 0.14), CAR_GLASS)
+
+    # head and tail lights
+    lamp_half = width * 0.13
+    for side in (-1.0, 1.0):
+        centre = side * width * 0.30
+        _add_box(bm, centre - lamp_half, centre + lamp_half,
+                 length / 2, length / 2 + 0.02,
+                 floor + height * 0.16, floor + height * 0.16 + 0.18, CAR_HEAD)
+        _add_box(bm, centre - lamp_half, centre + lamp_half,
+                 -length / 2 - 0.02, -length / 2,
+                 floor + height * 0.30, floor + height * 0.30 + 0.30, CAR_TAIL)
+
+    # wheels: bottoms on the ground, outer faces proud of the body sides
+    wheelbase = length * 0.62
+    wheel_x = width / 2 - 0.02
+    for side in (-1.0, 1.0):
+        for front in (-1.0, 1.0):
+            _add_wheel(bm, side * wheel_x, front * wheelbase / 2,
+                       wheel_radius, 0.13, 16, CAR_TIRE)
+
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
+    return mesh
+
+
+# ---------------------------------------------------------------------------
 # materials
 # ---------------------------------------------------------------------------
 def _principled(name: str, color, roughness: float = 0.7) -> bpy.types.Material:
@@ -103,6 +245,30 @@ def _principled(name: str, color, roughness: float = 0.7) -> bpy.types.Material:
 def _assign(obj: bpy.types.Object, material: bpy.types.Material) -> None:
     obj.data.materials.clear()
     obj.data.materials.append(material)
+
+
+def _assign_many(obj: bpy.types.Object, materials) -> None:
+    """Set the material slots in order (face ``material_index`` refers to these).
+
+    Note: ``mesh.materials.clear()`` clamps every polygon's ``material_index`` to
+    0, so this must never run on a mesh that already carries indices.
+    """
+    obj.data.materials.clear()
+    for material in materials:
+        obj.data.materials.append(material)
+
+
+def _assign_mesh(obj: bpy.types.Object, mesh: bpy.types.Mesh, materials) -> None:
+    """Put ``mesh`` on ``obj`` with its material slots.
+
+    The slots are attached to the *mesh* before it becomes the object's data:
+    clearing the slots of a mesh that already has per-face ``material_index``
+    values would clamp them all to 0 (which silently dropped the car's glass,
+    tires and lights).
+    """
+    for material in materials:
+        mesh.materials.append(material)
+    _replace_mesh(obj, mesh)
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +408,6 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
     # the ground is a plain light grey: any printed grid would be picked up by
     # the black-region corner detector, and black blocks need contrast
     ground_material = _principled("AVM_Ground_Mat", (0.62, 0.62, 0.60, 1.0), 0.9)
-    car_material = _principled("AVM_Car_Mat", (0.78, 0.79, 0.80, 1.0), 0.5)
     block_material = _principled("AVM_Block_Mat", (0.02, 0.02, 0.02, 1.0), 0.9)
 
     # ground ---------------------------------------------------------------
@@ -259,10 +424,16 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
     car_length, car_width = settings.car_size()
     car = bpy.data.objects.get(CAR_NAME)
     if car is None:
-        car = _new_mesh_object(CAR_NAME, _box_mesh("AVM_Car", 1.0, 1.0, 1.0), target)
-    _replace_mesh(car, _box_mesh("AVM_Car", car_width, car_length, settings.car_height))
+        car = _new_mesh_object(CAR_NAME, _quad_mesh("AVM_Car", 1.0, 1.0), target)
+    car_mesh = _minibus_mesh("AVM_Car", car_length, car_width, settings.car_height)
+    _assign_mesh(car, car_mesh, (
+        _principled("AVM_Car_Mat", (0.16, 0.42, 0.37, 1.0), 0.45),       # teal body
+        _principled("AVM_Car_Glass_Mat", (0.06, 0.10, 0.11, 1.0), 0.15),  # glass
+        _principled("AVM_Car_Tire_Mat", (0.04, 0.04, 0.04, 1.0), 0.85),   # tires
+        _principled("AVM_Car_Head_Mat", (0.95, 0.95, 0.85, 1.0), 0.2),    # head lights
+        _principled("AVM_Car_Tail_Mat", (0.55, 0.06, 0.05, 1.0), 0.3),    # tail lights
+    ))
     car.location = (0.0, 0.0, settings.car_clearance)
-    _assign(car, car_material)
     _parent(car, root)
     car.hide_render = not settings.show_car
 

@@ -71,11 +71,17 @@ def load_preset_into(settings, preset) -> None:
     set_field(settings, avm_layout.field_from_preset(preset))
     settings.car_follow_core = True
 
+    records = avm_layout.cameras_from_preset(preset)
     settings.cameras.clear()
-    for record in avm_layout.cameras_from_preset(preset):
+    for record in records:
         entry = settings.cameras.add()
         entry.name = record["name"]
         entry.enable = record["enable"]
         entry.location = record["location"]
         entry.rotation = record["rotation"]
     settings.active_camera = "front"
+
+    # the body has to be tall enough for the cameras to sit on it
+    mount_heights = [record["location"][2] for record in records]
+    if mount_heights:
+        settings.car_height = round(max(mount_heights) + 0.05, 2)
