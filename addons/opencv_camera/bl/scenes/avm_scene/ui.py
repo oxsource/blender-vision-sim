@@ -27,15 +27,17 @@ def _overview(layout, settings) -> None:
     block_area = 4.0 * (field.corner * avm_layout.CM_TO_M) ** 2
     box = layout.box()
     box.label(text=f"Field {width:.0f} x {height:.0f} cm", icon="MESH_GRID")
+    box.label(text=f"      {width / 100:.2f} x {height / 100:.2f} m")
     box.label(text=f"Blocks {block_area:.2f} m2  |  revision {settings.revision}")
 
 
 def _field(layout, settings) -> None:
+    """The seven field sliders, in the order of PlaneSceneActivity / the HTML tool."""
     column = layout.column(align=True)
     column.use_property_split = True
     column.label(text="Field (cm)")
-    for name in ("border_w", "border_h", "corner", "inner_w", "inner_h",
-                 "core_w", "core_h"):
+    for name in ("border_w", "border_h", "corner", "core_w", "core_h",
+                 "inner_w", "inner_h"):
         column.prop(settings, name)
 
 
@@ -158,6 +160,8 @@ class OPENCV_CAM_PT_avm_scene_view3d(_AVMPanel, bpy.types.Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = CATEGORY
+    bl_context = ""  # bl_context is a PROPERTIES concept; leave it unset here
+    bl_order = -10
 
     def draw(self, context):
         layout = self.layout
