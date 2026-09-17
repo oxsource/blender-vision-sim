@@ -3,7 +3,8 @@
 > 状态：**设计已按评审意见收敛，待最终确认后实现**。
 > 参考布局：`filament_avm/tools/plane_scene_calib.html`（标定布场地 · 尺寸标定，BEV 俯视）。
 > 权威实现：`mediapipe_avm_calib`（场地方程 / 标定流程 / 配置生成，见 §15）。
-> 相机内外参来源：`filament_avm/configs/vehicle_avm_minibus.json` + `falcon/core/camera/camera_pose.cc`。
+> 默认相机参数来源（**离线反算一次**，§6）：`filament_avm/configs/vehicle_avm_minibus.json`
+> + `falcon/core/camera/camera_pose.cc`。
 
 ## 0. 评审结论（已确认）
 
@@ -14,7 +15,7 @@
 | C | 3D 视口 | **提供 N 面板侧栏** |
 | D | 黑块实现 | **几何面片**（真实四边形 + 独立材质，非程序化贴图） |
 | E | 车模 | **立方体**，长宽 = `core`（可独立覆盖） |
-| F | 相机内外参 | 从 minibus 配置导入 `K`/`D`，并用 `points_3d` + PnP **反算一套默认的相机位置/姿态**（只用于默认值，§6.6） |
+| F | 相机内外参 | `K`/`D` 从 minibus 配置取；`location`/`rotation` 由**离线** `points_3d` + PnP 反算一次，固化成内置预设（§6.6） |
 | G | 相机参数 | **每台独立** |
 | H | `core` / 车长来源 | **面板滑杆设置**（不从 GLB 反推） |
 
@@ -22,13 +23,39 @@
 
 ## 1. 目标与范围
 
-在 VisionSim 中新增 **AVM Scene**：一键生成「环视标定场地」+ 同 HTML 的**尺寸控制器**。
+在 VisionSim 中新增 **AVM Scene**：一键搭出「真实场景的仿真版」——车辆、4 台鱼眼相机、
+4 块标定布摆在真实的位置姿态上，并给出与 HTML 同款的**尺寸/位姿控制器**。
 
-### 1.1 用途（本设计的出发点）
+### 1.1 输入 / 输出契约（本设计的第一原则）
 
-1. **变尺寸仿真评估**：任意调节车辆/场地尺寸，实时看 **4 台鱼眼相机的视野与地面覆盖**，
+**输入**
+
+| # | 输入 | 说明 |
+| --- | --- | --- |
+| 1 | **各部件的摆放位置姿态** | 场地尺寸（border / corner / inner / core）、车辆尺寸、**4 台相机的 `location` / `rotation`** |
+| 2 | **相机内参** | 每台相机的 `K`（fx/fy/cx/cy）、`D`（k1..k4）、输出尺寸 |
+
+**输出**
+
+| # | 输出 | 说明 |
+| --- | --- | --- |
+| 1 | **各摄像头的预览图像** | 4 路鱼眼渲染（`Preview` / F12 / `avm_render_cameras` 落盘 PNG） |
+| 2 | **场景描述导出** | 各元素的大小 / 位置 / 姿态 + 相机内参（§8 参数文件、§16 素材包） |
+
+**明确不涉及**（这些属于外部工具，本场景不做）：
+
+- **位姿解算（PnP）**、外参标定；
+- 角点检测、AVM 拼接 / 鸟瞰变换等 AVM 算法；
+- 相机安装是否合理的最优性求解。
+
+> `filament_avm` 的 `points_3d + PnP` 反算**只在离线做一次**，产物是一套**内置默认参数**
+> （§6），不是场景的运行时功能。
+
+### 1.2 用途
+
+1. **变尺寸仿真评估**：任意调节车辆/场地/相机位姿，实时看 **4 台鱼眼相机的视野与地面覆盖**，
    评估真实场地是否够用（覆盖是否完整、有没有盲区、标定块是否都看得见）。
-2. **无实车时的素材生成**：在仿真环境里输出真实场景所需的**场地参数**与**4 路摄像头照片**，
+2. **无实车时的素材生成**：输出真实场景所需的**场地参数**与**4 路摄像头照片**，
    为 AVM（标定/拼接）提供原始素材，供外部程序做角点检测与反标定。
 
 → 这两条决定了必须补上 **§16 覆盖评估与素材导出**（覆盖足迹 / 盲区 / 可见性矩阵 / 一键出图）。
@@ -45,7 +72,7 @@
 > **标定布就是标定块**：不再有单独的布面平面，4 个黑块即 4 张「布」。
 > `border` 因此不产生几何，只用于**场地范围**（地面网格 / BEV 边界 / `sceneW×sceneH`），与标定无关。
 
-**非目标**：真实车模 GLB、标定角点检测回环、多车/多场地实例。
+**非目标**：真实车模 GLB、位姿解算/标定算法、角点检测、AVM 拼接、多车/多场地实例。
 
 ---
 
@@ -87,7 +114,7 @@ x ∈ {-2.4, -1.4, +1.4, +2.4}      y ∈ {-4.2, -3.2, +3.2, +4.2}
 世界坐标沿用 Blender 约定（Z 向上，车辆朝 **+Y**），原点在车辆中心的地面投影处；
 HTML 的 `(x, y)` 直接映射到 Blender 的 `(X, Y)`，`Z = 0` 为地面。
 
-### 3.1 场地方程（`core/avm_layout.py`，纯 Python）
+### 3.1 场地方程（`core/scenes/avm_layout.py`，纯 Python）
 
 ```text
 coreHx = coreW / 200          # 车辆半宽 [m]
@@ -137,7 +164,7 @@ hy     = cOutY  + borderH/100 # 场地半长
 | 地面 | 0 |
 | 标定块（= 布） | `block_lift`（默认 1 mm，避免与地面 z-fighting） |
 | 车模 | `[0, carH]`，`carH` 默认 1.6 m |
-| 相机 | 由 PnP 解出（minibus 前相机 z ≈ 2.69 m） |
+| 相机 | 由内置预设给出（minibus 前相机 z ≈ 2.69 m） |
 
 ---
 
@@ -181,12 +208,12 @@ AVM PropertyGroup 保存**安装位置与姿态**（Blender 原生表达）与�
 | `enable` | 是否参与渲染 |
 | `location` (3) | 相机在车辆系（= Blender 世界系）中的安装位置 [m] |
 | `rotation` (3) | 安装姿态，XYZ 欧拉角 [度]（Blender 原生，UI 可直接拖） |
-| `use_solved` | 位姿来自「PnP 默认值」还是「用户手动调整」（§6.6） |
 
 > **参数只存位置 + 姿态，不存 OpenCV 的 R / t**。R/t 只是 `opencv_cam.pose` 内部用于
 > 「射线 ↔ 像素」换算的中间量，由既有插件的 `euler ↔ R/t` 同步机制自动维护（§5.1），
 > 不进入本场景的参数模型、也不进导入导出文件（§8）。
-> PnP 反算（§6）只是**生成一套默认的 `location` / `rotation`**，不是运行时依赖。
+> **场景不做位姿解算**（§1.1）：改内参不会移动相机；要恢复默认位姿用 `[恢复默认位姿]`
+> （重读内置预设 §6.4）。
 
 另有一个 `active_camera` 枚举（默认 front）：指定**哪台驱动渲染分辨率**（因为四台的 `output` 会互相争抢
 `scene.render.resolution_*`），其余相机只应用自身内参。
@@ -221,8 +248,8 @@ avm_builder.rebuild(scene, settings)        ← 幂等：只改 mesh/transform�
   写完 `camera.location` / `camera.rotation_euler` 后，R/t 由既有插件的
   `_update_euler` 回调自动同步进 `opencv_cam.pose`（无需本模块自己维护 R/t），
   并套用既有 `_SYNCING` 重入守卫，避免 update 回调成环。
-- **用户手拖相机**（在 3D 视口里移动/旋转）时反向回填 `location` / `rotation`，
-  并把该相机的 `use_solved` 置为关（§6.6）。
+- **用户手拖相机**（在 3D 视口里移动/旋转）时反向回填 `location` / `rotation`
+  （纯参数编辑，不做任何解算）。
 
 ### 5.2 面板
 
@@ -252,8 +279,8 @@ Scene Properties
 │   ├── 标定块：抬升
 │   ├── 相机：active_camera 下拉 + 四台相机条目（enable / 位姿 / [选中该相机]）
 │   ├── 图层：地面 / 标定块 / 车辆 / 相机 开关
-│   └── 动作：[重建] [还原默认] [快速预设 ▾] [从 filament 配置导入…]
-│            [导入参数…] [导出参数…] [生成 JSON] [应用 JSON] [移除 AVM Scene]
+│   └── 动作：[重建] [还原默认] [快速预设 ▾] [覆盖评估] [导入参数…] [导出参数…]
+│            [生成 JSON] [应用 JSON] [移除 AVM Scene]
 ```
 
 **B. 3D Viewport N 面板侧栏（C）**
@@ -303,11 +330,16 @@ N ▸ VisionSim ▸ AVM Scene            （仅在 AVM Scene 存在时出现）
 
 ---
 
-## 6. 相机参数：从 filament_avm minibus 配置反算默认值（F）
+## 6. 默认参数的来源（离线反算一次，产物是内置预设）
 
-### 6.1 复刻的求解流水线（已逐行对照 C++ 源码）
+> **本节不是场景的运行时功能**（§1.1）：场景只接受 `location`/`rotation`/`K`/`D` 作为输入。
+> 这里描述的是**一次性、离线**地把 `filament_avm` 的 minibus 配置反算成一套**内置默认参数**，
+> 供 `Add ▸ VisionSim ▸ AVM Scene` 直接使用。
+
+### 6.1 反算流水线（离线脚本，已逐行对照 C++ 源码）
 
 权威实现：`falcon/core/camera/camera_pose.cc: SolvePnP()` + `config.cc: ImagePoints2D()` + `ba_optimization.cc`。
+本方案用 `scripts/solve_avm_defaults.py`（**开发期脚本，可用 cv2**）复刻它：
 
 ```text
 输入：K (3x3)、D (k1..k4)、points_2d (8x2)、points_3d (8x3, z=0)、ba_opt
@@ -375,20 +407,23 @@ N ▸ VisionSim ▸ AVM Scene            （仅在 AVM Scene 存在时出现）
 
 ### 6.4 实现方式与依赖
 
-| 环节 | 方案 |
-| --- | --- |
-| 解析配置 | `core/avm_calibration.py`，纯 Python（复用现有无依赖 YAML/JSON 解析思路） |
-| fisheye 去畸变 | 复用 `core/camera_model.py` 的反畸变（纯 Python，已有单测） |
-| PnP | **纯 Python** 平面 DLT（8 点 z=0 → 单应 H = K[r1 r2 t] → 分解 R/t）+ Gram-Schmidt 正交化 + 可选 Gauss-Newton 精化 |
-| cy 精化 | 纯 Python 单参数 LM，复刻 `ba_optimization.cc` |
+| 环节 | 位置 | 方案 |
+| --- | --- | --- |
+| 反算脚本 | `scripts/solve_avm_defaults.py`（**开发期，可用 cv2/numpy**） | 解析 `vehicle_avm_*.json` → 去畸变 → cy 精化 → `cv2.solvePnP` → 转成 `location`/`rotation` |
+| 产物 | `addons/opencv_camera/presets/avm_minibus.yaml` | 场地尺寸 + 4 台相机的 `location` / `rotation` / `K` / `D`（**内置默认值**） |
+| 场景运行时 | `core/scenes/avm_layout.py`（纯 Python） | 只做场地方程、`points(camera)`、读预设；**不含 PnP** |
+| 可选：从配置读场地尺寸 | `core/scenes/avm_layout.py` | `points_3d` → `corner` / `cInX` / `cInY` 的纯算术反推（无 PnP） |
 
-**为什么纯 Python 而不是 cv2**：
-1. CI 只跑 `actions/setup-python`（无 numpy/cv2），`tests/test_core.py` 必须零依赖通过；
-2. Blender 自带 numpy 但**不带 cv2**，运行时导入配置不能依赖 cv2；
-3. 符合架构原则「数学与 Blender 解耦，能在 python3 下验证的不放进 bl/」。
+**为什么 PnP 不进 `core` / 不进场景**（§1.1）：
 
-**对照验证**：`tests/test_core.py` 增加一条「与 cv2 对照」用例（**检测到 cv2 才跑，否则 SKIP**），
-断言 PnP 解与 `cv2.solvePnP` 的 R 差 < 0.5°、C 差 < 5 mm。本机（cv2 4.14.0）已验证流水线可行。
+1. **职责**：场景只做「摆放 + 渲染 + 导出」，位姿解算属于外部 AVM 工具；
+2. **依赖**：CI 只跑 `actions/setup-python`（无 numpy/cv2），Blender 也不带 cv2；
+   离线脚本用 cv2 最省事，且反算只需跑一次；
+3. **可复现**：产物是随包分发的 `presets/avm_minibus.yaml`，场景行为与 cv2 版本无关。
+
+**离线脚本的对照验证**：脚本自带校验（与 `camera_pose.cc` 注释里的相机中心比对 < 1 mm，
+见 §6.2），并写成 `tests/test_release_scripts.py` 风格的用例（**无 cv2 则 SKIP**）。
+本机（cv2 4.14.0）已验证流水线可行。
 
 ### 6.5 保真度说明（重要）
 
@@ -404,20 +439,20 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 - 标定块在图像中的落点会有**数十像素**偏差，不能直接当作角点真值；
 - 若将来需要像素级回环，需引入多视图/多位置 bundle adjustment（列为 P7，不在本期）。
 
-### 6.6 PnP 的定位：只用来生成默认参数
+### 6.6 反算的定位：离线一次，产物是内置预设
 
-**反算只发生一次、且只为了给出一套可用的默认值**，之后场景里相机就是普通的
-「位置 + 姿态」：
+**场景里没有位姿解算**（§1.1）。反算只在开发期跑一次，把结果固化成随包分发的默认预设：
 
 | 时机 | 行为 |
 | --- | --- |
-| `Add ▸ VisionSim ▸ AVM Scene` | 读内置的 minibus 默认参数（已含 PnP 解出的 `location`/`rotation`），**不现场 PnP** |
-| `[从 filament 配置导入…]` | 现场跑 §6.1 流水线 → 得到 `location` / `rotation` / `K` / `D` 作为默认值 |
-| 之后用户拖动相机 / 改角度 | 直接改 `location` / `rotation`，`use_solved` 置关，**不再回算 PnP** |
-| 用户改内参且 `use_solved` 开（决议 #10） | 用当前场地重新 PnP，刷新该相机的默认位姿 |
+| 开发期（离线） | `scripts/solve_avm_defaults.py` 跑 §6.1 流水线 → 写 `presets/avm_minibus.yaml` |
+| `Add ▸ VisionSim ▸ AVM Scene` | 读内置预设里的 `location` / `rotation` / `K` / `D` 建场景，**不做任何解算** |
+| 用户拖动相机 / 改角度 | 直接改 `location` / `rotation`（纯参数编辑） |
+| 用户改内参 | **相机不动**（场景不解算；要新默认位姿就重跑离线脚本或导入预设） |
 | 导入/导出参数文件（§8） | 只有 `location` / `rotation` / `K` / `D`，**没有 R / t** |
 
-> 也就是说：R/t 是求解过程的中间量，`location` + `rotation` 才是场景的参数真源。
+> R/t 是**离线脚本内部**的中间量，`location` + `rotation` 才是场景的参数真源。
+> 原决议 #10 的「改内参自动重解」**因本节的收窄而作废**（场景不做解算）。
 
 ---
 
@@ -466,7 +501,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
     "block_lift": 0.001,
     "active_camera": "front",
     "cameras": [
-      { "name": "front", "enable": true, "use_solved": true,
+      { "name": "front", "enable": true,
         "location": [-0.031, 2.467, 2.691],
         "rotation": [20.4, -1.1, 1.7],
         "K": [317.77563818112867, 318.0250964604786, 636.2327868307656, 477.8201435641188],
@@ -474,7 +509,8 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
     ]
   },
   "meta": { "source": "vehicle_avm_minibus.json",
-            "solver": "avm_calibration/planar-pnp", "solved_at": "2026-09-17T00:00:00Z" }
+            "solver": "scripts/solve_avm_defaults.py (offline cv2 PnP)",
+            "solved_at": "2026-09-17T00:00:00Z" }
 }
 ```
 
@@ -510,9 +546,8 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | --- | --- |
 | `opencv_cam.avm_export_params` | 文件对话框导出，`format` 枚举选完整 / 精简 |
 | `opencv_cam.avm_import_params` | 文件对话框导入，自动识别格式 |
-| `opencv_cam.avm_import_config` | 从 `vehicle_avm_*.json` 求解场地 + 相机（§6） |
 | `opencv_cam.avm_export_json` / `avm_apply_json` | 面板文本框的生成 / 应用（无对话框） |
-| `opencv_cam.avm_reset_defaults` | 还原默认参数 |
+| `opencv_cam.avm_reset_defaults` | 还原内置默认参数（重读 `presets/avm_minibus.yaml`，含相机默认位姿） |
 | `opencv_cam.avm_remove_scene` | 移除 AVM Scene（删对象 + 清空 `root` 指针，面板随之隐藏） |
 | `opencv_cam.avm_render_cameras` | **导出 4 路渲染图**（决议 #13）：按各相机自身的 K/D 与输出尺寸渲染到 PNG 目录，供外部程序检测角点 |
 | `opencv_cam.avm_analyze_coverage` | **覆盖评估**（§16）：算 4 台相机的地面足迹、并集/重叠/盲区、标定块可见性矩阵；生成贴地覆盖曲线 |
@@ -523,24 +558,32 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 ## 9. 模块划分与文件清单
 
 放在 `opencv_camera` 插件内（不新建插件）：可直接复用 `camera_factory` / `apply` / `shader`，
-且 Blender 扩展之间没有稳定的跨插件依赖机制。后续如需拆分，再把 `avm_*` 与 `camera_rig` 一起迁出。
+且 Blender 扩展之间没有稳定的跨插件依赖机制。**目录结构见 §17**（场景统一收编到 `core/scenes/` 与 `bl/scenes/`）。
 
 | 文件 | 状态 | 职责 |
 | --- | --- | --- |
-| `core/avm_layout.py` | 新增 | 纯 Python 场地方程、**`points(camera)` 生成契约（§15.2，逐字复刻 `PlaneScenePerfs.Model`）**、4 个标定块矩形、预设、Store JSON 编解码。**禁止 import bpy** |
-| `core/avm_calibration.py` | 新增 | 纯 Python 解析 filament 配置 + fisheye 去畸变 + cy 精化 + 平面 PnP → **默认 `location`/`rotation`**（§6.6） |
-| `core/avm_coverage.py` | 新增 | 纯 Python **地面覆盖足迹**（`ray_from_pixel` + 与 z=0 求交）、并集/重叠/盲区、标定块可见性矩阵（§16） |
-| `bl/avm_properties.py` | 新增 | PropertyGroup（场地/车辆/地面/标定块/相机集合 + `root` 指针）+ update 回调 |
-| `bl/avm_builder.py` | 新增 | 建/重建对象、材质、mesh；创建 `AVM_Root` 并回写 `settings.root`；4 台相机创建、内参与位姿写入；覆盖曲线对象 `AVM_Coverage_*` |
-| `bl/avm_controller.py` | 新增 | 去抖定时器（或并入 builder） |
-| `bl/avm_io.py` | 新增 | 参数序列化 / 反序列化：完整 + 精简格式、JSON/YAML、校验、版本迁移（§8） |
-| `bl/avm_operators.py` | 新增 | `opencv_cam.avm_add_scene` / `avm_rebuild` / `avm_reset` / `avm_remove_scene` / `avm_import_config` / `avm_import_params` / `avm_export_params` / `avm_export_json` / `avm_apply_json` / `avm_render_cameras` / `avm_analyze_coverage` / `avm_export_materials` |
-| `bl/avm_ui.py` | 新增 | Scene 面板 + 3D 视口 N 面板（两者 poll 均为「`root` 存在」，§5.2） |
-| `bl/menus.py` | 改 | `Add ▸ VisionSim ▸ AVM Scene` |
+| `core/scenes/avm_layout.py` | 新增 | 纯 Python 场地方程、**`points(camera)` 生成契约（§15.2，逐字复刻 `PlaneScenePerfs.Model`）**、4 个标定块矩形、预设、Store JSON 编解码。**禁止 import bpy** |
+| `core/scenes/avm_coverage.py` | 新增 | 纯 Python **地面覆盖足迹**（`ray_from_pixel` + 与 z=0 求交）、并集/重叠/盲区、标定块可见性矩阵（§16） |
+| `bl/scenes/__init__.py` | 新增 | 场景注册表 `SCENES` + `register()` / `unregister()` 编排（§17.3） |
+| `bl/scenes/base.py` | 新增 | `SceneDefinition`、`has_scene`、root/集合命名、`ScenePanelMixin`、公共算子模板 |
+| `bl/scenes/debounce.py` | 新增 | 通用去抖定时器（从 `preview.py` 抽出，多场景共用） |
+| `bl/scenes/camera_scene.py` | **迁移** | ← `bl/scene_builder.py`（行为/命名不变，§17.5） |
+| `bl/scenes/avm_scene/properties.py` | 新增 | PropertyGroup（场地/车辆/地面/标定块/相机集合 + `root` 指针）+ update 回调 |
+| `bl/scenes/avm_scene/builder.py` | 新增 | 建/重建对象、材质、mesh；创建 `AVM_Root` 并回写 `settings.root`；4 台相机创建、内参与位姿写入；覆盖曲线对象 `AVM_Coverage_*` |
+| `bl/scenes/avm_scene/controller.py` | 新增 | 去抖重建（复用 `bl/scenes/debounce.py`） |
+| `bl/scenes/avm_scene/io.py` | 新增 | 参数序列化 / 反序列化：完整 + 精简格式、JSON/YAML、校验、版本迁移（§8） |
+| `bl/scenes/avm_scene/coverage.py` | 新增 | 覆盖曲线对象 + 报告（调用 `core/scenes/avm_coverage.py`） |
+| `bl/scenes/avm_scene/operators.py` | 新增 | `opencv_cam.avm_add_scene` / `avm_rebuild` / `avm_reset` / `avm_remove_scene` / `avm_import_params` / `avm_export_params` / `avm_export_json` / `avm_apply_json` / `avm_render_cameras` / `avm_analyze_coverage` / `avm_export_materials` |
+| `bl/scenes/avm_scene/ui.py` | 新增 | Scene 面板 + 3D 视口 N 面板（两者 poll 均为「`root` 存在」，§5.2） |
+| `bl/scene_builder.py` | **兼容转发** | `from .scenes.camera_scene import *`，保留一个版本后删除 |
+| `bl/menus.py` | 改 | 遍历场景注册表生成 `Add ▸ VisionSim` 条目（§17.4） |
 | `bl/icons.py` + `scripts/make_icon.py` | 改 | 新增 `avm_scene` 图标（4 角黑块 + 车辆俯视轮廓） |
-| `__init__.py` | 改 | 注册编排 `avm_properties → avm_operators → avm_ui` |
-| `tests/test_core.py` | 改 | `avm_layout` + `avm_calibration` 单测（含 cv2 对照，可选 SKIP） |
-| `tests/run_blender_tests.py` | 改 | 建场景 / 改参数重建 / 相机内外参 / JSON 往返 |
+| `__init__.py` | 改 | 注册编排加入 `bl.scenes`（相机属性之后、UI 之前） |
+| `scripts/solve_avm_defaults.py` | 新增 | **离线**反算脚本（cv2）：`vehicle_avm_*.json` → `location`/`rotation`/`K`/`D` → 写预设 |
+| `presets/avm_minibus.yaml` | 新增 | 内置默认预设（场地 + 4 台相机位姿/内参），随包分发 |
+| `tests/test_core.py` | 改 | `core.scenes.avm_layout` + `core.scenes.avm_coverage` 单测（零依赖） |
+| `tests/test_release_scripts.py` | 改 | 离线脚本的产物与 `camera_pose.cc` 注释比对（**无 cv2 则 SKIP**） |
+| `tests/run_blender_tests.py` | 改 | 建场景 / 改参数重建 / 相机内外参 / JSON 往返；**场景注册表与菜单条目**（§17.7） |
 | `docs/roadmap.md`、`README.md`、`blender_manifest.toml` | 改 | 状态、说明、version bump（minor） |
 
 ---
@@ -549,7 +592,8 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 
 | 层 | 用例 |
 | --- | --- |
-| `test_core.py` | 场地方程与 HTML 一致；**`points(camera)` 四组输出与 minibus 配置的 `points_3d` 逐点一致（§15.2）**；Store JSON 与 App `Size` 格式互认（`"WxH"`、int cm）；**4 个标定块矩形与 `points(camera)` 的 8 点一致、边长均为 `corner`**；`border` 不影响块位；**参数往返**（完整/精简 × JSON/YAML，导出→导入→再导出逐字节稳定）；`sizeFrom` 容错；精简导入只改场地；版本迁移；minibus 配置解析（4 台相机、K/D、8 点）；**PnP 解与 cv2 对照**（R<0.5°、C<5 mm，无 cv2 则 SKIP）；相机中心与 C++ 注释一致（<1 mm）；**渲染内参用原始 K、PnP 用 K'（§6.1 修正）**；**覆盖足迹**（射线与 z=0 求交、边界闭合、无解时的退化处理）与**可见性矩阵**（标定块是否被各相机覆盖） |
+| `test_core.py` | 场地方程与 HTML 一致；**`points(camera)` 四组输出与 minibus 配置的 `points_3d` 逐点一致（§15.2）**；Store JSON 与 App `Size` 格式互认（`"WxH"`、int cm）；**4 个标定块矩形与 `points(camera)` 的 8 点一致、边长均为 `corner`**；`border` 不影响块位；**参数往返**（完整/精简 × JSON/YAML，导出→导入→再导出逐字节稳定）；`sizeFrom` 容错；精简导入只改场地；版本迁移；**内置预设 `presets/avm_minibus.yaml` 可解析**；**覆盖足迹**（射线与 z=0 求交、边界闭合、无解时的退化处理）与**可见性矩阵**（标定块是否被各相机覆盖） |
+| `test_release_scripts.py` | **离线反算脚本**：跑 `scripts/solve_avm_defaults.py`（cv2），断言解出的相机中心与 `camera_pose.cc` 注释一致（<1 mm）、渲染内参用原始 K、PnP 用 K'（§6.1）；**无 cv2 则 SKIP**（CI 不受影响） |
 | `run_blender_tests.py` | `avm_add_scene` 建出 1 地面 + 1 车 + 4 标定块 + 4 相机且都在 `AVM Scene` 集合、`settings.root` 指向 `AVM_Root`；**面板可见性**：建前 `poll=False`、建后 `poll=True`、删除 `AVM_Root` 后 `poll=False`；改 `core_w` / `corner` 后标定块/相机随之更新；4 台相机是 `CUSTOM` + `opencv_fisheye.osl` 且已编译、内外参各自独立；**参数文件只有 `location`/`rotation`/`K`/`D`（无 R/t）**；**文件导入导出算子**（`avm_export_params` → 改参数 → `avm_import_params` 还原）；**`avm_render_cameras` 按各相机输出尺寸落盘 4 张 PNG**；**`avm_analyze_coverage` 生成 4 条贴地覆盖曲线**、**`avm_export_materials` 产出 5 类文件**；导入失败时不改场景；卸载无残留 |
 | 手测 | 拖滑块实时重建、N 面板显隐、F12 看 4 路鱼眼畸变、图层开关、标定块是否落在预期位置 |
 
@@ -559,13 +603,15 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 
 | 阶段 | 内容 | 验收 |
 | --- | --- | --- |
-| P1 | `core/avm_layout.py` + `core/avm_calibration.py` + `core/avm_coverage.py` + 单测 | `python3 tests/test_core.py` 全绿；**PnP 与 cv2 对照达标**（决议 #12），否则转离线 cv2 + 内嵌预设 |
-| P2 | `avm_properties` + `avm_builder` + `avm_operators` + 菜单/图标：一键建静态场景 | Blender 里 `Add ▸ VisionSim ▸ AVM Scene` 出全部对象，F12 可见；**渲染一张对照标定块落点**（决议 #14） |
+| P0 | **离线反算一次**：`scripts/solve_avm_defaults.py` + `presets/avm_minibus.yaml` | 预设与 `camera_pose.cc` 注释一致（<1 mm）；脚本用例可在无 cv2 时 SKIP |
+| P1 | `core/scenes/avm_layout.py` + `core/scenes/avm_coverage.py` + 单测 | `python3 tests/test_core.py` 全绿（零依赖） |
+| **P1b** | **场景框架收编**（§17）：`bl/scenes/{base,debounce}.py` + 注册表 + `menus.py` 改遍历；**迁移 `scene_builder.py` → `bl/scenes/camera_scene.py`**（含兼容转发） | 注册表列出 `Camera Scene`；菜单条目 = 场景数 + 1；旧测试在新路径下全绿 |
+| P2 | `avm_scene/{properties,builder,operators,ui}.py` + 图标：一键建静态场景 | Blender 里 `Add ▸ VisionSim ▸ AVM Scene` 出全部对象，F12 可见；**渲染一张对照标定块落点**（决议 #14） |
 | P3 | 控制器：update 回调 + 去抖重建 + Scene 面板 + N 面板（`root` 存在才显示） | 拖滑块几何实时更新；删 root 后面板隐藏 |
-| P4 | 预设 / 图层 / **参数导入导出（完整 + 精简、文件 + 文本框）** / 从 filament 配置导入 / **导出 4 路渲染图** | 与 HTML JSON 互认；导出→导入往返稳定；PNG 落盘 |
+| P4 | 预设 / 图层 / **参数导入导出（完整 + 精简、文件 + 文本框）** / **导出 4 路渲染图** | 与 HTML JSON 互认；导出→导入往返稳定；PNG 落盘 |
 | P5 | **覆盖评估与素材导出**（§16）：覆盖曲线 + 可见性矩阵 + `avm_export_materials` | 改尺寸后覆盖/盲区实时更新；一键产出图 + 参数 + 报告 |
-| P6 | 文档、README、roadmap、版本号 | `scripts/run_tests.sh` 全绿 |
-| P7（后续，可选） | 真实 GLB 车模、多视图 bundle adjustment 提升标定精度、BEV 拼图 | 重投影残差下降 |
+| P6 | 文档（含 `docs/architecture.md` 目录树）、README、roadmap、版本号 | `scripts/run_tests.sh` 全绿 |
+| P7（后续，可选） | 真实 GLB 车模、BEV 拼图、外部标定回环对接、**DMS Scene**（走 §17 的框架） | — |
 
 ---
 
@@ -595,14 +641,14 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | 2 | 车长 `core_h` / `core_w` 的来源 | **面板滑杆**（决策 H），不从 GLB 反推；默认 240×480 cm |
 | 3 | 地面是否要程序化网格 | 要（对照 HTML 的「地面网格」图层，便于看尺度） |
 | 4 | 是否需要在 Blender 内直接渲染 4 路拼图 | 本期不做拼图，但**导出 4 路渲染图**（见 #13） |
-| 5 | 默认是否自动跑「从 minibus 配置导入」 | 是（一键建场景即用 minibus 内外参） |
+| 5 | 一键建场景的默认参数 | 读内置预设 `presets/avm_minibus.yaml`（场地 + 4 台相机位姿/内参），**不做解算** |
 | 6 | 参数文件默认格式 | JSON（精确往返）为默认，YAML 作可读备选；两者都支持 |
-| 7 | 完整格式是否内嵌源配置路径 | `meta.source` 记录，便于「重新求解」按钮复用 |
+| 7 | 完整格式是否内嵌源配置路径 | `meta.source` 记录，便于追溯默认值的来源 |
 | 8 | 标定布形态 | **布 = 块**：4 个规格相同的纯黑方块放在车四周四对角（决策 A），无单独布面 |
 | 9 | `core` 与车模的关系 | 车模长宽默认 = `core`（对齐 HTML 的 `car ≡ core`），可独立覆盖；`core` 不影响标定几何 |
-| 10 | 改内参后是否自动重解默认位姿 | **`use_solved` 开关，默认开**：开 = 内参变更时按 §6.1 重算该相机的默认 `location`/`rotation`；关 = 保留用户当前的 `location`/`rotation` |
+| 10 | ~~改内参后是否自动重解位姿~~ | **作废**（§6.6）：场景不做位姿解算（§1.1）；改内参相机不动，`[恢复默认位姿]` 只重读内置预设 |
 | 11 | 纯黑块的可检测性（只有外轮廓） | **本期只渲染**，不做检测；地面浅色、黑块无阴影，P2 目视验证轮廓可辨 |
-| 12 | 纯 Python PnP 精度未实测 | **P1 先与 cv2 对照**；R 差 > 0.5° 或 C 差 > 5 mm 则退化为「离线 cv2 求解 + 内嵌预设」 |
+| 12 | ~~纯 Python PnP 精度~~ | **转为离线**：PnP 只在 `scripts/solve_avm_defaults.py`（cv2）里跑一次，产物是固定预设；**不再是运行时风险** |
 | 13 | 2D 检测回环 | **本场景不需要 2D 点**：只做 `points_3d` 生成；PnP 用配置里已有的 `points_2d`；仿真**导出 4 路图像**后由**外部程序检测对角点**。Blender 内不做检测、不存 `points_2d` |
 | 14 | 相机朝向未做图像级验证 | **P2 渲染一张对照**：检查标定块投影落在 `points_2d` 附近（残差见 §6.5） |
 | 15 | int cm 取整 | **面板/导出 int cm，内部 float m**；导出时取整，避免 `100.0` vs `100` |
@@ -624,7 +670,7 @@ filament_avm:  solvePnP(points_3d, points_2d, K)  →  (R, t)
     world = Blender 车辆系（X 右, Y 前, Z 上）
     camera = OpenCV 相机系（X 右, Y 下, Z 前）
     ⇒ Blender 相机物体矩阵 = core/transform.object_matrix_from_opencv(R, t)   （无需额外 world_matrix）
-    ⇒ 仅在「从 filament 配置导入」时用一次，转成 location + rotation 后 R/t 即丢弃（§6.6）
+    ⇒ 仅在离线脚本 `solve_avm_defaults.py` 里用一次，转成 location + rotation 后 R/t 即丢弃（§6.6）
 ```
 
 minibus 默认参数（车辆系，单位 m / 度；这就是内置默认值，不是运行时输出）：
@@ -684,7 +730,7 @@ left  / right: (-x2,-y2) (-x2,-y1) (-x2, y1) (-x2, y2)
 ```
 
 > 这与 minibus 配置里 front/back/left/right 四组 `points_3d` 完全一致（已核对）。
-> **顺序即 PnP 的 2D↔3D 对应关系**，`core/avm_layout.py` 必须原样实现，不能只给「4 个矩形」。
+> **顺序即 PnP 的 2D↔3D 对应关系**，`core/scenes/avm_layout.py` 必须原样实现，不能只给「4 个矩形」。
 
 ### 15.3 标定流程（参考项目的完整链路）
 
@@ -704,16 +750,16 @@ left  / right: (-x2,-y2) (-x2,-y1) (-x2, y1) (-x2, y2)
 | 步骤 | 本方案 |
 | --- | --- |
 | ① 场地尺寸 | 面板滑杆（决策 H），并可从 HTML/App 的 `plane_scene` Store 导入 |
-| ② `points_3d` | `core/avm_layout.py` 的 `points(camera)` 生成（**唯一的生成物**） |
-| ③ `points_2d` | **本场景不需要**：直接用 minibus 配置里已有的 `points_2d` 做 PnP；**不检测、不存储** |
-| ④ K/D | 从 minibus 配置导入（每台独立） |
-| ⑤ 默认位姿 | 纯 Python PnP（决议 #12）→ 转成 `location`/`rotation` 存进场景（§6.6） |
+| ② `points_3d` | `core/scenes/avm_layout.py` 的 `points(camera)` 生成（**唯一的生成物**，用于导出的 filament 骨架） |
+| ③ `points_2d` | **本场景不需要**：`points_2d` 只在离线反算里用一次（§6），场景内**不检测、不存储** |
+| ④ K/D | 从内置预设导入（每台独立），可在 `CV Intrinsics` 面板编辑 |
+| ⑤ 默认位姿 | **离线**由 `scripts/solve_avm_defaults.py` 反算 → 写进预设（§6.4/§6.6） |
 | ⑥ 渲染 | Cycles 渲染 4 路鱼眼图，`avm_render_cameras` 导出 PNG |
 
 **回环在外部**：导出的 4 路 PNG 交给 `mediapipe_avm_calib` / `filament_avm` 侧做角点检测与反标定，
-Blender 侧不承担检测职责。因此本方案的两个导入方向是：
+Blender 侧**不做解算、不做检测**（§1.1）。因此本方案只保留两个「纯参数」方向：
 
-1. **从 filament config 导入** → 反推 `corner`、`cInX/cInY`（=`core/2+inner`），并用其 `points_2d` 反算默认位姿；
+1. **离线反算**（开发期，§6）→ 从 filament config 反推场地尺寸 + 反算默认位姿 → 固化进内置预设；
 2. **从 `plane_scene` Store 导入**（HTML/App 导出）→ 直接设场地尺寸 → 生成 `points_3d`。
 
 ### 15.4 导入时需要忽略的字段
@@ -721,7 +767,7 @@ Blender 侧不承担检测职责。因此本方案的两个导入方向是：
 `model_scene` / `bev_bound` / `orbit` / `mask_overlay` / `steering_line` / `glb_file` / `ibl_file` /
 `filamat_path` 都是 filament 渲染侧的参数，Blender 场景不使用，导入时应**跳过而不报错**。
 
-### 15.5 可复用的后续能力（P6，可选）
+### 15.5 可复用的后续能力（P7，可选）
 
 - 若将来想在 Blender 内做检测回环，可搬 `FalconNative.corners()` 的检测参数 `Factor`
   （area / x-range / y-range / black_ratio）对渲染图跑同样的黑色区域检测——**本期不做**（决议 #13）。
@@ -789,7 +835,131 @@ P = C + t · d_world                                          # 地面交点
 
 ### 16.5 实现与依赖
 
-- 全部计算放 `core/avm_coverage.py`（纯 Python，复用 `core/camera_model` 的射线/有效域），
+- 全部计算放 `core/scenes/avm_coverage.py`（纯 Python，复用 `core/camera_model` 的射线/有效域），
   因此可在 `python3` 下单测，不需要 Blender；
-- 曲线对象与出图由 `bl/avm_builder.py` / `bl/avm_operators.py` 负责；
+- 曲线对象与出图由 `bl/scenes/avm_scene/builder.py` / `operators.py` 负责；
 - 覆盖评估随尺寸/位姿变化重算（并入 §5.1 的去抖重建流程，或按需点 `[覆盖评估]`）。
+
+---
+
+## 17. Scene 目录结构与多场景扩展
+
+### 17.1 目标
+
+`opencv_camera` 会持续新增「算法场景」（本次 **AVM Scene**，后续 **DMS** 等），
+已有的 **Camera Scene** 也要一并收编。所以把「场景」提升为一等公民：
+
+> **一个场景 = 一个自包含模块 + 一条注册表记录**；新增场景只增文件，不改既有代码。
+
+### 17.2 目录结构
+
+```text
+addons/opencv_camera/
+├── core/                                   # 纯 Python（禁止 import bpy）
+│   ├── camera_model.py / transform.py / calibration_io.py / paths.py / presets.py   （现有，共用）
+│   └── scenes/                             # 场景专属的几何/模型/IO
+│       ├── __init__.py
+│       ├── avm_layout.py                   # 场地方程 + points(camera) + Store JSON（§3/§15.2）
+│       └── avm_coverage.py                 # 覆盖足迹 / 可见性矩阵（§16）
+├── bl/                                     # Blender 集成
+│   ├── properties.py / apply.py / shader.py / preview.py / icons.py /
+│   │   panels_patch.py / ui.py             （现有，相机相关，不动）
+│   ├── menus.py                            # 改为遍历场景注册表（§17.4）
+│   └── scenes/                             # 每个场景一个模块/包
+│       ├── __init__.py                     # 注册表 + register()/unregister() 编排
+│       ├── base.py                         # SceneDefinition / has_scene / root / 公共面板骨架
+│       ├── debounce.py                     # 通用去抖（从 preview.py 抽出复用）
+│       ├── camera_scene.py                 # ← 迁移自 bl/scene_builder.py（行为不变，§17.5）
+│       └── avm_scene/
+│           ├── __init__.py                 # 元数据 + register 编排
+│           ├── properties.py               # 场地/车辆/地面/标定块/相机集合 + root 指针
+│           ├── builder.py                  # 建/重建对象、材质、相机、覆盖曲线
+│           ├── controller.py               # 去抖重建
+│           ├── io.py                       # 参数导入导出（完整/精简）
+│           ├── coverage.py                 # 覆盖曲线对象 + 报告
+│           ├── operators.py                # opencv_cam.avm_*
+│           └── ui.py                       # Scene 面板 + N 面板
+├── presets/
+│   └── avm_minibus.yaml                    # AVM 内置默认参数（§6.4）
+└── icons/
+    ├── camera_scene.png                    # 现有
+    └── avm_scene.png                       # 新增（未来 dms_scene.png ...）
+```
+
+未来新增 DMS：只加 `bl/scenes/dms_scene/`（+ 如需 `core/scenes/dms_*.py`、`icons/dms_scene.png`），
+**其余文件一律不动**。
+
+### 17.3 场景注册表与基类（`bl/scenes/base.py`）
+
+```python
+@dataclass(frozen=True)
+class SceneDefinition:
+    id: str                 # "avm_scene"（snake_case，全局唯一）
+    label: str              # "AVM Scene"（菜单/面板显示名）
+    icon: str               # "avm_scene"（icons/<icon>.png，带内置回退）
+    order: int              # 菜单排序
+    add_operator: str       # "opencv_cam.avm_add_scene"
+    root_name: str          # "AVM_Root"（根空物体）
+    collection_name: str    # "AVM Scene"（集合）
+```
+
+`bl/scenes/__init__.py` 维护 `SCENES: list[SceneDefinition]`，`register()` 依次注册
+各场景的属性/算子/面板，`unregister()` 反序；`menus.py` 遍历它生成菜单。
+
+**基类提供的公共能力**：
+
+| 能力 | 说明 |
+| --- | --- |
+| `has_scene(context, defn)` | 统一的「已建立」判定：root 指针非空且对象仍在（§5.2） |
+| `root_pointer` / `collection` | 统一的根空物体与集合命名/查找 |
+| `ScenePanelMixin` | Scene Properties + 3D 视口 N 面板的公共骨架（poll/标题/根指针/布局辅助） |
+| 公共算子模板 | `rebuild` / `remove_scene` / `reset_defaults`，按 `scene_id` 参数化 |
+| `debounce` | 通用去抖（把 `preview.py` 的 timer 模式抽出来，两个场景共用） |
+
+### 17.4 菜单与图标
+
+`menus.py` 不再硬编码条目：
+
+```text
+Add ▸ VisionSim
+├── Camera                    （现有，四种模型）
+├── Camera Scene              （注册表）
+├── AVM Scene                 （注册表）
+└── DMS Scene ...             （未来，注册表）
+```
+
+每个场景自带图标 `icons/<scene_id>.png`（`scripts/make_icon.py` 生成，无 UI 时回退内置图标）。
+
+### 17.5 Camera Scene 迁移
+
+| 现在 | 迁移后 |
+| --- | --- |
+| `bl/scene_builder.py`（`COLLECTION_NAME = "OpenCV Camera Scene"`） | `bl/scenes/camera_scene.py` |
+| `operators.OPENCV_CAM_OT_add_camera_scene` | 迁到 `bl/scenes/camera_scene.py`（或改用公共 add 模板） |
+| `menus.py` 里硬编码 `Camera Scene` 条目 | 由注册表驱动 |
+
+- **行为与命名保持不变**：集合仍叫 `OpenCV Camera Scene`，对象仍叫 `CheckerCube` /
+  `CheckerGround` / `ColorBlock*` / `KeyLight` / `SunLight`，`prepare_render` / `apply_and_build` 语义不变；
+- `bl/scene_builder.py` 保留为**兼容转发**（`from .scenes.camera_scene import *`）一个版本，
+  避免外部脚本与旧测试立刻失效；后续版本删除。
+
+### 17.6 命名约定
+
+| 项 | 规则 | 例 |
+| --- | --- | --- |
+| 场景 id | `<name>_scene` | `avm_scene` |
+| 集合 | `<Name> Scene` | `AVM Scene` |
+| 根空物体 | `<NAME>_Root` | `AVM_Root` |
+| 场景属性 | `Scene.<id>` | `scene.avm_scene` |
+| 面板 | `OPENCV_CAM_PT_<id>` | `OPENCV_CAM_PT_avm_scene` |
+| 算子 | `opencv_cam.<id>_<action>` | `opencv_cam.avm_add_scene` |
+| 图标 | `icons/<id>.png` | `icons/avm_scene.png` |
+| 核心模块 | `core/scenes/<name>_*.py` | `core/scenes/avm_layout.py` |
+
+### 17.7 测试与文档影响
+
+- `tests/run_blender_tests.py`：`from opencv_camera.bl import scene_builder` 改到新路径；
+  断言集合名/对象名不变；新增「注册表列出全部场景」「菜单条目数 = 场景数 + 1」两条用例；
+- `tests/test_core.py`：导入路径改为 `core.scenes.avm_layout` / `core.scenes.avm_coverage`；
+- `docs/architecture.md` 的目录树与 `scripts/make_icon.py` 的图标表同步更新；
+- 迁移作为独立提交（`refactor: collect scenes under bl/scenes`），便于回溯。

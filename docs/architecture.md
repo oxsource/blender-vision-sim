@@ -9,25 +9,33 @@ addons/opencv_camera/
 │   ├── camera_model.py    内参、畸变、正投影与反投影（固定点迭代）
 │   ├── transform.py       OpenCV ↔ Blender 坐标/矩阵/内参换算
 │   ├── calibration_io.py  标定文件读写（含无依赖 YAML 子集解析器）
-│   └── paths.py           包内文件定位（基于 __file__，兼容扩展/legacy 两种安装）
-├── core/
-│   └── presets.py          presets/ 目录的扫描与加载
+│   ├── paths.py           包内文件定位（基于 __file__，兼容扩展/legacy 两种安装）
+│   ├── presets.py         presets/ 目录的扫描与加载
+│   └── scenes/            场景专属的几何/模型/IO（每个场景一个模块，见 §6）
+│       ├── avm_layout.py     AVM 场地方程 + points(camera) + Store JSON
+│       └── avm_coverage.py   AVM 覆盖足迹 / 可见性矩阵
 ├── bl/                  Blender 集成层
 │   ├── properties.py      PropertyGroup / PointerProperty 定义 + Live Apply / 输出尺寸回调
 │   ├── shader.py          OSL Text 数据块安装、编译校验、强制重编译
 │   ├── apply.py           apply_values（快，供 Live Apply）/ apply_settings（含编译）
 │   ├── camera_factory.py  Add Camera 的相机创建（模型 + 预设 + 可选 rig 空物体）
 │   ├── preview.py         预览渲染（按标定宽高比、渲染设置用完即还原）+ 防抖定时器
-│   ├── scene_builder.py   相机场景（棋盘方块/地面/灯光）
 │   ├── selftest.py        渲染自检（隐藏其他对象，跑完还原）
-│   ├── menus.py           Add ▸ VisionSim 子菜单（Camera / Camera Scene）
+│   ├── menus.py           Add ▸ VisionSim 子菜单（Camera + 各场景，遍历场景注册表）
 │   ├── icons.py           图标集载入（每个菜单项一个单色线条 PNG，带内置图标回退）
 │   ├── panels_patch.py    隐藏 Cycles 自动生成的裸参数面板（可开关，卸载时还原）
 │   ├── ui.py              五个顶层面板（bl_order -50..-46 最前）：CV Intrinsics
 │   │                      （模型/内参/畸变/动作/状态）/ CV Extrinsics / CV Presets /
 │   │                      CV Preview / CV Output
-│   ── operators.py       算子：薄壳，只做 context 解析、调用 bl 逻辑、report
-└── shaders/opencv_camera.osl   权威着色器源文件
+│   ├── scenes/            场景框架 + 每个场景一个模块/包（见 §6）
+│   │   ├── base.py          SceneDefinition / has_scene / root / ScenePanelMixin
+│   │   ├── debounce.py      通用去抖定时器
+│   │   ├── camera_scene.py  Camera Scene（原 bl/scene_builder.py）
+│   │   └── avm_scene/       AVM Scene（properties/builder/controller/io/coverage/operators/ui）
+│   └── scene_builder.py   兼容转发 → scenes.camera_scene（保留一个版本）
+├── shaders/opencv_camera.osl   权威着色器源文件
+├── presets/avm_minibus.yaml    AVM 内置默认参数（离线反算产物）
+└── icons/                     菜单/场景图标 PNG
 ```
 
 为什么这样分：
@@ -144,7 +152,37 @@ scripts/dev_install.sh
 
 > 扩展模式与 `sys.path` 模式的**代码路径相同但上下文不同**，两种方式都要跑一遍自检：曾经出现过「默认灰色世界 + film_transparent=False 导致自检质心偏到画面中心」的问题，只在扩展模式下暴露。
 
-## 5. 新增插件时的清单
+## 5. 场景扩展（Scene）
+
+「算法场景」（Camera Scene、AVM Scene，以及后续的 DMS 等）统一收编在 `bl/scenes/` 下，
+**一个场景 = 一个自包含模块 + 一条注册表记录**，新增场景只增文件、不改既有代码。
+完整设计见 [`avm-scene.md`](avm-scene.md) §17。
+
+```text
+bl/scenes/
+├── base.py            SceneDefinition / has_scene / root / 集合命名 / ScenePanelMixin
+├── debounce.py        通用去抖定时器（多场景共用）
+├── camera_scene.py    Camera Scene（原 bl/scene_builder.py，行为/命名不变）
+└── avm_scene/         AVM Scene（properties / builder / controller / io / coverage / operators / ui）
+```
+
+约定：
+
+| 项 | 规则 | 例 |
+| --- | --- | --- |
+| 场景 id | `<name>_scene` | `avm_scene` |
+| 集合 / 根空物体 | `<Name> Scene` / `<NAME>_Root` | `AVM Scene` / `AVM_Root` |
+| 场景属性 | `Scene.<id>`（由场景模块自己注册） | `scene.avm_scene` |
+| 面板 / 算子 | `OPENCV_CAM_PT_<id>` / `opencv_cam.<id>_<action>` | `opencv_cam.avm_add_scene` |
+| 核心模块 | `core/scenes/<name>_*.py`（纯 Python） | `core/scenes/avm_layout.py` |
+
+- `menus.py` **遍历注册表**生成 `Add ▸ VisionSim` 条目，不再硬编码；
+- 面板的「是否已建立」统一用 `has_scene()`（根空物体指针非空且对象仍在），
+  未建立时面板不出现；删除根空物体后面板自动隐藏；
+- 纯数学/IO 放 `core/scenes/`（禁止 `import bpy`），可在 `python3` 下单测；
+- `bl/scene_builder.py` 作为兼容转发保留一个版本，之后删除。
+
+## 6. 新增插件时的清单
 
 1. `addons/<id>/blender_manifest.toml`（`id` 与目录名一致，`blender_version_min = "4.5.0"`）；
 2. `core/` + `bl/` 分层，`__init__.py` 只做注册编排；
