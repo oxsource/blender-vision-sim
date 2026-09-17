@@ -16,7 +16,7 @@ shader opencv_camera(
     float fy = 800.0 [[ string help = "Focal length in pixels (y)" ]],
     float cx = -1.0 [[ string help = "Principal point u [px], -1 = image center" ]],
     float cy = -1.0 [[ string help = "Principal point v [px], -1 = image center" ]],
-    int enable_distortion = 1 [[ string widget = "checkbox" ]],
+    int enable_distortion = 1 [[ string widget = "boolean", string help = "Off = ideal pinhole with the same intrinsics" ]],
     float k1 = 0.0,
     float k2 = 0.0,
     float k3 = 0.0,
@@ -26,7 +26,7 @@ shader opencv_camera(
     float p1 = 0.0,
     float p2 = 0.0,
     int undistort_iterations = 10 [[ int min = 1, int max = 50 ]],
-    int allow_off_sensor = 1 [[ string widget = "checkbox" ]],
+    int discard_invalid_rays = 0 [[ string widget = "boolean", string help = "Discard rays where the distortion inversion diverges (black) instead of keeping a best effort direction" ]],
     output point position = 0.0,
     output vector direction = 0.0,
     output color throughput = 1.0)
@@ -70,7 +70,7 @@ shader opencv_camera(
                 break;
             }
         }
-        if (!allow_off_sensor && (fabs(x) > 1.0e2 || fabs(y) > 1.0e2)) {
+        if (discard_invalid_rays && (fabs(x) > 1.0e2 || fabs(y) > 1.0e2)) {
             throughput = color(0.0);
             return;
         }

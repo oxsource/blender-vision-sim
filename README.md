@@ -54,7 +54,8 @@ Blender 中使用：
 2. 选畸变模型（默认 `Fisheye (equidistant)`）、填 fx/fy 与系数（或 `Import Calibration` 导入标定文件，
    仓库自带参考标定 `addons/opencv_camera/presets/avm_minibus_front.yaml`）；
 3. 点 `Apply to Camera` —— 插件会写入对应 OSL 着色器、编译、把参数送进 Cycles；
-4. 点 `Add Test Scene` —— 生成棋盘方块 + 棋盘地面 + 灯光并设好 Cycles，直接 F12 看畸变效果；
+4. `Add ▸ vision-sim ▸ Test Scene` —— 生成棋盘方块 + 棋盘地面 + 灯光并设好 Cycles，直接 F12 看畸变效果
+   （场景里没有相机时会自动先建一台鱼眼相机）；
 5. 点 `Run Self Test` —— 渲染目标并与 OpenCV 模型比对，报出像素误差（参考相机实测 0.03–0.08 px）。
 
 > 自定义相机只在 **Cycles** 下生效，且只能使用 **CPU 或 OptiX** 后端（macOS 无 OptiX ⇒ 只能 CPU）。
@@ -64,7 +65,7 @@ Blender 中使用：
 
 | 方式 | 操作 |
 | --- | --- |
-| **新建相机**（推荐） | `Add  Camera ▸ OpenCV Camera` 的四个条目：`Fisheye (OpenCV equidistant)` / `Brown-Conrady (radtan)` / `Rational polynomial` / `Pinhole (no distortion)`，创建出来即为 Custom 相机、已挂载着色器与参数，可选 `At 3D Cursor` / `Add Rig Empty`（父级空物体，便于多相机/外参） |
+| **新建相机**（推荐） | `Add ▸ vision-sim ▸ Camera  Fisheye (OpenCV equidistant) / Brown-Conrady (radtan) / Rational polynomial / Pinhole (no distortion)`，创建出来即为 Custom 相机、已挂载着色器与参数，可选 `At 3D Cursor` / `Add Rig Empty`（父级空物体，便于多相机/外参）。同一菜单下还有 `Test Scene`（棋盘方块/地面/灯光）与 `Camera Rig (Empty)` |
 | **改造现有相机** | 选中相机 ▸ `Lens ▸ OpenCV Camera ▸ Apply to Camera` |
 | **批量/脚本** | `bpy.ops.opencv_cam.add_camera(model="fisheye", preset="avm_minibus_front", use_rig=True)` |
 
@@ -101,6 +102,26 @@ Blender 中使用：
 - 注意：Blender 4.x 已移除 `UILayout.template_preview` / `Image.preview`，插件无法在面板里内嵌图片，
   因此预览走 Image Editor；3D 视口是否支持自定义相机**尚未实测确认**（视口渲染需要交互式刷新），
   所以暂不作为预览方案（见 `docs/roadmap.md` 待办）。
+
+### 面板结构
+
+```
+Object Data Properties ▸ Lens
+├── OpenCV Camera        状态 / Apply / Preview / Live Apply / Recompile / 是否显示 Cycles 原始参数
+│   ├── Intrinsics       fx fy cx cy、标定分辨率、渲染时生效值、从 Blender 镜头反推
+│   ├── Distortion       模型 + 系数（鱼眼/radtan/rational）、迭代次数、Discard Invalid Rays
+│   ├── Output Image     输出图像尺寸（内参/自定义/跟随场景）+ 是否驱动场景分辨率
+│   └── Preview          预览尺寸/采样/去噪/改参数自动预览/自检
+├── Extrinsics (OpenCV)  外参 R/t、可选自定义世界系（与内参分开成独立块）
+└── Calibration IO       标定文件导入导出、Presets、Reset Defaults
+```
+
+- **内参 / 外参 / IO 分成三个块**，各自独立，不再混在一起。
+- `enable_distortion` 这类开关在**本插件面板里是真复选框**（`distortion.enabled`、`discard_invalid_rays`）。
+- Cycles 依据 OSL 形参自动生成的那串裸参数列表默认**被隐藏**（值以数字显示、且 Cycles 对自定义相机
+  参数不支持复选画法），需要时打开 `Show Cycles Raw Parameters` 即可恢复显示。
+- `Discard Invalid Rays`：反畸变迭代发散时（极强畸变、或像素远超标定域）**丢弃该射线**（画面变黑），
+  而不是保留一个勉强算出来的方向；默认关闭（保留 best effort），需要严格边缘行为时打开。
 
 ### 可视化验证
 

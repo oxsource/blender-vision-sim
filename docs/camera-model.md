@@ -72,8 +72,8 @@ repeat N:
     x = (x_d - dx)·icdist;    y = (y_d - dy)·icdist
 ```
 
-实现要点：固定点迭代（默认 20 次）、`den` 过小或坐标发散时跳出、
-`allow_off_sensor=0` 时把发散射线 `throughput = color(0)` 丢弃。
+实现要点：固定点迭代（默认 20 次）、`den` 过小或坐标发散时跳出；发散时默认保留 best effort 方向，
+当 `discard_invalid_rays=1` 时把该射线 `throughput = color(0)` 丢弃（对应像素渲染为黑）。
 
 鱼眼模型的反解是**牛顿迭代**：
 
@@ -194,6 +194,10 @@ R_wc = R_bᵀ               # camera → world，即 object 旋转
 | 分辨率换算 1920×1080 → 960×540（同比） | fx 按 1/2 缩放 | 1500 → 750.0 |
 | 分辨率宽高比不一致 1920×1080 → 128×128 | 保持像素尺度（裁剪） | fx 1500 不变，主点回到图像中心 |
 | 坏着色器（故意语法错误）后 `ensure_compiled` | 必须失败 | 检出并中止（旧字节码被静默保留） |
+
+补充：Cycles 为自定义相机生成的参数是**数值型 ID 属性**（`widget="boolean"` 只影响存入的值类型，
+4.5 的 `id_properties_ui` 没有复选画法），所以插件把那张裸参数表默认隐藏，改由自己的面板提供
+真正的 `BoolProperty` 复选框（`distortion.enabled` / `discard_invalid_rays`）。
 
 ### 8.1 可视化验证（`Add Test Scene`）
 

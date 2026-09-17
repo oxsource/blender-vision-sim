@@ -17,13 +17,13 @@ SHADER_PARAMS: Dict[str, Tuple[str, ...]] = {
         "fx", "fy", "cx", "cy",
         "enable_distortion",
         "k1", "k2", "k3", "k4", "k5", "k6", "p1", "p2",
-        "undistort_iterations", "allow_off_sensor",
+        "undistort_iterations", "discard_invalid_rays",
     ),
     "fisheye": (
         "fx", "fy", "cx", "cy",
         "enable_distortion",
         "k1", "k2", "k3", "k4",
-        "undistort_iterations", "allow_off_sensor",
+        "undistort_iterations", "discard_invalid_rays",
     ),
 }
 
@@ -130,7 +130,7 @@ def custom_camera_values(settings, intr: camera_model.Intrinsics,
         "k3": float(dist.k3),
         "k4": float(dist.k4),
         "undistort_iterations": int(settings.distortion.iterations),
-        "allow_off_sensor": 1,
+        "discard_invalid_rays": 1 if settings.distortion.discard_invalid_rays else 0,
     }
     if param_group(dist.model) == "poly":
         values.update({
@@ -173,7 +173,13 @@ def apply_values(cam_data, settings, scene=None,
     missing = []
     for name in shader_params(dist.model):
         if name in params:
-            params[name] = values[name]
+            value = values[name]
+            try:  # bool RNA properties (widget = "boolean") want True/False
+                if params.bl_rna.properties[name].type == "BOOLEAN":
+                    value = bool(value)
+            except (KeyError, AttributeError, TypeError):
+                pass
+            params[name] = value
         else:
             missing.append(name)
     if missing:

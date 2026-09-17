@@ -171,7 +171,7 @@ def test_apply_and_compile():
     # Cycles stores the parameters as float32
     check("parameter values transferred",
           approx(params["fx"], 500.0, 1e-4) and approx(params["k1"], -0.2, 1e-6)
-          and int(params["enable_distortion"]) == 1,
+          and bool(params["enable_distortion"]) is True,
           f"fx={params['fx']} k1={params['k1']}")
     return camera, cam_data
 
@@ -240,6 +240,19 @@ def test_fisheye_selftest():
     params = cam_data.cycles_custom
     check("fisheye parameter set", "p1" not in params and "k4" in params,
           f"params: {sorted(params.keys())}")
+    # Cycles stores custom-camera parameters as numeric ID properties: the
+    # "boolean" widget only converts the stored value, it cannot make the raw
+    # Cycles list draw a checkbox (verified: id_properties_ui type stays None).
+    # Our own panels expose real BoolProperties instead.
+    check("cycles stores custom camera params numerically",
+          params["enable_distortion"] in (0, 1, True, False)
+          and params["discard_invalid_rays"] in (0, 1, True, False),
+          f"{params['enable_distortion']!r} / {params['discard_invalid_rays']!r}")
+    check("our panels expose real checkboxes",
+          cam_data.opencv_cam.distortion.bl_rna.properties["enabled"].type == "BOOLEAN"
+          and cam_data.opencv_cam.distortion.bl_rna.properties["discard_invalid_rays"].type == "BOOLEAN")
+    check("shader marks the booleans for the Cycles UI",
+          'widget = "boolean"' in cam_data.custom_shader.as_string())
     check("fisheye coefficients transferred",
           approx(params["k1"], 0.08476733270570755, 1e-6) and approx(params["k4"], 0.009428162434166068, 1e-6))
     result = selftest.run(cam_data, settings, scene, resolution=256, samples=8, tolerance_px=0.3)
@@ -512,11 +525,46 @@ def test_add_camera_operator():
               f"{cam_data.type} {cam_data.custom_shader.name if cam_data.custom_shader else None}")
         if model == "pinhole":
             check("pinhole adds distortion disabled",
-                  int(cam_data.cycles_custom["enable_distortion"]) == 0)
+                  bool(cam_data.cycles_custom["enable_distortion"]) is False)
         if model == "fisheye":
             check("fisheye rig empty", camera.parent is not None and camera.parent.type == "EMPTY")
     check("add_camera set the scene camera", scene.camera is not None)
     check("Add Camera menu entry", hasattr(bpy.types, "VIEW3D_MT_camera_add"))
+
+
+def test_menus_and_raw_params():
+    """Add ▸ vision-sim holds our operators; the Cycles raw list is hidden."""
+    check("vision-sim submenu registered", hasattr(bpy.types, "OPENCV_CAM_MT_vision_sim"))
+    check("camera submenu registered", hasattr(bpy.types, "OPENCV_CAM_MT_camera"))
+    check("add_test_scene poll allows a camera-less scene",
+          hasattr(bpy.types, "OPENCV_CAM_OT_add_test_scene"))
+    check("rig empty operator registered", hasattr(bpy.ops.opencv_cam, "add_rig_empty"))
+
+    scene = setup_scene(resolution=128, samples=4)
+    clear_scene()
+    setup_scene(resolution=128, samples=4)
+    camera, cam_data = make_camera("RawCam")
+    scene.camera = camera
+    bpy.context.view_layer.objects.active = camera
+    from opencv_camera.bl import panels_patch
+    check("raw parameter patch active", panels_patch.is_patched())
+    cam_data.opencv_cam.show_raw_params = False
+    check("raw list hidden by default", panels_patch._hide_for(bpy.context) is True)
+    cam_data.opencv_cam.show_raw_params = True
+    check("raw list can be shown again", panels_patch._hide_for(bpy.context) is False)
+    cam_data.opencv_cam.show_raw_params = False
+
+    # the test scene operator must work from the Add menu (no active camera)
+    clear_scene()
+    setup_scene(resolution=128, samples=4)
+    check("add_test_scene without a camera creates one",
+          bpy.ops.opencv_cam.add_test_scene(distance=4.0, samples=4) == {"FINISHED"})
+    check("test scene camera is a fisheye custom camera",
+          scene.camera is not None and scene.camera.data.type == "CUSTOM"
+          and scene.camera.data.custom_shader.name == "opencv_fisheye.osl")
+    check("rig empty operator",
+          bpy.ops.opencv_cam.add_rig_empty() == {"FINISHED"}
+          and any(o.type == "EMPTY" for o in bpy.data.objects))
 
 
 def test_presets():
@@ -702,6 +750,7 @@ def main():
         test_sync_from_lens,
         test_operator_end_to_end,
         test_add_camera_operator,
+        test_menus_and_raw_params,
         test_presets,
         test_live_apply,
         test_output_resolution,

@@ -468,21 +468,35 @@ class OPENCV_CAM_OT_save_preview(_CameraOperator, bpy.types.Operator, ExportHelp
         return {"FINISHED"}
 
 
-class OPENCV_CAM_OT_add_test_scene(_CameraOperator, bpy.types.Operator):
+class OPENCV_CAM_OT_add_test_scene(bpy.types.Operator):
+    """Create a checker cube/ground/lights in front of the camera"""
+
     bl_idname = "opencv_cam.add_test_scene"
-    bl_label = "Add Test Scene"
+    bl_label = "Test Scene"
     bl_description = (
         "Create a checker cube, ground grid and lights in front of the camera, "
         "apply the current intrinsics and set up Cycles - then press F12 to look "
-        "at the distortion"
+        "at the distortion. Adds a fisheye camera first when the scene has none"
     )
     bl_options = {"REGISTER", "UNDO"}
 
     distance: FloatProperty(name="Distance", default=4.0, min=0.5, max=100.0)
     samples: IntProperty(name="Samples", default=64, min=1, max=4096)
 
+    @classmethod
+    def poll(cls, context):
+        return getattr(context, "scene", None) is not None
+
     def execute(self, context):
-        obj, cam_data = self.camera(context)
+        obj = _camera_object(context)
+        if obj is None:
+            try:
+                obj, messages = camera_factory.add_camera(context.scene, model="fisheye")
+            except Exception as exc:
+                self.report({"ERROR"}, f"{type(exc).__name__}: {exc}")
+                return {"CANCELLED"}
+            _report_messages(self, messages)
+            self.report({"INFO"}, f"no camera in the scene: added {obj.name} first")
         ok, messages, created = scene_builder.apply_and_build(
             obj, context.scene, samples=self.samples
         )
@@ -494,6 +508,40 @@ class OPENCV_CAM_OT_add_test_scene(_CameraOperator, bpy.types.Operator):
             f"test scene ready ({len(created)} objects, "
             f"{context.scene.render.resolution_x}x{context.scene.render.resolution_y}) - press F12",
         )
+        return {"FINISHED"}
+
+
+class OPENCV_CAM_OT_add_rig_empty(bpy.types.Operator):
+    """Add an empty to use as a camera rig and parent the active camera to it"""
+
+    bl_idname = "opencv_cam.add_rig_empty"
+    bl_label = "Camera Rig (Empty)"
+    bl_description = (
+        "Add an empty at the 3D cursor and parent the active camera to it, handy for "
+        "extrinsics and multi-camera setups"
+    )
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return getattr(context, "scene", None) is not None
+
+    def execute(self, context):
+        scene = context.scene
+        obj = _camera_object(context)
+        name = f"{obj.name}_rig" if obj is not None else "CameraRig"
+        rig = bpy.data.objects.new(name, None)
+        rig.empty_display_type = "PLAIN_AXES"
+        rig.empty_display_size = 0.5
+        rig.location = obj.location if obj is not None else tuple(scene.cursor.location)
+        scene.collection.objects.link(rig)
+        if obj is not None:
+            obj.parent = rig
+            obj.matrix_parent_inverse = rig.matrix_world.inverted()
+        for candidate in scene.objects:
+            candidate.select_set(candidate is rig)
+        bpy.context.view_layer.objects.active = rig
+        self.report({"INFO"}, f"added {rig.name}" + (f", {obj.name} parented to it" if obj else ""))
         return {"FINISHED"}
 
 
@@ -543,6 +591,7 @@ class OPENCV_CAM_OT_selftest(_CameraOperator, bpy.types.Operator):
 _CLASSES = (
     OPENCV_CAM_OT_apply,
     OPENCV_CAM_OT_add_camera,
+    OPENCV_CAM_OT_add_rig_empty,
     OPENCV_CAM_OT_load_preset,
     OPENCV_CAM_OT_reset_defaults,
     OPENCV_CAM_OT_set_render_resolution,
@@ -561,21 +610,11 @@ _CLASSES = (
 )
 
 
-def _menu_add_camera(self, context):
-    """Entry in Add ▸ Camera (Blender does not allow extending Camera.type)."""
-    layout = self.layout
-    layout.separator()
-    for model, (label, _, _) in camera_factory.MODELS.items():
-        layout.operator("opencv_cam.add_camera", text=label, icon="CAMERA_DATA").model = model
-
-
 def register() -> None:
     for cls in _CLASSES:
         bpy.utils.register_class(cls)
-    bpy.types.VIEW3D_MT_camera_add.append(_menu_add_camera)
 
 
 def unregister() -> None:
-    bpy.types.VIEW3D_MT_camera_add.remove(_menu_add_camera)
     for cls in reversed(_CLASSES):
         bpy.utils.unregister_class(cls)

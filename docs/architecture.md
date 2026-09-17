@@ -20,8 +20,11 @@ addons/opencv_camera/
 │   ├── preview.py         预览渲染（按标定宽高比、渲染设置用完即还原）+ 防抖定时器
 │   ├── scene_builder.py   验证场景（棋盘方块/地面/灯光）
 │   ├── selftest.py        渲染自检（隐藏其他对象，跑完还原）
-│   ├── ui.py              Object Data Properties ▸ Lens  OpenCV Camera 面板
-│   └── operators.py       算子：薄壳，只做 context 解析、调用 bl 逻辑、report
+│   ├── menus.py           Add ▸ vision-sim 子菜单（Camera / Test Scene / Rig）
+│   ├── panels_patch.py    隐藏 Cycles 自动生成的裸参数面板（可开关，卸载时还原）
+│   ├── ui.py              Lens 下的面板：OpenCV Camera / Intrinsics / Distortion /
+│   │                      Output Image / Preview / Extrinsics / Calibration IO
+│   ── operators.py       算子：薄壳，只做 context 解析、调用 bl 逻辑、report
 └── shaders/opencv_camera.osl   权威着色器源文件
 ```
 
@@ -42,6 +45,8 @@ addons/opencv_camera/
 | 面板挂载 | `bl_space_type='PROPERTIES'`、`bl_context='data'`、`bl_parent_id='DATA_PT_lens'`（与 Cycles 自带面板一致） |
 | 自定义相机入口 | **不能**扩展 `Camera.type`（C 侧 RNA 枚举）；用 `Add ▸ Camera` 菜单算子创建已配置好的 Custom 相机（`VIEW3D_MT_camera_add.append`） |
 | 属性即时生效 | 属性 `update=` 回调 → `bl/apply.apply_values()`（只写 `cycles_custom`，快）；切换模型时走完整的 `apply_settings()`（要换着色器并重编译） |
+| 插件入口 | 所有入口集中在 `Add ▸ vision-sim`（Camera / Test Scene / Camera Rig）；不额外往 `Add ▸ Camera` 里塞条目（Blender 不允许扩展 `Camera.type`，塞进去也只能建 Custom 相机，容易误导） |
+| 与别的插件共存 | 隐藏 Cycles 裸参数面板用的是**运行时替换 poll**（Python 面板的 poll 每次绘制都会重新查找），卸载时还原；Cycles 之后重新注册面板会导致补丁失效，此时面板会提示 "patch inactive"，功能不受影响 |
 | 预览 | Blender 4.x 无面板内嵌图片 API（`template_preview`/`Image.preview` 已移除）→ 预览渲染后用 `bpy.ops.render.view_show()` 显示在 Image Editor；渲染设置与内参都要还原 |
 | 分辨率所有权 | 输出尺寸由插件管理（`output.*`）并驱动 `scene.render.resolution_*`；面板/算子必须用同一处逻辑（`apply.output_resolution`），不要在别处硬编码分辨率 |
 | 算子 | `bl_idname = "opencv_cam.<action>"`；需要撤销的加 `{'REGISTER','UNDO'}`；文件对话框用 `ImportHelper`/`ExportHelper` |

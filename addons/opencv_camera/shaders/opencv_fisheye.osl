@@ -17,15 +17,14 @@ shader opencv_fisheye(
     float fy = 800.0 [[ string help = "Focal length in pixels (y)" ]],
     float cx = -1.0 [[ string help = "Principal point u [px], -1 = image center" ]],
     float cy = -1.0 [[ string help = "Principal point v [px], -1 = image center" ]],
-    int enable_distortion = 1 [[ string widget = "checkbox",
-                                 string help = "Off = ideal pinhole with the same intrinsics" ]],
+    int enable_distortion = 1 [[ string widget = "boolean", string help = "Off = ideal pinhole with the same intrinsics" ]],
     float k1 = 0.0,
     float k2 = 0.0,
     float k3 = 0.0,
     float k4 = 0.0,
     int undistort_iterations = 20 [[ int min = 1, int max = 100,
                                      string help = "Newton iterations inverting theta_d" ]],
-    int allow_off_sensor = 1 [[ string widget = "checkbox" ]],
+    int discard_invalid_rays = 0 [[ string widget = "boolean", string help = "Discard rays where the distortion inversion diverges (black) instead of keeping a best effort direction" ]],
     output point position = 0.0,
     output vector direction = 0.0,
     output color throughput = 1.0)
@@ -66,7 +65,7 @@ shader opencv_fisheye(
             float step = (t * poly - r_d) / deriv;
             t -= step;
             if (fabs(t) > 1.0e3) {
-                if (!allow_off_sensor) {
+                if (discard_invalid_rays) {
                     throughput = color(0.0);
                     return;
                 }

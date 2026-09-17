@@ -225,6 +225,13 @@ class DistortionSettings(bpy.types.PropertyGroup):
     )
     k5: FloatProperty(name="k5", description="Rational model numerator k5", default=0.0, precision=6)
     k6: FloatProperty(name="k6", description="Rational model numerator k6", default=0.0, precision=6)
+    discard_invalid_rays: BoolProperty(
+        name="Discard Invalid Rays",
+        description="Where the distortion inversion diverges (very strong distortion or a pixel "
+        "far outside the calibrated image), drop the ray instead of keeping a best effort "
+        "direction - dropped pixels render black",
+        default=False,
+    )
     iterations: IntProperty(
         name="Iterations",
         description="Iterations used to invert the distortion "
@@ -399,6 +406,12 @@ class OpenCVCameraSettings(bpy.types.PropertyGroup):
     pose: PointerProperty(type=PoseSettings)
     preview: PointerProperty(type=PreviewSettings)
     output: PointerProperty(type=OutputSettings)
+    show_raw_params: BoolProperty(
+        name="Show Cycles Raw Parameters",
+        description="Show the raw parameter list that Cycles generates from the OSL shader "
+        "parameters (duplicated by the panels below and shown as plain numbers)",
+        default=False,
+    )
     auto_apply: BoolProperty(
         name="Live Apply",
         description="Push parameter changes to the camera immediately. Only applies once the "
