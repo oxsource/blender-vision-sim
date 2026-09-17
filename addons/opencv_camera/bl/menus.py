@@ -4,8 +4,7 @@ Everything the add-on adds lives under :menuselection:`Add ▸ VisionSim`, and e
 entry carries its own line icon (see ``scripts/make_icon.py``):
 
 * ``Camera ▸ ...`` - create a camera configured with an OpenCV lens model
-* ``Test Scene`` - checker cube/ground/lights for a quick distortion check
-* ``Camera Rig`` - empty to parent cameras to (extrinsics / multi-camera)
+* ``Camera Scene`` - checker cube/ground/lights for a quick distortion check
 
 The camera entries are *not* also appended to :menuselection:`Add  Camera`:
 Blender does not let add-ons extend ``Camera.type``, so an entry there could only
@@ -50,8 +49,7 @@ class OPENCV_CAM_MT_vision_sim(bpy.types.Menu):
         layout = self.layout
         layout.menu(MENU_CAMERA_ID, **icons.kwargs("camera", "Camera"))
         layout.separator()
-        icons.operator(layout, "opencv_cam.add_test_scene", "Test Scene", name="test_scene")
-        icons.operator(layout, "opencv_cam.add_rig_empty", "Camera Rig", name="rig")
+        icons.operator(layout, "opencv_cam.add_camera_scene", "Camera Scene", name="camera_scene")
 
 
 def _menu_add(self, context):

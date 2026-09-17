@@ -468,11 +468,11 @@ class OPENCV_CAM_OT_save_preview(_CameraOperator, bpy.types.Operator, ExportHelp
         return {"FINISHED"}
 
 
-class OPENCV_CAM_OT_add_test_scene(bpy.types.Operator):
+class OPENCV_CAM_OT_add_camera_scene(bpy.types.Operator):
     """Create a checker cube/ground/lights in front of the camera"""
 
-    bl_idname = "opencv_cam.add_test_scene"
-    bl_label = "Test Scene"
+    bl_idname = "opencv_cam.add_camera_scene"
+    bl_label = "Camera Scene"
     bl_description = (
         "Create a checker cube, ground grid and lights in front of the camera, "
         "apply the current intrinsics and set up Cycles - then press F12 to look "
@@ -505,43 +505,9 @@ class OPENCV_CAM_OT_add_test_scene(bpy.types.Operator):
             return {"CANCELLED"}
         self.report(
             {"INFO"},
-            f"test scene ready ({len(created)} objects, "
+            f"camera scene ready ({len(created)} objects, "
             f"{context.scene.render.resolution_x}x{context.scene.render.resolution_y}) - press F12",
         )
-        return {"FINISHED"}
-
-
-class OPENCV_CAM_OT_add_rig_empty(bpy.types.Operator):
-    """Add an empty to use as a camera rig and parent the active camera to it"""
-
-    bl_idname = "opencv_cam.add_rig_empty"
-    bl_label = "Camera Rig (Empty)"
-    bl_description = (
-        "Add an empty at the 3D cursor and parent the active camera to it, handy for "
-        "extrinsics and multi-camera setups"
-    )
-    bl_options = {"REGISTER", "UNDO"}
-
-    @classmethod
-    def poll(cls, context):
-        return getattr(context, "scene", None) is not None
-
-    def execute(self, context):
-        scene = context.scene
-        obj = _camera_object(context)
-        name = f"{obj.name}_rig" if obj is not None else "CameraRig"
-        rig = bpy.data.objects.new(name, None)
-        rig.empty_display_type = "PLAIN_AXES"
-        rig.empty_display_size = 0.5
-        rig.location = obj.location if obj is not None else tuple(scene.cursor.location)
-        scene.collection.objects.link(rig)
-        if obj is not None:
-            obj.parent = rig
-            obj.matrix_parent_inverse = rig.matrix_world.inverted()
-        for candidate in scene.objects:
-            candidate.select_set(candidate is rig)
-        bpy.context.view_layer.objects.active = rig
-        self.report({"INFO"}, f"added {rig.name}" + (f", {obj.name} parented to it" if obj else ""))
         return {"FINISHED"}
 
 
@@ -591,7 +557,6 @@ class OPENCV_CAM_OT_selftest(_CameraOperator, bpy.types.Operator):
 _CLASSES = (
     OPENCV_CAM_OT_apply,
     OPENCV_CAM_OT_add_camera,
-    OPENCV_CAM_OT_add_rig_empty,
     OPENCV_CAM_OT_load_preset,
     OPENCV_CAM_OT_reset_defaults,
     OPENCV_CAM_OT_set_render_resolution,
@@ -599,7 +564,7 @@ _CLASSES = (
     OPENCV_CAM_OT_recompile,
     OPENCV_CAM_OT_preview,
     OPENCV_CAM_OT_save_preview,
-    OPENCV_CAM_OT_add_test_scene,
+    OPENCV_CAM_OT_add_camera_scene,
     OPENCV_CAM_OT_install_shader,
     OPENCV_CAM_OT_import_calibration,
     OPENCV_CAM_OT_export_calibration,

@@ -305,8 +305,8 @@ def test_test_scene_builder():
     check("prepare_render uses the calibrated resolution",
           (scene.render.resolution_x, scene.render.resolution_y) == (640, 480),
           f"{scene.render.resolution_x}x{scene.render.resolution_y}")
-    check("operator add_test_scene",
-          bpy.ops.opencv_cam.add_test_scene(distance=4.0, samples=8) == {"FINISHED"})
+    check("operator add_camera_scene",
+          bpy.ops.opencv_cam.add_camera_scene(distance=4.0, samples=8) == {"FINISHED"})
 
 
 def test_builtin_camera_equivalence():
@@ -486,7 +486,7 @@ def test_operator_end_to_end():
     settings.intrinsics.image_height = 128
 
     check("panel classes registered", hasattr(bpy.types, "OPENCV_CAM_PT_main"))
-    check("operator registered", hasattr(bpy.ops.opencv_cam, "apply_settings"))
+    check("operator registered", "apply_settings" in dir(bpy.ops.opencv_cam))
 
     check("operator apply_settings", bpy.ops.opencv_cam.apply_settings() == {"FINISHED"})
     check("operator install_shader", bpy.ops.opencv_cam.install_shader() == {"FINISHED"})
@@ -537,9 +537,9 @@ def test_panel_layout():
     expected = {
         "OPENCV_CAM_PT_main": "CV Intrinsics",
         "OPENCV_CAM_PT_extrinsics": "CV Extrinsics",
-        "OPENCV_CAM_PT_output": "CV Output",
         "OPENCV_CAM_PT_io": "CV Presets",
         "OPENCV_CAM_PT_preview": "CV Preview",
+        "OPENCV_CAM_PT_output": "CV Output",
     }
     for name, label in expected.items():
         panel = getattr(bpy.types, name, None)
@@ -553,6 +553,11 @@ def test_panel_layout():
         check(f"{name} sorts before Blender's panels", panel.bl_order < 0,
               f"bl_order={getattr(panel, 'bl_order', None)}")
     check("no separate CV Camera panel any more", not hasattr(bpy.types, "OPENCV_CAM_PT_camera"))
+    order = {name: getattr(bpy.types, name).bl_order for name in expected}
+    check("panel order: Intrinsics, Extrinsics, Presets, Preview, Output",
+          order["OPENCV_CAM_PT_main"] < order["OPENCV_CAM_PT_extrinsics"]
+          < order["OPENCV_CAM_PT_io"] < order["OPENCV_CAM_PT_preview"]
+          < order["OPENCV_CAM_PT_output"], str(order))
     from opencv_camera.bl import operators as operators_mod
     check("Import/Export labels",
           operators_mod.OPENCV_CAM_OT_import_calibration.bl_label == "Import"
@@ -587,9 +592,10 @@ def test_menus_and_raw_params():
     check("icons loaded into a preview collection",
           all(icons_mod.is_loaded(name) for name in
               ("visionsim", "camera", "fisheye", "brown_conrady", "rational",
-               "pinhole", "test_scene", "rig")),
+               "pinhole", "camera_scene")),
           str(icons_mod.available()))
-    check("icon files ship with the add-on", len(icons_mod.available()) >= 8)
+    check("icon files ship with the add-on", len(icons_mod.available()) == 7,
+          str(icons_mod.available()))
     check("every menu entry has its own icon",
           menus_mod.MODEL_ICONS == {"fisheye": "fisheye", "brown_conrady": "brown_conrady",
                                     "rational": "rational", "pinhole": "pinhole"})
@@ -598,13 +604,14 @@ def test_menus_and_raw_params():
           or icons_mod.kwargs("fisheye").get("icon_value", 0) > 0)
     check("icon falls back to a built-in id without a UI", icons_mod.icon_id() == 0,
           f"icon_id={icons_mod.icon_id()} (background mode)")
-    check("test_scene icon set", icons_mod.is_loaded("test_scene"))
-    check("rig icon set", icons_mod.is_loaded("rig"))
+    check("camera_scene icon set", icons_mod.is_loaded("camera_scene"))
+    check("rig icon dropped", not icons_mod.is_loaded("rig"))
     check("menu label is VisionSim",
           bpy.types.OPENCV_CAM_MT_vision_sim.bl_label == "VisionSim")
-    check("add_test_scene poll allows a camera-less scene",
-          hasattr(bpy.types, "OPENCV_CAM_OT_add_test_scene"))
-    check("rig empty operator registered", hasattr(bpy.ops.opencv_cam, "add_rig_empty"))
+    check("add_camera_scene operator class registered",
+          hasattr(bpy.types, "OPENCV_CAM_OT_add_camera_scene"))
+    check("camera scene operator registered", "add_camera_scene" in dir(bpy.ops.opencv_cam))
+    check("Camera Rig operator removed", "add_rig_empty" not in dir(bpy.ops.opencv_cam))
 
     scene = setup_scene(resolution=128, samples=4)
     clear_scene()
@@ -623,14 +630,19 @@ def test_menus_and_raw_params():
     # the test scene operator must work from the Add menu (no active camera)
     clear_scene()
     setup_scene(resolution=128, samples=4)
-    check("add_test_scene without a camera creates one",
-          bpy.ops.opencv_cam.add_test_scene(distance=4.0, samples=4) == {"FINISHED"})
-    check("test scene camera is a fisheye custom camera",
+    check("add_camera_scene without a camera creates one",
+          bpy.ops.opencv_cam.add_camera_scene(distance=4.0, samples=4) == {"FINISHED"})
+    check("camera scene uses a fisheye custom camera",
           scene.camera is not None and scene.camera.data.type == "CUSTOM"
           and scene.camera.data.custom_shader.name == "opencv_fisheye.osl")
-    check("rig empty operator",
-          bpy.ops.opencv_cam.add_rig_empty() == {"FINISHED"}
-          and any(o.type == "EMPTY" for o in bpy.data.objects))
+    from opencv_camera.bl import scene_builder as sb
+    check("scene collection name", sb.COLLECTION_NAME == "OpenCV Camera Scene", sb.COLLECTION_NAME)
+    names = sorted(o.name for o in bpy.data.collections[sb.COLLECTION_NAME].objects)
+    check("scene elements carry no 'Test' in their names",
+          not any("test" in name.lower() for name in names), str(names))
+    check("scene element names", names == ["CheckerCube", "CheckerGround", "ColorBlock0",
+                                           "ColorBlock1", "ColorBlock2", "ColorBlock3",
+                                           "KeyLight", "SunLight"], str(names))
 
 
 def test_presets():

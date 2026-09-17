@@ -16,8 +16,7 @@ recognisable at menu size:
 ``brown_conrady``square with a barrel-warped grid
 ``rational``     like brown_conrady plus a centre ring (higher order terms)
 ``pinhole``      square with a perfectly straight grid
-``test_scene``   isometric cube (the checker test scene)
-``rig``          three axes (the camera rig empty)
+``camera_scene`` isometric cube (the checker camera scene)
 ===============  ==========================================================
 
 The marks are original; do not ship the OpenCV logo (a trademark of the OpenCV
@@ -149,17 +148,6 @@ def cube_shape() -> Shape:
     return lambda x, y: min(shape(x, y) for shape in shapes)
 
 
-def axes_shape() -> Shape:
-    center = (0.5, 0.62)
-    shapes = [
-        line(center, (0.5, 0.18)),      # up
-        line(center, (0.84, 0.78)),     # right-down
-        line(center, (0.16, 0.78)),     # left-down
-        disc(center, 0.035),
-    ]
-    return lambda x, y: min(shape(x, y) for shape in shapes)
-
-
 # ---------------------------------------------------------------------------
 # the icon set
 # ---------------------------------------------------------------------------
@@ -177,8 +165,7 @@ def build_icons() -> Dict[str, List[Shape]]:
         "rational": [rounded_rect(0.10, 0.10, 0.90, 0.90), warped_grid(0.5, 0.5, 0.26, 3, 0.13),
                      circle((0.5, 0.5), 0.085)],
         "pinhole": [rounded_rect(0.10, 0.10, 0.90, 0.90), warped_grid(0.5, 0.5, 0.26, 3, 0.0)],
-        "test_scene": [cube_shape()],
-        "rig": [axes_shape()],
+        "camera_scene": [cube_shape()],
     }
 
 

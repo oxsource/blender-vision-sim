@@ -8,9 +8,9 @@ sorts *before* Blender's own panels (negative ``bl_order``):
                        calibration size, then Apply / Preview / Live Apply /
                        Recompile and the status box
 * ``CV Extrinsics``  - R/t, world frame
-* ``CV Output``      - the image size the render should produce
 * ``CV Presets``     - calibration files, presets, defaults
 * ``CV Preview``     - preview render settings and tools
+* ``CV Output``      - the image size the render should produce
 """
 
 from __future__ import annotations
@@ -147,7 +147,7 @@ class OPENCV_CAM_PT_extrinsics(_CameraPanel, bpy.types.Panel):
 class OPENCV_CAM_PT_output(_CameraPanel, bpy.types.Panel):
     bl_idname = "OPENCV_CAM_PT_output"
     bl_label = "CV Output"
-    bl_order = BASE_ORDER + 2
+    bl_order = BASE_ORDER + 4
 
     def draw(self, context):
         layout = self.layout
@@ -186,7 +186,7 @@ class OPENCV_CAM_PT_output(_CameraPanel, bpy.types.Panel):
 class OPENCV_CAM_PT_io(_CameraPanel, bpy.types.Panel):
     bl_idname = "OPENCV_CAM_PT_io"
     bl_label = "CV Presets"
-    bl_order = BASE_ORDER + 3
+    bl_order = BASE_ORDER + 2
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -211,7 +211,7 @@ class OPENCV_CAM_PT_io(_CameraPanel, bpy.types.Panel):
 class OPENCV_CAM_PT_preview(_CameraPanel, bpy.types.Panel):
     bl_idname = "OPENCV_CAM_PT_preview"
     bl_label = "CV Preview"
-    bl_order = BASE_ORDER + 4
+    bl_order = BASE_ORDER + 3
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -238,12 +238,13 @@ class OPENCV_CAM_PT_preview(_CameraPanel, bpy.types.Panel):
         column.operator("opencv_cam.self_test", icon="RESTRICT_RENDER_OFF")
 
 
+#: registration order does not matter (bl_order decides), sorted here for reading
 _CLASSES = (
     OPENCV_CAM_PT_main,
     OPENCV_CAM_PT_extrinsics,
-    OPENCV_CAM_PT_output,
     OPENCV_CAM_PT_io,
     OPENCV_CAM_PT_preview,
+    OPENCV_CAM_PT_output,
 )
 
 

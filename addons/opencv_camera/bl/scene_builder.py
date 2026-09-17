@@ -1,7 +1,7 @@
-"""Build a throw-away test scene for eyeballing the projection.
+"""Build a throw-away camera scene for eyeballing the projection.
 
-Creates a checker cube, a ground grid and a light in front of the active camera
-so the distortion is visible without any modelling work.
+Creates a checker cube, a ground grid and lights in front of the active camera so
+the distortion is visible without any modelling work.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from mathutils import Vector
 
 from . import apply as apply_mod
 
-COLLECTION_NAME = "OpenCV Camera Test"
+COLLECTION_NAME = "OpenCV Camera Scene"
 
 
 def _collection(scene: bpy.types.Scene) -> bpy.types.Collection:
@@ -79,17 +79,17 @@ def build(
     # checker cube straight ahead
     bpy.ops.mesh.primitive_cube_add(size=cube_size, location=(0.0, 0.0, 0.0))
     cube = bpy.context.active_object
-    cube.name = "TestCube"
+    cube.name = "CheckerCube"
     cube.matrix_world = matrix @ _local_translation(0.0, 0.0, -distance)
     cube.data.materials.clear()
-    cube.data.materials.append(_checker_material("OpenCVTestCube", 6.0))
+    cube.data.materials.append(_checker_material("CheckerCube", 6.0))
     _link(scene, cube, collection)
     created.append(cube)
 
     # ground grid perpendicular to the camera's up axis
     bpy.ops.mesh.primitive_plane_add(size=distance * 6.0)
     ground = bpy.context.active_object
-    ground.name = "TestGround"
+    ground.name = "CheckerGround"
     ground.matrix_world = (
         matrix
         @ _local_translation(0.0, -ground_offset, -distance)
@@ -97,7 +97,7 @@ def build(
     )
     ground.data.materials.clear()
     ground.data.materials.append(
-        _checker_material("OpenCVTestGround", 8.0, (0.30, 0.31, 0.33, 1.0), (0.72, 0.73, 0.75, 1.0))
+        _checker_material("CheckerGround", 8.0, (0.30, 0.31, 0.33, 1.0), (0.72, 0.73, 0.75, 1.0))
     )
     _link(scene, ground, collection)
     created.append(ground)
@@ -111,10 +111,10 @@ def build(
     )):
         bpy.ops.mesh.primitive_cube_add(size=cube_size * 0.35)
         block = bpy.context.active_object
-        block.name = f"TestBlock{index}"
+        block.name = f"ColorBlock{index}"
         block.matrix_world = matrix @ _local_translation(x * distance * 0.8, y * distance * 0.8, z)
         block.data.materials.clear()
-        material = bpy.data.materials.new(f"OpenCVTestBlock{index}")
+        material = bpy.data.materials.new(f"ColorBlock{index}")
         material.use_nodes = True
         principled = material.node_tree.nodes["Principled BSDF"]
         principled.inputs["Base Color"].default_value = color
@@ -124,17 +124,17 @@ def build(
 
     # headlight style point light at the camera, plus a sun for shape.
     # A sun alone leaves the subjects much too dark for a quick visual check.
-    light_data = bpy.data.lights.new("OpenCVTestLight", type="POINT")
+    light_data = bpy.data.lights.new("KeyLight", type="POINT")
     light_data.energy = 200.0 * (distance / 4.0) ** 2 * math.pi
     light_data.shadow_soft_size = 0.4 * distance / 4.0
-    light = bpy.data.objects.new("OpenCVTestLight", light_data)
+    light = bpy.data.objects.new("KeyLight", light_data)
     light.matrix_world = matrix @ _local_translation(0.0, 0.5, 0.2)
     _link(scene, light, collection)
     created.append(light)
 
-    sun_data = bpy.data.lights.new("OpenCVTestSun", type="SUN")
+    sun_data = bpy.data.lights.new("SunLight", type="SUN")
     sun_data.energy = 3.0
-    sun = bpy.data.objects.new("OpenCVTestSun", sun_data)
+    sun = bpy.data.objects.new("SunLight", sun_data)
     sun.matrix_world = matrix @ _local_rotation(math.radians(20.0), 0.0, math.radians(-35.0))
     _link(scene, sun, collection)
     created.append(sun)

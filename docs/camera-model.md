@@ -199,9 +199,10 @@ R_wc = R_bᵀ               # camera → world，即 object 旋转
 4.5 的 `id_properties_ui` 没有复选画法），所以插件把那张裸参数表默认隐藏，改由自己的面板提供
 真正的 `BoolProperty` 复选框（`distortion.enabled` / `discard_invalid_rays`）。
 
-### 8.1 可视化验证（`Add Test Scene`）
+### 8.1 可视化验证（`Add  VisionSim ▸ Camera Scene`）
 
-一键生成棋盘方块 + 棋盘地面 + 灯光，并把相机内参（默认 = AVM 前相机）应用到 Cycles：
+一键生成棋盘方块 + 棋盘地面 + 灯光（集合 `OpenCV Camera Scene`：`CheckerCube` / `CheckerGround` /
+`ColorBlock0-3` / `KeyLight` / `SunLight`），并把相机内参应用到 Cycles：
 
 | 鱼眼模型（`fisheye`，k1..k4） | 关闭畸变（理想针孔） |
 | --- | --- |

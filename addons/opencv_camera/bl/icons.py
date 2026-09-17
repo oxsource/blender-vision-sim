@@ -27,8 +27,7 @@ FALLBACKS: Dict[str, str] = {
     "brown_conrady": "CAMERA_DATA",
     "rational": "CAMERA_DATA",
     "pinhole": "CAMERA_DATA",
-    "test_scene": "MESH_CUBE",
-    "rig": "EMPTY_AXIS",
+    "camera_scene": "MESH_CUBE",
 }
 
 _collection: Optional[object] = None

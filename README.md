@@ -29,8 +29,7 @@ Blender 视觉算法仿真插件集合：用 Blender/Cycles 生成**与真实相
 | `brown_conrady` | Brown-Conrady 条目 | 方 + 桶形外扩网格 |
 | `rational` | Rational 条目 | 方 + 外扩网格 + 中心环（高阶项） |
 | `pinhole` | Pinhole 条目 | 方 + 完全笔直的网格 |
-| `test_scene` | Test Scene | 等轴测立方体 |
-| `rig` | Camera Rig | 三轴坐标 |
+| `camera_scene` | Camera Scene | 等轴测立方体 |
 
 这些都是**原创标识**（不是 OpenCV 商标本身），想改图案改脚本里的形状定义后重跑：
 
@@ -79,7 +78,7 @@ Blender 中使用：
 2. 选畸变模型（默认 `Fisheye (equidistant)`）、填 fx/fy 与系数（或 `Import Calibration` 导入标定文件，
    仓库自带参考标定 `addons/opencv_camera/presets/default_camera.yaml`）；
 3. 点 `Apply` —— 插件会写入对应 OSL 着色器、编译、把参数送进 Cycles；
-4. `Add ▸ VisionSim ▸ Test Scene` —— 生成棋盘方块 + 棋盘地面 + 灯光并设好 Cycles，直接 F12 看畸变效果
+4. `Add ▸ VisionSim  Camera Scene` —— 生成棋盘方块 + 棋盘地面 + 灯光并设好 Cycles，直接 F12 看畸变效果
    （场景里没有相机时会自动先建一台鱼眼相机）；
 5. 点 `Run Self Test` —— 渲染目标并与 OpenCV 模型比对，报出像素误差（参考相机实测 0.03–0.08 px）。
 
@@ -90,7 +89,7 @@ Blender 中使用：
 
 | 方式 | 操作 |
 | --- | --- |
-| **新建相机**（推荐） | `Add  VisionSim ▸ Camera  Fisheye / Brown-Conrady / Rational / Pinhole`，创建出来即为 Custom 相机、已挂载着色器与参数，可选 `At 3D Cursor` / `Add Rig Empty`（父级空物体，便于多相机/外参）。同一菜单下还有 `Test Scene`（棋盘方块/地面/灯光）与 `Camera Rig` |
+| **新建相机**（推荐） | `Add ▸ VisionSim ▸ Camera ▸ Fisheye / Brown-Conrady / Rational / Pinhole`，创建出来即为 Custom 相机、已挂载着色器与参数，可选 `At 3D Cursor` / `Add Rig Empty`（父级空物体，便于多相机/外参）。同一菜单下还有 `Camera Scene`（棋盘方块/地面/灯光） |
 | **改造现有相机** | 选中相机  `CV Camera ▸ Apply` |
 | **批量/脚本** | `bpy.ops.opencv_cam.add_camera(model="fisheye", preset="default_camera", use_rig=True)` |
 
@@ -142,9 +141,9 @@ Object Data Properties
 │                   标定分辨率 + From Blender Lens、生效值只读框，
 │                   然后才是 [Apply] [Preview] [Live Apply] [Recompile] 与状态框
 ├── CV Extrinsics   R/t、自定义世界系、Apply Pose / Read Pose
-├── CV Output       输出尺寸（标定/自定义/跟随场景）、驱动场景分辨率、Set/From Scene
 ├── CV Presets      标定文件 [Import] / [Export]、Load Preset、Reset Defaults（默认折叠）
 ├── CV Preview      预览尺寸/采样/去噪/自动预览、Save Preview、Self Test（默认折叠）
+├── CV Output       输出尺寸（标定/自定义/跟随场景）、驱动场景分辨率、Set/From Scene
 ── Lens / Camera / Depth of Field ...      （Blender 自带面板排在后面）
 ```
 
@@ -157,7 +156,7 @@ Object Data Properties
 
 ### 可视化验证
 
-`Add Test Scene` 生成的场景（同一套 K，仅切换畸变开关）：
+`Add ▸ VisionSim ▸ Camera Scene` 生成的场景（同一套 K，仅切换畸变开关）：
 
 | 鱼眼（`fisheye`, k1..k4） | 理想针孔（`enable_distortion = 0`） |
 | --- | --- |
