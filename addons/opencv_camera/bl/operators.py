@@ -54,14 +54,41 @@ MODEL_ITEMS = [(key, value[0], "") for key, value in camera_factory.MODELS.items
 
 
 def _preset_items(self, context):
-    """Enum items: bundled presets plus "copy the active camera"."""
-    items = [(presets.CURRENT, "Current Camera Settings",
-              "Copy the intrinsics/distortion of the active camera")]
+    """Enum items: the add-on defaults, the active camera, then bundled presets.
+
+    The first item is what the Add menu uses (no dialog is shown), so it must be
+    the predictable "Add-on Defaults" rather than silently copying whatever camera
+    happens to be active.
+    """
+    items = [
+        (presets.DEFAULTS, "Add-on Defaults", "Use the add-on's default camera values"),
+        (presets.CURRENT, "Current Camera Settings",
+         "Copy the intrinsics/distortion of the active camera"),
+    ]
     for identifier, label in presets.list_presets():
         items.append((identifier, label, f"presets/{identifier}"))
-    if len(items) == 1:
-        items.append(("", "-- no preset files --", ""))
     return items
+
+
+def _apply_defaults(settings) -> None:
+    """Restore the bundled default camera values on ``settings``."""
+    from . import properties as props
+    intrinsics = props.DEFAULT_INTRINSICS
+    coefficients = props.DEFAULT_DISTORTION
+    settings.intrinsics.auto_center = False
+    settings.intrinsics.fx = intrinsics["fx"]
+    settings.intrinsics.fy = intrinsics["fy"]
+    settings.intrinsics.cx = intrinsics["cx"]
+    settings.intrinsics.cy = intrinsics["cy"]
+    settings.intrinsics.image_width = intrinsics["image_width"]
+    settings.intrinsics.image_height = intrinsics["image_height"]
+    settings.intrinsics.scale_to_render = True
+    settings.distortion.model = "fisheye"
+    settings.distortion.enabled = True
+    (settings.distortion.k1, settings.distortion.k2,
+     settings.distortion.k3, settings.distortion.k4) = coefficients
+    settings.distortion.k5 = settings.distortion.k6 = 0.0
+    settings.distortion.p1 = settings.distortion.p2 = 0.0
 
 
 def _report_messages(operator, messages, level="INFO"):
@@ -247,7 +274,8 @@ class OPENCV_CAM_OT_add_camera(bpy.types.Operator):
     model: EnumProperty(name="Model", items=MODEL_ITEMS, default="fisheye")
     preset: EnumProperty(
         name="Preset",
-        description="Start from a bundled calibration or copy the active camera",
+        description="Start from the add-on defaults, a bundled calibration, or copy "
+        "the active camera",
         items=_preset_items,
     )
     use_rig: BoolProperty(
@@ -264,10 +292,12 @@ class OPENCV_CAM_OT_add_camera(bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
         location = tuple(scene.cursor.location) if self.at_cursor else (0.0, 0.0, 0.0)
-        preset = None if self.preset == presets.CURRENT else self.preset
         try:
+            # pass the identifier straight through: add_camera knows DEFAULTS,
+            # CURRENT and the bundled preset files
             camera, messages = camera_factory.add_camera(
-                scene, model=self.model, preset=preset, use_rig=self.use_rig, location=location
+                scene, model=self.model, preset=self.preset,
+                use_rig=self.use_rig, location=location,
             )
         except Exception as exc:
             self.report({"ERROR"}, f"{type(exc).__name__}: {exc}")
@@ -289,8 +319,16 @@ class OPENCV_CAM_OT_load_preset(_CameraOperator, bpy.types.Operator):
         _, cam_data = self.camera(context)
         settings = cam_data.opencv_cam
         if self.preset == presets.CURRENT:
-            self.report({"WARNING"}, "pick a preset file")
+            self.report({"WARNING"}, "pick a preset, or use Reset Defaults")
             return {"CANCELLED"}
+        if self.preset == presets.DEFAULTS:
+            _apply_defaults(settings)
+            ok, messages = apply_mod.apply_settings(cam_data, settings, context.scene)
+            _report_messages(self, messages, "INFO" if ok else "ERROR")
+            if not ok:
+                return {"CANCELLED"}
+            self.report({"INFO"}, "add-on defaults restored")
+            return {"FINISHED"}
         try:
             calibration = presets.load_preset(self.preset)
         except Exception as exc:
@@ -315,22 +353,7 @@ class OPENCV_CAM_OT_reset_defaults(_CameraOperator, bpy.types.Operator):
     def execute(self, context):
         _, cam_data = self.camera(context)
         settings = cam_data.opencv_cam
-        from . import properties as props
-        intrinsics = props.DEFAULT_INTRINSICS
-        coeffs = props.DEFAULT_DISTORTION
-        settings.intrinsics.auto_center = False
-        settings.intrinsics.fx = intrinsics["fx"]
-        settings.intrinsics.fy = intrinsics["fy"]
-        settings.intrinsics.cx = intrinsics["cx"]
-        settings.intrinsics.cy = intrinsics["cy"]
-        settings.intrinsics.image_width = intrinsics["image_width"]
-        settings.intrinsics.image_height = intrinsics["image_height"]
-        settings.intrinsics.scale_to_render = True
-        settings.distortion.model = "fisheye"
-        settings.distortion.enabled = True
-        settings.distortion.k1, settings.distortion.k2, settings.distortion.k3, settings.distortion.k4 = coeffs
-        settings.distortion.k5 = settings.distortion.k6 = 0.0
-        settings.distortion.p1 = settings.distortion.p2 = 0.0
+        _apply_defaults(settings)
         ok, messages = apply_mod.apply_settings(cam_data, settings, context.scene)
         _report_messages(self, messages, "INFO" if ok else "ERROR")
         if not ok:

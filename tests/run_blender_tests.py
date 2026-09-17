@@ -23,7 +23,8 @@ import numpy as np  # noqa: E402
 
 import opencv_camera  # noqa: E402
 from opencv_camera.bl import apply as apply_mod
-from opencv_camera.bl import camera_factory, preview, scene_builder  # noqa: E402
+from opencv_camera.bl import camera_factory, preview, scene_builder
+from opencv_camera.bl.properties import DEFAULT_DISTORTION, DEFAULT_INTRINSICS  # noqa: E402
 from opencv_camera.bl import selftest, shader  # noqa: E402
 from opencv_camera.core import calibration_io, camera_model, presets, transform  # noqa: E402
 
@@ -280,7 +281,7 @@ def test_fisheye_selftest():
     check("poly parameter set", "p1" in cam_data.cycles_custom and approx(cam_data.cycles_custom["k1"], -0.2, 1e-6))
 
 
-def test_test_scene_builder():
+def test_camera_scene_builder():
     scene = setup_scene(resolution=128, samples=4)
     clear_scene()
     setup_scene(resolution=128, samples=4)
@@ -683,6 +684,10 @@ def test_menus_and_raw_params():
     bpy.context.view_layer.objects.active = camera
     from opencv_camera.bl import panels_patch
     check("raw parameter patch active", panels_patch.is_patched())
+    panels_patch.unregister()
+    check("patch reports itself as gone after unregister", not panels_patch.is_patched())
+    panels_patch.register()
+    check("patch reinstalled", panels_patch.is_patched())
     cam_data.opencv_cam.show_raw_params = False
     check("raw list hidden by default", panels_patch._hide_for(bpy.context) is True)
     cam_data.opencv_cam.show_raw_params = True
@@ -707,6 +712,44 @@ def test_menus_and_raw_params():
                                            "KeyLight", "SunLight"], str(names))
 
 
+def test_add_camera_default_preset():
+    """The Add menu path (no preset argument) must use the add-on defaults.
+
+    It must not silently copy whatever camera happens to be active.
+    """
+    scene = setup_scene(resolution=128, samples=4)
+    clear_scene()
+    setup_scene(resolution=128, samples=4)
+    odd, odd_data = make_camera("OddCam")
+    odd_data.opencv_cam.intrinsics.fx = 999.0
+    odd_data.opencv_cam.distortion.k1 = 0.5
+    scene.camera = odd
+    bpy.context.view_layer.objects.active = odd
+    odd.select_set(True)
+
+    check("add_camera without a preset", bpy.ops.opencv_cam.add_camera(model="fisheye") == {"FINISHED"})
+    new = bpy.context.view_layer.objects.active
+    check("menu path uses the add-on defaults",
+          approx(new.data.opencv_cam.intrinsics.fx, DEFAULT_INTRINSICS["fx"], 1e-3)
+          and approx(new.data.opencv_cam.distortion.k1, DEFAULT_DISTORTION[0], 1e-6),
+          f"fx={new.data.opencv_cam.intrinsics.fx:.3f} k1={new.data.opencv_cam.distortion.k1:.5f}")
+    check("menu path camera is ready", new.data.type == "CUSTOM"
+          and len(new.data.custom_bytecode) > 0)
+
+    # explicit "current settings" still copies (make the odd camera active again:
+    # creating a camera selects it, so it would otherwise copy itself)
+    scene.camera = odd
+    bpy.context.view_layer.objects.active = odd
+    for obj in scene.objects:
+        obj.select_set(obj is odd)
+    check("add_camera with the current camera preset",
+          bpy.ops.opencv_cam.add_camera(model="fisheye", preset=presets.CURRENT) == {"FINISHED"})
+    copied = bpy.context.view_layer.objects.active
+    check("current-settings preset copies the active camera",
+          approx(copied.data.opencv_cam.intrinsics.fx, 999.0, 1e-3),
+          f"fx={copied.data.opencv_cam.intrinsics.fx:.3f}")
+
+
 def test_presets():
     names = [identifier for identifier, _ in presets.list_presets()]
     check("bundled presets listed", "default_camera" in names, str(names))
@@ -719,8 +762,12 @@ def test_presets():
     camera, cam_data = make_camera("PresetCam")
     scene.camera = camera
     bpy.context.view_layer.objects.active = camera
+    check("preset list starts with the add-on defaults",
+          presets.DEFAULTS == "__defaults__" and presets.CURRENT == "__current__")
     check("load_preset operator",
           bpy.ops.opencv_cam.load_preset(preset="default_camera") == {"FINISHED"})
+    check("load_preset accepts the defaults entry",
+          bpy.ops.opencv_cam.load_preset(preset=presets.DEFAULTS) == {"FINISHED"})
     check("preset applied to the camera",
           approx(cam_data.opencv_cam.intrinsics.fx, 317.77563818112867, 1e-3)
           and approx(cam_data.cycles_custom["k1"], 0.08476733270570755, 1e-6))
@@ -921,7 +968,7 @@ def main():
         test_selftest,
         test_selftest_with_default_world,
         test_fisheye_selftest,
-        test_test_scene_builder,
+        test_camera_scene_builder,
         test_builtin_camera_equivalence,
         test_shift_equivalence,
         test_resolution_scaling,
@@ -931,6 +978,7 @@ def main():
         test_sync_from_lens,
         test_operator_end_to_end,
         test_add_camera_operator,
+        test_add_camera_default_preset,
         test_panel_layout,
         test_menus_and_raw_params,
         test_presets,

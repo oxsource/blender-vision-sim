@@ -1,4 +1,4 @@
-"""OpenCV Camera - render with OpenCV intrinsics and distortion coefficients.
+"""VisionSim: OpenCV Camera - render with OpenCV intrinsics and distortion coefficients.
 
 A Cycles "Lens Type = Custom" camera backed by an OSL shader that implements the
 OpenCV pinhole model with fisheye (Kannala-Brandt) / Brown-Conrady / rational

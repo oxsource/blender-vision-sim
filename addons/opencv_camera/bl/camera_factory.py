@@ -50,8 +50,9 @@ def add_camera(
 ) -> Tuple[bpy.types.Object, List[str]]:
     """Create and configure a camera; returns ``(object, messages)``.
 
-    ``preset`` may be a bundled preset identifier, ``presets.CURRENT`` (copy the
-    settings of the active camera) or ``None`` (add-on defaults).
+    ``preset`` may be a bundled preset identifier, ``presets.DEFAULTS`` / ``None``
+    (the add-on's default camera values) or ``presets.CURRENT`` (copy the settings
+    of the active camera).
     """
     messages: List[str] = []
     if model not in MODELS:
@@ -70,9 +71,13 @@ def add_camera(
 
     source = None
     active = getattr(scene, "camera", None)
-    if preset == presets.CURRENT and active is not None and active.type == "CAMERA":
+    if preset in (None, presets.DEFAULTS):
+        messages.append("add-on default camera values")
+    elif preset == presets.CURRENT and active is not None and active.type == "CAMERA":
         source = active.data.opencv_cam
-    elif preset:
+    elif preset == presets.CURRENT:
+        messages.append("no camera to copy from: using the add-on defaults")
+    else:
         calibration = presets.load_preset(preset)
         settings.set_from_core(calibration.intrinsics, calibration.distortion)
         settings.distortion.model = distortion_model  # the operator decides the model

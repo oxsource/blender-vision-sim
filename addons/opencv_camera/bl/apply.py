@@ -170,16 +170,12 @@ def apply_values(cam_data, settings, scene=None,
         messages.append(str(exc))
         return False, messages
 
+    # Cycles creates the parameters as numeric ID properties (a bool parameter is
+    # stored as 0/1), so writing the ints from custom_camera_values is enough.
     missing = []
     for name in shader_params(dist.model):
         if name in params:
-            value = values[name]
-            try:  # bool RNA properties (widget = "boolean") want True/False
-                if params.bl_rna.properties[name].type == "BOOLEAN":
-                    value = bool(value)
-            except (KeyError, AttributeError, TypeError):
-                pass
-            params[name] = value
+            params[name] = values[name]
         else:
             missing.append(name)
     if missing:

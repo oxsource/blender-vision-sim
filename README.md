@@ -61,7 +61,7 @@ blender-vision-sim/
 # 1. 链接到 Blender 的 User Default 扩展仓库（默认 4.5，可用 -v 指定版本）
 scripts/dev_install.sh
 
-# 2. 启动 Blender → Preferences ▸ Add-ons，启用 "OpenCV Camera"
+# 2. 启动 Blender → Preferences ▸ Add-ons，启用 "VisionSim: OpenCV Camera"
 #    或使用 Python：
 #    bpy.ops.preferences.addon_enable(module='bl_ext.user_default.opencv_camera')
 
@@ -74,7 +74,7 @@ scripts/run_tests.sh
 
 Blender 中使用：
 
-1. 选中相机对象 ▸ `Object Data Properties ▸ Lens ▸ OpenCV Camera`；
+1. 选中相机对象 ▸ `Object Data Properties ▸ CV Intrinsics`；
 2. 选畸变模型（默认 `Fisheye (equidistant)`）、填 fx/fy 与系数（或 `Import Calibration` 导入标定文件，
    仓库自带参考标定 `addons/opencv_camera/presets/default_camera.yaml`）；
 3. 点 `Apply` —— 插件会写入对应 OSL 着色器、编译、把参数送进 Cycles；
@@ -90,7 +90,7 @@ Blender 中使用：
 | 方式 | 操作 |
 | --- | --- |
 | **新建相机**（推荐） | `Add ▸ VisionSim ▸ Camera ▸ Fisheye / Brown-Conrady / Rational / Pinhole`，创建出来即为 Custom 相机、已挂载着色器与参数，可选 `At 3D Cursor` / `Add Rig Empty`（父级空物体，便于多相机/外参）。同一菜单下还有 `Camera Scene`（棋盘方块/地面/灯光） |
-| **改造现有相机** | 选中相机  `CV Camera ▸ Apply` |
+| **改造现有相机** | 选中相机 ▸ `CV Intrinsics ▸ Apply` |
 | **批量/脚本** | `bpy.ops.opencv_cam.add_camera(model="fisheye", preset="default_camera", use_rig=True)` |
 
 > Blender 不允许插件扩展 `Camera.type` 枚举（该枚举定义在 C 侧 RNA），所以"添加自定义相机"以

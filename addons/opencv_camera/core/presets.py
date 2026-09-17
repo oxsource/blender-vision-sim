@@ -16,8 +16,9 @@ from .calibration_io import Calibration, load_calibration
 
 PRESETS_DIR = os.path.join(paths.ADDON_ROOT, "presets")
 
-#: fake entry used by the UI to mean "use the add-on defaults / current values"
-CURRENT = "__current__"
+#: fake entries used by the UI
+DEFAULTS = "__defaults__"   #: use the add-on's default camera values
+CURRENT = "__current__"     #: copy the settings of the active camera
 
 
 def list_preset_paths() -> List[str]:

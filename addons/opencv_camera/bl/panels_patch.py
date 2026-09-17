@@ -44,7 +44,15 @@ def _poll(cls, context):
 
 
 def is_patched() -> bool:
-    return _original_poll is not None
+    """True while the hidden-poll patch is actually installed.
+
+    Cycles may re-register its panels (engine switch, re-enabling the add-on),
+    which silently drops the patch; the check below notices that.
+    """
+    panel = getattr(bpy.types, PANEL_NAME, None)
+    if panel is None or _original_poll is None:
+        return False
+    return getattr(panel.poll, "__func__", None) is _poll
 
 
 def register() -> None:
