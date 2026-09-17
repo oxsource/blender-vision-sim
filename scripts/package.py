@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Build installable extension zips without needing Blender.
 
+Requires Python 3.11+ (``tomllib``).
+
     python3 scripts/package.py                    # every add-on in addons/
     python3 scripts/package.py opencv_camera      # one add-on
     python3 scripts/package.py --check            # validate manifests only
