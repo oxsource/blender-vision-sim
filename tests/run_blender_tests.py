@@ -856,7 +856,7 @@ def test_avm_scene_builder():
     expected = ["AVM_Block_BackLeft", "AVM_Block_BackRight",
                 "AVM_Block_FrontLeft", "AVM_Block_FrontRight",
                 "AVM_Cam_Back", "AVM_Cam_Front", "AVM_Cam_Left", "AVM_Cam_Right",
-                "AVM_Car", "AVM_Ground", "AVM_Root"]
+                "AVM_Car", "AVM_Ground", "AVM_Root", "AVM_Sun"]
     check("collection contents", names == expected, str(names))
 
     check("four camera records",

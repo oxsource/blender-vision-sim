@@ -25,6 +25,7 @@ COLLECTION_NAME = "AVM Scene"
 
 GROUND_NAME = "AVM_Ground"
 CAR_NAME = "AVM_Car"
+SUN_NAME = "AVM_Sun"
 BLOCK_PREFIX = "AVM_Block_"
 CAMERA_PREFIX = "AVM_Cam_"
 
@@ -299,6 +300,16 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
         _parent(camera, root)
         camera_objects.append(camera)
 
+    # a sun so the scene reads out of the box (it is removed with the scene)
+    sun = bpy.data.objects.get(SUN_NAME)
+    if sun is None:
+        sun_data = bpy.data.lights.new(SUN_NAME, type="SUN")
+        sun = bpy.data.objects.new(SUN_NAME, sun_data)
+        target.objects.link(sun)
+    sun.data.energy = 3.0
+    sun.rotation_euler = (math.radians(35.0), 0.0, math.radians(-40.0))
+    _parent(sun, root)
+
     _apply_active_resolution(scene, settings)
     settings.revision += 1
     from . import coverage  # lazy: coverage imports this module for the names
@@ -309,6 +320,7 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
         "car": car,
         "blocks": block_objects,
         "cameras": camera_objects,
+        "sun": sun,
     }
 
 
