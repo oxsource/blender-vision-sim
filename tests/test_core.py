@@ -160,7 +160,7 @@ def _write(tmp, name, text):
 
 def test_bundled_preset():
     """The AVM preset shipped with the add-on must load as a fisheye camera."""
-    preset = os.path.join(ROOT, "addons", "opencv_camera", "presets", "avm_minibus_front.yaml")
+    preset = os.path.join(ROOT, "addons", "opencv_camera", "presets", "default_camera.yaml")
     calib = calibration_io.load_calibration(preset)
     check("preset intrinsics", approx(calib.intrinsics.fx, 317.77563818112867)
           and approx(calib.intrinsics.cy, 477.8201435641188)

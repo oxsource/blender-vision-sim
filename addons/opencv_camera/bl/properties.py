@@ -83,8 +83,8 @@ def _update_pose(self, context):
     except Exception as exc:
         settings.status = f"pose error: {type(exc).__name__}: {exc}"
 
-#: defaults of the reference camera (AVM minibus, front, 1280x960)
-AVM_FRONT_INTRINSICS = {
+#: defaults of the bundled reference camera (surround view front camera, 1280x960)
+DEFAULT_INTRINSICS = {
     "fx": 317.77563818112867,
     "fy": 318.0250964604786,
     "cx": 636.2327868307656,
@@ -92,7 +92,7 @@ AVM_FRONT_INTRINSICS = {
     "image_width": 1280,
     "image_height": 960,
 }
-AVM_FRONT_DISTORTION = (
+DEFAULT_DISTORTION = (
     0.08476733270570755,
     0.043184113434448945,
     -0.037989564107367736,
@@ -104,7 +104,7 @@ class IntrinsicsSettings(bpy.types.PropertyGroup):
     fx: FloatProperty(
         name="fx",
         description="Focal length in pixels along X",
-        default=AVM_FRONT_INTRINSICS["fx"],
+        default=DEFAULT_INTRINSICS["fx"],
         min=1e-6,
         precision=4,
         update=_update_values,
@@ -112,7 +112,7 @@ class IntrinsicsSettings(bpy.types.PropertyGroup):
     fy: FloatProperty(
         name="fy",
         description="Focal length in pixels along Y",
-        default=AVM_FRONT_INTRINSICS["fy"],
+        default=DEFAULT_INTRINSICS["fy"],
         min=1e-6,
         precision=4,
         update=_update_values,
@@ -126,28 +126,28 @@ class IntrinsicsSettings(bpy.types.PropertyGroup):
     cx: FloatProperty(
         name="cx",
         description="Principal point u in pixels (origin top-left)",
-        default=AVM_FRONT_INTRINSICS["cx"],
+        default=DEFAULT_INTRINSICS["cx"],
         precision=3,
         update=_update_values,
     )
     cy: FloatProperty(
         name="cy",
         description="Principal point v in pixels (origin top-left)",
-        default=AVM_FRONT_INTRINSICS["cy"],
+        default=DEFAULT_INTRINSICS["cy"],
         precision=3,
         update=_update_values,
     )
     image_width: IntProperty(
         name="Width",
         description="Resolution the intrinsics were calibrated for",
-        default=AVM_FRONT_INTRINSICS["image_width"],
+        default=DEFAULT_INTRINSICS["image_width"],
         min=1,
         update=_update_values,
     )
     image_height: IntProperty(
         name="Height",
         description="Resolution the intrinsics were calibrated for",
-        default=AVM_FRONT_INTRINSICS["image_height"],
+        default=DEFAULT_INTRINSICS["image_height"],
         min=1,
         update=_update_values,
     )
@@ -184,14 +184,14 @@ class DistortionSettings(bpy.types.PropertyGroup):
     k1: FloatProperty(
         name="k1",
         description="Fisheye: theta^2 term | Brown-Conrady: radial k1",
-        default=AVM_FRONT_DISTORTION[0],
+        default=DEFAULT_DISTORTION[0],
         precision=6,
         update=_update_values,
     )
     k2: FloatProperty(
         name="k2",
         description="Fisheye: theta^4 term | Brown-Conrady: radial k2",
-        default=AVM_FRONT_DISTORTION[1],
+        default=DEFAULT_DISTORTION[1],
         precision=6,
         update=_update_values,
     )
@@ -212,14 +212,14 @@ class DistortionSettings(bpy.types.PropertyGroup):
     k3: FloatProperty(
         name="k3",
         description="Fisheye: theta^6 term | Brown-Conrady: radial k3",
-        default=AVM_FRONT_DISTORTION[2],
+        default=DEFAULT_DISTORTION[2],
         precision=6,
         update=_update_values,
     )
     k4: FloatProperty(
         name="k4",
         description="Fisheye: theta^8 term | Rational model: numerator k4",
-        default=AVM_FRONT_DISTORTION[3],
+        default=DEFAULT_DISTORTION[3],
         precision=6,
         update=_update_values,
     )

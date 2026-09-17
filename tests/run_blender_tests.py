@@ -533,22 +533,41 @@ def test_add_camera_operator():
 
 
 def test_panel_layout():
-    """One standalone OpenCV group; intrinsics/extrinsics are inline in it."""
-    main = bpy.types.OPENCV_CAM_PT_main
-    check("OpenCV group is top level", not getattr(main, "bl_parent_id", ""),
-          f"bl_parent_id={getattr(main, 'bl_parent_id', '')!r}")
-    check("OpenCV group label", main.bl_label == "OpenCV", main.bl_label)
-    for name in ("OPENCV_CAM_PT_io", "OPENCV_CAM_PT_preview"):
-        panel = getattr(bpy.types, name)
-        check(f"{name} is inside the OpenCV group",
-              panel.bl_parent_id == "OPENCV_CAM_PT_main",
-              f"bl_parent_id={panel.bl_parent_id}")
-    for name in ("OPENCV_CAM_PT_intrinsics", "OPENCV_CAM_PT_distortion",
-                 "OPENCV_CAM_PT_output", "OPENCV_CAM_PT_extrinsics"):
-        check(f"{name} no longer exists (inline now)", not hasattr(bpy.types, name))
-    check("nothing of ours hangs off the Lens panel",
+    """Six top level panels with the CV prefix, none nested under Lens."""
+    expected = {
+        "OPENCV_CAM_PT_main": "CV Camera",
+        "OPENCV_CAM_PT_intrinsics": "CV Intrinsics",
+        "OPENCV_CAM_PT_extrinsics": "CV Extrinsics",
+        "OPENCV_CAM_PT_output": "CV Output",
+        "OPENCV_CAM_PT_io": "CV Config File",
+        "OPENCV_CAM_PT_preview": "CV Preview",
+    }
+    for name, label in expected.items():
+        panel = getattr(bpy.types, name, None)
+        check(f"{name} exists", panel is not None)
+        if panel is None:
+            continue
+        check(f"{name} is top level (no parent)",
+              not getattr(panel, "bl_parent_id", ""),
+              f"bl_parent_id={getattr(panel, 'bl_parent_id', '')!r}")
+        check(f"{name} label is {label!r}", panel.bl_label == label, panel.bl_label)
+        check(f"{name} sorts after Blender's panels", panel.bl_order >= 10,
+              f"bl_order={getattr(panel, 'bl_order', None)}")
+    check("no panel of ours hangs off Lens",
           all(getattr(getattr(bpy.types, name), "bl_parent_id", "") != "DATA_PT_lens"
-              for name in ("OPENCV_CAM_PT_main", "OPENCV_CAM_PT_io", "OPENCV_CAM_PT_preview")))
+              for name in expected))
+    # the intrinsics panel must cover K, distortion and the calibration size
+    scene = setup_scene(resolution=128, samples=4)
+    clear_scene()
+    setup_scene(resolution=128, samples=4)
+    camera, cam_data = make_camera("IntrinsicsCam")
+    settings = cam_data.opencv_cam
+    for prop in ("fx", "fy", "cx", "cy", "image_width", "image_height"):
+        check(f"intrinsics property {prop}", prop in settings.intrinsics.bl_rna.properties)
+    for prop in ("model", "enabled", "k1", "k2", "k3", "k4", "iterations"):
+        check(f"distortion property {prop}", prop in settings.distortion.bl_rna.properties)
+    check("extrinsics properties", all(p in settings.pose.bl_rna.properties
+                                       for p in ("rotation", "translation")))
     from opencv_camera.bl import operators as operators_mod
     check("Apply operator label", operators_mod.OPENCV_CAM_OT_apply.bl_label == "Apply",
           operators_mod.OPENCV_CAM_OT_apply.bl_label)
@@ -610,8 +629,8 @@ def test_menus_and_raw_params():
 
 def test_presets():
     names = [identifier for identifier, _ in presets.list_presets()]
-    check("bundled presets listed", "avm_minibus_front" in names, str(names))
-    calibration = presets.load_preset("avm_minibus_front")
+    check("bundled presets listed", "default_camera" in names, str(names))
+    calibration = presets.load_preset("default_camera")
     check("preset loads", approx(calibration.intrinsics.fx, 317.77563818112867, 1e-6)
           and calibration.distortion.model == camera_model.MODEL_FISHEYE)
     scene = setup_scene(resolution=128, samples=4)
@@ -621,7 +640,7 @@ def test_presets():
     scene.camera = camera
     bpy.context.view_layer.objects.active = camera
     check("load_preset operator",
-          bpy.ops.opencv_cam.load_preset(preset="avm_minibus_front") == {"FINISHED"})
+          bpy.ops.opencv_cam.load_preset(preset="default_camera") == {"FINISHED"})
     check("preset applied to the camera",
           approx(cam_data.opencv_cam.intrinsics.fx, 317.77563818112867, 1e-3)
           and approx(cam_data.cycles_custom["k1"], 0.08476733270570755, 1e-6))

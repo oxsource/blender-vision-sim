@@ -77,8 +77,8 @@ Blender 中使用：
 
 1. 选中相机对象 ▸ `Object Data Properties ▸ Lens ▸ OpenCV Camera`；
 2. 选畸变模型（默认 `Fisheye (equidistant)`）、填 fx/fy 与系数（或 `Import Calibration` 导入标定文件，
-   仓库自带参考标定 `addons/opencv_camera/presets/avm_minibus_front.yaml`）；
-3. 点 `Apply to Camera` —— 插件会写入对应 OSL 着色器、编译、把参数送进 Cycles；
+   仓库自带参考标定 `addons/opencv_camera/presets/default_camera.yaml`）；
+3. 点 `Apply` —— 插件会写入对应 OSL 着色器、编译、把参数送进 Cycles；
 4. `Add ▸ VisionSim ▸ Test Scene` —— 生成棋盘方块 + 棋盘地面 + 灯光并设好 Cycles，直接 F12 看畸变效果
    （场景里没有相机时会自动先建一台鱼眼相机）；
 5. 点 `Run Self Test` —— 渲染目标并与 OpenCV 模型比对，报出像素误差（参考相机实测 0.03–0.08 px）。
@@ -91,8 +91,8 @@ Blender 中使用：
 | 方式 | 操作 |
 | --- | --- |
 | **新建相机**（推荐） | `Add  VisionSim ▸ Camera  Fisheye / Brown-Conrady / Rational / Pinhole`，创建出来即为 Custom 相机、已挂载着色器与参数，可选 `At 3D Cursor` / `Add Rig Empty`（父级空物体，便于多相机/外参）。同一菜单下还有 `Test Scene`（棋盘方块/地面/灯光）与 `Camera Rig` |
-| **改造现有相机** | 选中相机 ▸ `Lens ▸ OpenCV Camera ▸ Apply to Camera` |
-| **批量/脚本** | `bpy.ops.opencv_cam.add_camera(model="fisheye", preset="avm_minibus_front", use_rig=True)` |
+| **改造现有相机** | 选中相机  `CV Camera ▸ Apply` |
+| **批量/脚本** | `bpy.ops.opencv_cam.add_camera(model="fisheye", preset="default_camera", use_rig=True)` |
 
 > Blender 不允许插件扩展 `Camera.type` 枚举（该枚举定义在 C 侧 RNA），所以"添加自定义相机"以
 > `Add ▸ Camera` 菜单算子的形式提供，这是 Blender 插件生态里的标准做法；相机数据块本身仍是
@@ -133,24 +133,21 @@ Blender 中使用：
 
 ### 面板结构
 
-设置集中在**独立的一组 `OpenCV`** 里（Object Data Properties ▸ OpenCV，**不**挂在 Lens 面板下）。
-内参/畸变/输出/外参都是**同一块里的 inline 小节**（不再各自单独成 block），按钮统一排在参数**之后**：
+所有模块都是 camera 数据属性里的**顶层面板**（与 Blender 自带的 Lens 等平级，不嵌套），并统一用
+`CV ` 前缀区分：
 
 ```
-Object Data Properties ▸ OpenCV
-├── Model                   鱼眼 / Brown-Conrady / Rational
-├── Intrinsics              fx fy cx cy、标定分辨率、scale_to_render、From Blender Lens、生效值只读框
-├── Distortion              enabled + 系数、迭代次数、Discard Invalid Rays
-├── Output Image            输出尺寸（标定/自定义/跟随场景）、是否驱动场景分辨率、Set/From Scene
-├── Extrinsics              R/t、自定义世界系、Apply Pose / Read Pose
-├── [ Apply ]  [ Preview ]  [Live Apply]  [Recompile]        ← 参数之后
-├── 状态框                  着色器/字节码、status、分辨率提示、Show Cycles Raw Parameters
-├── Calibration IO          标定文件导入导出、Presets、Reset Defaults（可折叠）
-└── Preview                 预览尺寸/采样/去噪/自动预览/自检（可折叠）
+Object Data Properties
+├── Lens / Camera / Depth of Field ...      （Blender 自带）
+├── CV Camera       模型选择、[Apply] [Preview] [Live Apply] [Recompile]、状态框
+├── CV Intrinsics   fx fy cx cy、畸变（模型 + 系数 + 迭代 + Discard Invalid Rays）、标定分辨率、From Blender Lens
+├── CV Extrinsics   R/t、自定义世界系、Apply Pose / Read Pose
+├── CV Output       输出尺寸（标定/自定义/跟随场景）、驱动场景分辨率、Set/From Scene
+├── CV Config File  标定文件导入导出、Presets、Reset Defaults（默认折叠）
+└── CV Preview      预览尺寸/采样/去噪/自动预览/自检（默认折叠）
 ```
 
-- 内参 / 畸变 / 输出 / 外参不再各自成块，都在 `OpenCV` 块顶层顺次排列；只有 `Calibration IO` 与
-  `Preview` 这两个自成体系的功能保留可折叠子块。
+- 面板用 `bl_order` 排在 Blender 自带面板之后；动作按钮统一在 `CV Camera` 里、排在参数面板之后。
 - `enable_distortion` 这类开关在**本插件面板里是真复选框**（`distortion.enabled`、`discard_invalid_rays`）。
 - Cycles 依据 OSL 形参自动生成的那串裸参数列表默认**被隐藏**（值以数字显示、且 Cycles 对自定义相机
   参数不支持复选画法），需要时打开 `Show Cycles Raw Parameters` 即可恢复显示。

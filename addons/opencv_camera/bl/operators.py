@@ -309,8 +309,8 @@ class OPENCV_CAM_OT_reset_defaults(_CameraOperator, bpy.types.Operator):
         _, cam_data = self.camera(context)
         settings = cam_data.opencv_cam
         from . import properties as props
-        intrinsics = props.AVM_FRONT_INTRINSICS
-        coeffs = props.AVM_FRONT_DISTORTION
+        intrinsics = props.DEFAULT_INTRINSICS
+        coeffs = props.DEFAULT_DISTORTION
         settings.intrinsics.auto_center = False
         settings.intrinsics.fx = intrinsics["fx"]
         settings.intrinsics.fy = intrinsics["fy"]
@@ -328,7 +328,7 @@ class OPENCV_CAM_OT_reset_defaults(_CameraOperator, bpy.types.Operator):
         _report_messages(self, messages, "INFO" if ok else "ERROR")
         if not ok:
             return {"CANCELLED"}
-        self.report({"INFO"}, "defaults restored (reference AVM front camera)")
+        self.report({"INFO"}, "defaults restored (bundled reference camera)")
         return {"FINISHED"}
 
 

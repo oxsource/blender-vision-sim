@@ -23,8 +23,8 @@ addons/opencv_camera/
 │   ├── menus.py           Add ▸ VisionSim 子菜单（Camera / Test Scene / Camera Rig）
 │   ├── icons.py           图标集载入（每个菜单项一个单色线条 PNG，带内置图标回退）
 │   ├── panels_patch.py    隐藏 Cycles 自动生成的裸参数面板（可开关，卸载时还原）
-│   ├── ui.py              独立的 OpenCV 面板：内参/畸变/输出/外参 inline 排列，
-│   │                      按钮在参数之后；Calibration IO / Preview 为可折叠子块
+│   ├── ui.py              六个顶层面板：CV Camera / CV Intrinsics / CV Extrinsics /
+│   │                      CV Output / CV Config File / CV Preview
 │   ── operators.py       算子：薄壳，只做 context 解析、调用 bl 逻辑、report
 └── shaders/opencv_camera.osl   权威着色器源文件
 ```
@@ -43,7 +43,7 @@ addons/opencv_camera/
 | 导入方式 | 插件内部**只用相对导入**；扩展模式下模块名是 `bl_ext.<repo>.<id>` |
 | 资源路径 | 用 `__file__` 定位（`core/paths.py`），不要依赖 `__package__` 或当前工作目录 |
 | 注册顺序 | `properties → operators → ui`，卸载时反序（UI 依赖算子/属性，属性依赖属性组） |
-| 面板挂载 | 自己的顶层面板组（`bl_space_type='PROPERTIES'`、`bl_context='data'`，**不设** `bl_parent_id`），子面板挂 `bl_parent_id='OPENCV_CAM_PT_main'`：内参/畸变/输出/外参/IO 属于插件自己的组，而不是 Lens 的附加项 |
+| 面板挂载 | 每个模块都是**顶层**面板（`bl_space_type='PROPERTIES'`、`bl_context='data'`、**不设** `bl_parent_id`），统一 `CV ` 前缀命名（`CV Camera` / `CV Intrinsics` / `CV Extrinsics` / `CV Output` / `CV Config File` / `CV Preview`）；用 `bl_order = 10..15` 排到 Blender 自带面板之后 |
 | 自定义相机入口 | **不能**扩展 `Camera.type`（C 侧 RNA 枚举）；用 `Add ▸ Camera` 菜单算子创建已配置好的 Custom 相机（`VIEW3D_MT_camera_add.append`） |
 | 属性即时生效 | 属性 `update=` 回调 → `bl/apply.apply_values()`（只写 `cycles_custom`，快）；切换模型时走完整的 `apply_settings()`（要换着色器并重编译） |
 | 插件入口 | 所有入口集中在 `Add ▸ vision-sim`（Camera / Test Scene / Camera Rig）；不额外往 `Add ▸ Camera` 里塞条目（Blender 不允许扩展 `Camera.type`，塞进去也只能建 Custom 相机，容易误导） |

@@ -224,7 +224,7 @@ calib = calibration_io.load_calibration("vehicle_avm_minibus.json", camera_name=
 
 注意：该类配置**没有** `distortion_model` 字段，插件会按默认的 Brown-Conrady 读取 4 个系数并给出
 提示——AVM 这类广角镜头应把面板里的 `Model` 切到 `Fisheye`（仓库自带的
-`presets/avm_minibus_front.yaml` 已显式写为 `distortion_model: equidistant`，可直接导入）。
+`presets/default_camera.yaml` 已显式写为 `distortion_model: equidistant`，可直接导入）。
 
 ## 10. 参考
 
