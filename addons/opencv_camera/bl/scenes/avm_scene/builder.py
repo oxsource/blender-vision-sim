@@ -9,6 +9,7 @@ exported GLB/FBX and the coverage maths honest.
 from __future__ import annotations
 
 import math
+import os
 from typing import Dict, List, Optional
 
 import bmesh
@@ -28,6 +29,28 @@ CAR_NAME = "AVM_Car"
 SUN_NAME = "AVM_Sun"
 BLOCK_PREFIX = "AVM_Block_"
 CAMERA_PREFIX = "AVM_Cam_"
+PROP_PREFIX = "AVM_Prop_"
+LABEL_PREFIX = "AVM_Label_"
+
+#: ground text: "front/back/left/right" markers plus a title decal
+LABEL_TEXT = {"Front": "前", "Back": "后", "Left": "左", "Right": "右"}
+LABEL_SIZE = 0.9
+TITLE_SIZE = 0.7
+LABEL_Z = 0.002  #: above the ground (-2 mm) and the blocks (+1 mm)
+
+#: fonts that carry CJK glyphs, tried in order when ``label_font`` is empty
+#: (Blender's built-in font has no CJK, so 前后左右 would come out blank)
+CJK_FONT_CANDIDATES = (
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/STHeiti Light.ttc",
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/arphic/uming.ttc",
+    "C:/Windows/Fonts/msyh.ttc",
+    "C:/Windows/Fonts/simhei.ttf",
+)
 
 #: block key -> object name suffix
 BLOCK_SUFFIX = {
@@ -78,6 +101,35 @@ def _replace_mesh(obj: bpy.types.Object, mesh: bpy.types.Mesh) -> None:
         bpy.data.meshes.remove(old)
 
 
+#: object name prefix -> the setting that shows/hides it (one place to rule them
+#: all: the panels only flip the flags, :func:`apply_visibility` does the work)
+VISIBILITY = (
+    (GROUND_NAME, "show_ground"),
+    (CAR_NAME, "show_car"),
+    (BLOCK_PREFIX, "show_blocks"),
+    (CAMERA_PREFIX, "show_cameras"),
+    (PROP_PREFIX, "show_props"),
+    (LABEL_PREFIX, "show_labels"),
+    ("AVM_Coverage_", "show_coverage"),
+    (SUN_NAME, "show_sun"),
+)
+
+
+def apply_visibility(settings) -> None:
+    """Show/hide every AVM object according to the layer flags.
+
+    Runs on a flag change without a rebuild, so toggling a layer never recreates
+    geometry.  Both ``hide_render`` (F12 / exports) and ``hide_set`` (viewport)
+    are set, so the toggle reads the same everywhere.
+    """
+    for prefix, attribute in VISIBILITY:
+        visible = bool(getattr(settings, attribute, True))
+        for obj in bpy.data.objects:
+            if obj.name == prefix or obj.name.startswith(prefix):
+                obj.hide_render = not visible
+                obj.hide_set(not visible)
+
+
 # ---------------------------------------------------------------------------
 # the car: a small minibus built from primitives (one mesh, several materials)
 # ---------------------------------------------------------------------------
@@ -110,23 +162,35 @@ def _add_prism(bm, bottom, top, material: int) -> None:
         bm.faces.new((lower[index], lower[nxt], upper[nxt], upper[index])).material_index = material
 
 
-def _add_wheel(bm, centre_x: float, centre_y: float, radius: float,
-               half_width: float, segments: int, material: int) -> None:
-    """A cylinder whose axis runs along X (the wheel axle)."""
+def _add_cylinder(bm, centre, radius: float, half_len: float, axis: str,
+                  segments: int, material: int) -> None:
+    """A closed cylinder centred on ``centre``; ``axis`` is "X", "Y" or "Z"."""
+    other = {"X": (1, 2), "Y": (0, 2), "Z": (0, 1)}[axis]
+    index = {"X": 0, "Y": 1, "Z": 2}[axis]
     rings = []
-    for side in (-half_width, half_width):
-        rings.append([
-            bm.verts.new((centre_x + side,
-                          centre_y + radius * math.cos(2.0 * math.pi * i / segments),
-                          radius + radius * math.sin(2.0 * math.pi * i / segments)))
-            for i in range(segments)
-        ])
+    for side in (-half_len, half_len):
+        ring = []
+        for i in range(segments):
+            angle = 2.0 * math.pi * i / segments
+            position = [centre[0], centre[1], centre[2]]
+            position[index] += side
+            position[other[0]] += radius * math.cos(angle)
+            position[other[1]] += radius * math.sin(angle)
+            ring.append(bm.verts.new(tuple(position)))
+        rings.append(ring)
     inner, outer = rings
     for i in range(segments):
         nxt = (i + 1) % segments
         bm.faces.new((inner[i], inner[nxt], outer[nxt], outer[i])).material_index = material
     bm.faces.new(list(reversed(inner))).material_index = material
     bm.faces.new(outer).material_index = material
+
+
+def _add_wheel(bm, centre_x: float, centre_y: float, radius: float,
+               half_width: float, segments: int, material: int) -> None:
+    """A wheel: a cylinder along X with its bottom resting on ``z = 0``."""
+    _add_cylinder(bm, (centre_x, centre_y, radius), radius, half_width,
+                  "X", segments, material)
 
 
 def _minibus_mesh(name: str, length: float, width: float, height: float) -> bpy.types.Mesh:
@@ -218,6 +282,351 @@ def _minibus_mesh(name: str, length: float, width: float, height: float) -> bpy.
     bm.free()
     mesh.update()
     return mesh
+
+
+# ---------------------------------------------------------------------------
+# props: pedestrians, crates and a pallet cart, like the real scene
+# ---------------------------------------------------------------------------
+#: material slot indices of the prop meshes
+PED_JACKET, PED_HEAD, PED_LEGS = range(3)
+CRATE_BOX, CRATE_RIM = range(2)
+CART_WOOD, CART_TIRE, CART_METAL = range(3)
+
+
+def _add_sphere(bm, centre, radius: float, segments: int, rings: int,
+                material: int) -> None:
+    top = bm.verts.new((centre[0], centre[1], centre[2] + radius))
+    bottom = bm.verts.new((centre[0], centre[1], centre[2] - radius))
+    bands = []
+    for ring in range(1, rings):
+        phi = math.pi * ring / rings
+        bands.append([
+            bm.verts.new((centre[0] + radius * math.sin(phi) * math.cos(2 * math.pi * s / segments),
+                          centre[1] + radius * math.sin(phi) * math.sin(2 * math.pi * s / segments),
+                          centre[2] + radius * math.cos(phi)))
+            for s in range(segments)])
+    for s in range(segments):
+        nxt = (s + 1) % segments
+        bm.faces.new((top, bands[0][s], bands[0][nxt])).material_index = material
+        bm.faces.new((bottom, bands[-1][nxt], bands[-1][s])).material_index = material
+    for ring in range(len(bands) - 1):
+        for s in range(segments):
+            nxt = (s + 1) % segments
+            bm.faces.new((bands[ring][s], bands[ring][nxt],
+                          bands[ring + 1][nxt], bands[ring + 1][s])).material_index = material
+
+
+def _pedestrian_mesh(name: str, height: float = 1.70) -> bpy.types.Mesh:
+    """A blocky person: legs, jacket, arms and a head."""
+    mesh = bpy.data.meshes.new(name)
+    bm = bmesh.new()
+    hip = height * 0.47
+    shoulder = height * 0.83
+    _add_box(bm, -0.17, 0.17, -0.11, 0.11, 0.0, hip, PED_LEGS)
+    _add_box(bm, -0.21, 0.21, -0.13, 0.13, hip, shoulder, PED_JACKET)
+    for side in (-1.0, 1.0):
+        x = side * 0.27
+        _add_box(bm, x - 0.06, x + 0.06, -0.10, 0.10, hip + 0.04, shoulder, PED_JACKET)
+    _add_sphere(bm, (0.0, 0.0, height - 0.12), 0.115, 10, 6, PED_HEAD)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
+    return mesh
+
+
+def _crate_mesh(name: str, length: float = 0.52, width: float = 0.36,
+                height: float = 0.32) -> bpy.types.Mesh:
+    """A plastic crate: a tapered box with a proud rim."""
+    mesh = bpy.data.meshes.new(name)
+    bm = bmesh.new()
+    hx, hy = length / 2.0, width / 2.0
+    _add_box(bm, -hx, hx, -hy, hy, 0.0, height, CRATE_BOX)
+    _add_box(bm, -hx - 0.015, hx + 0.015, -hy - 0.015, hy + 0.015,
+             height - 0.05, height, CRATE_RIM)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
+    return mesh
+
+
+def _cart_mesh(name: str, length: float = 1.15, width: float = 0.72) -> bpy.types.Mesh:
+    """A small pallet cart: platform, four casters and a push handle."""
+    mesh = bpy.data.meshes.new(name)
+    bm = bmesh.new()
+    hx, hy = length / 2.0, width / 2.0
+    deck = 0.20
+    _add_box(bm, -hx, hx, -hy, hy, deck, deck + 0.09, CART_WOOD)
+    for side in (-1.0, 1.0):
+        for front in (-1.0, 1.0):
+            _add_cylinder(bm, (side * (hx - 0.14), front * (hy - 0.12), 0.08),
+                          0.08, 0.045, "X", 10, CART_TIRE)
+    handle_y = -hy + 0.03
+    _add_box(bm, -0.03, 0.03, handle_y - 0.03, handle_y + 0.03,
+             deck + 0.09, deck + 0.85, CART_METAL)
+    _add_box(bm, -0.17, 0.17, handle_y - 0.03, handle_y + 0.03,
+             deck + 0.80, deck + 0.86, CART_METAL)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
+    return mesh
+
+
+def _prop_slots(field) -> List:
+    """Deterministic spots around the field (outside it, on the ground)."""
+    geo = avm_layout.geometry(field)
+    margin = 1.7
+    slots = []
+    for y in (-4.2, -1.6, 1.6, 4.2):
+        slots.append((geo.half_x + margin, y))
+        slots.append((-(geo.half_x + margin), y))
+    for x in (-1.5, 0.0, 1.5):
+        slots.append((x, geo.half_y + margin))
+        slots.append((x, -(geo.half_y + margin)))
+    return slots
+
+
+def _ensure_props(scene: bpy.types.Scene, settings, target: bpy.types.Collection,
+                  root: bpy.types.Object) -> List[bpy.types.Object]:
+    """Create / update the pedestrians, crates and carts around the field."""
+    # the desired list, in a fixed order so positions are stable across rebuilds
+    wanted: List = []
+    for index in range(max(0, int(settings.prop_carts))):
+        wanted.append(("Cart", index))
+    for index in range(max(0, int(settings.prop_boxes))):
+        wanted.append(("Crate", index))
+    for index in range(max(0, int(settings.prop_pedestrians))):
+        wanted.append(("Pedestrian", index))
+
+    materials = {
+        "Pedestrian": (
+            _principled("AVM_Ped_Jacket_Mat", (0.05, 0.08, 0.30, 1.0), 0.6),
+            _principled("AVM_Ped_Head_Mat", (0.62, 0.45, 0.34, 1.0), 0.7),
+            _principled("AVM_Ped_Legs_Mat", (0.10, 0.10, 0.12, 1.0), 0.7),
+        ),
+        "Crate": (
+            _principled("AVM_Crate_Mat", (0.06, 0.20, 0.55, 1.0), 0.5),
+            _principled("AVM_Crate_Rim_Mat", (0.03, 0.11, 0.34, 1.0), 0.5),
+        ),
+        "Cart": (
+            _principled("AVM_Cart_Wood_Mat", (0.38, 0.24, 0.12, 1.0), 0.75),
+            _principled("AVM_Cart_Tire_Mat", (0.04, 0.04, 0.04, 1.0), 0.85),
+            _principled("AVM_Cart_Metal_Mat", (0.45, 0.47, 0.50, 1.0), 0.4),
+        ),
+    }
+    meshes = {
+        "Pedestrian": _pedestrian_mesh,
+        "Crate": _crate_mesh,
+        "Cart": _cart_mesh,
+    }
+
+    slots = _prop_slots(settings.field_spec())
+    objects: List[bpy.types.Object] = []
+    for order, (kind, index) in enumerate(wanted):
+        name = f"{PROP_PREFIX}{kind}_{index:02d}"
+        mesh = meshes[kind](name)
+        obj = bpy.data.objects.get(name)
+        if obj is None:
+            obj = bpy.data.objects.new(name, mesh)
+            target.objects.link(obj)
+        _assign_mesh(obj, mesh, materials[kind])
+        # spread the props over the slots and vary the heading deterministically
+        x, y = slots[(order * 5) % len(slots)]
+        obj.location = (x, y, 0.0)
+        obj.rotation_euler = (0.0, 0.0, math.radians((order * 47) % 360))
+        _parent(obj, root)
+        hidden = not settings.show_props
+        obj.hide_render = hidden
+        obj.hide_set(hidden)
+        objects.append(obj)
+
+    # remove props that are no longer wanted
+    wanted_names = {f"{PROP_PREFIX}{kind}_{index:02d}" for kind, index in wanted}
+    for obj in list(target.objects):
+        if obj.name.startswith(PROP_PREFIX) and obj.name not in wanted_names:
+            bpy.data.objects.remove(obj, do_unlink=True)
+    return objects
+
+
+# ---------------------------------------------------------------------------
+# ground text: 前 / 后 / 左 / 右 and the field title
+# ---------------------------------------------------------------------------
+def label_font(settings):
+    """A CJK-capable font for the ground text, or ``None``.
+
+    ``label_font`` wins when set; otherwise the first existing entry of
+    :data:`CJK_FONT_CANDIDATES` is loaded.  Blender's built-in font has no CJK
+    glyphs, so without one the Chinese labels would render blank.
+    """
+    if settings.label_font:
+        try:
+            return bpy.data.fonts.load(settings.label_font)
+        except Exception:
+            pass
+    for path in CJK_FONT_CANDIDATES:
+        if not os.path.exists(path):
+            continue
+        try:
+            return bpy.data.fonts.load(path)
+        except Exception:
+            continue
+    return None
+
+
+def _text_object(name: str, body: str, size: float, font, material,
+                 target: bpy.types.Collection) -> bpy.types.Object:
+    """Create / update a flat FONT object (readable from the top view)."""
+    curve = bpy.data.curves.get(name)
+    if curve is None:
+        curve = bpy.data.curves.new(name, type="FONT")
+    curve.body = body
+    curve.size = size
+    curve.align_x = "CENTER"
+    curve.align_y = "CENTER"
+    curve.extrude = 0.002
+    if font is not None:
+        curve.font = font
+    curve.materials.clear()
+    curve.materials.append(material)
+
+    obj = bpy.data.objects.get(name)
+    if obj is None:
+        obj = bpy.data.objects.new(name, curve)
+        target.objects.link(obj)
+    elif obj.data is not curve:
+        obj.data = curve
+    return obj
+
+
+def _load_logo_image(path: str):
+    """Load (and refresh) the logo image; ``None`` when it cannot be read."""
+    try:
+        image = bpy.data.images.load(path, check_existing=True)
+    except Exception:
+        return None
+    # Blender caches loaded images: without a reload, replacing the file on disk
+    # would keep showing the old logo after a rebuild
+    try:
+        image.reload()
+    except Exception:
+        pass
+    return image
+
+
+def _logo_material(image) -> bpy.types.Material:
+    """A flat, alpha-aware material showing the logo image."""
+    material = bpy.data.materials.get("AVM_Logo_Mat")
+    if material is None:
+        material = bpy.data.materials.new("AVM_Logo_Mat")
+    material.use_nodes = True
+    nodes = material.node_tree.nodes
+    for node in list(nodes):
+        nodes.remove(node)
+    output = nodes.new("ShaderNodeOutputMaterial")
+    principled = nodes.new("ShaderNodeBsdfPrincipled")
+    texture = nodes.new("ShaderNodeTexImage")
+    coords = nodes.new("ShaderNodeTexCoord")
+    texture.image = image
+    principled.inputs["Roughness"].default_value = 0.9
+    links = material.node_tree.links
+    # the quad has no UV map, so feed the texture Generated coordinates
+    # (the object bounding box mapped to 0..1); without this the texture
+    # samples a single texel and the decal is invisible
+    links.new(coords.outputs["Generated"], texture.inputs["Vector"])
+    links.new(texture.outputs["Color"], principled.inputs["Base Color"])
+    if "Alpha" in principled.inputs:
+        links.new(texture.outputs["Alpha"], principled.inputs["Alpha"])
+    links.new(principled.outputs["BSDF"], output.inputs["Surface"])
+    material.diffuse_color = (1.0, 1.0, 1.0, 1.0)
+    # EEVEE transparency (the property was renamed in 4.2)
+    for attribute, value in (("blend_method", "BLEND"), ("surface_render_method", "BLENDED")):
+        if hasattr(material, attribute):
+            try:
+                setattr(material, attribute, value)
+            except Exception:
+                pass
+    return material
+
+
+def _ensure_logo(settings, target: bpy.types.Collection, y: float,
+                 size: float) -> Optional[bpy.types.Object]:
+    """The ground logo plane; removed again when ``logo_image`` is cleared.
+
+    ``logo_size`` is the logo **width**; the height follows the image aspect
+    ratio, so a non-square logo is never stretched.
+    """
+    name = f"{LABEL_PREFIX}Logo"
+    path = (settings.logo_image or "").strip()
+    if not path:
+        existing = bpy.data.objects.get(name)
+        if existing is not None:
+            bpy.data.objects.remove(existing, do_unlink=True)
+        return None
+    image = _load_logo_image(path)
+    if image is None:
+        return None
+    width = float(size)
+    height = width * image.size[1] / image.size[0] if image.size[0] else width
+    mesh = _quad_mesh(name, width, height)
+    obj = bpy.data.objects.get(name)
+    if obj is None:
+        obj = bpy.data.objects.new(name, mesh)
+        target.objects.link(obj)
+    _assign_mesh(obj, mesh, [_logo_material(image)])
+    obj.location = (0.0, y, LABEL_Z)
+    obj.rotation_euler = (0.0, 0.0, 0.0)
+    return obj
+
+
+def _ensure_labels(scene: bpy.types.Scene, settings, target: bpy.types.Collection,
+                   root: bpy.types.Object) -> List[bpy.types.Object]:
+    """Create / update the ground text and the logo, laid out side by side."""
+    font = label_font(settings)
+    material = _principled("AVM_Label_Mat", (0.12, 0.12, 0.13, 1.0), 0.9)
+    geo = avm_layout.geometry(settings.field_spec())
+    offset = 0.9
+    title_y = -(geo.half_y + 3.4)
+
+    specs = [
+        (f"{LABEL_PREFIX}Front", LABEL_TEXT["Front"], LABEL_SIZE, (0.0, geo.half_y + offset)),
+        (f"{LABEL_PREFIX}Back", LABEL_TEXT["Back"], LABEL_SIZE, (0.0, -(geo.half_y + offset))),
+        (f"{LABEL_PREFIX}Left", LABEL_TEXT["Left"], LABEL_SIZE, (-(geo.half_x + offset), 0.0)),
+        (f"{LABEL_PREFIX}Right", LABEL_TEXT["Right"], LABEL_SIZE, (geo.half_x + offset, 0.0)),
+    ]
+    title = (settings.ground_title or "").strip()
+    if title:
+        specs.append((f"{LABEL_PREFIX}Title", title, TITLE_SIZE, (0.0, title_y)))
+
+    wanted = {name for name, _, _, _ in specs} | {f"{LABEL_PREFIX}Logo"}
+    objects: List[bpy.types.Object] = []
+    for name, body, size, (x, y) in specs:
+        obj = _text_object(name, body, size, font, material, target)
+        obj.location = (x, y, LABEL_Z)
+        obj.rotation_euler = (0.0, 0.0, 0.0)
+        _parent(obj, root)
+        objects.append(obj)
+
+    logo = _ensure_logo(settings, target, title_y, settings.logo_size)
+    title_object = bpy.data.objects.get(f"{LABEL_PREFIX}Title")
+    if logo is not None:
+        _parent(logo, root)
+        objects.append(logo)
+        if title_object is not None:
+            # put the logo immediately before the text and shift the text right
+            bpy.context.view_layer.update()
+            width = float(title_object.dimensions.x) or 1.0
+            size = float(settings.logo_size)
+            gap = 0.45
+            total = size + gap + width
+            logo.location = (-total / 2.0 + size / 2.0, title_y, LABEL_Z)
+            title_object.location = (-total / 2.0 + size + gap + width / 2.0, title_y, LABEL_Z)
+
+    for obj in list(target.objects):
+        if obj.name.startswith(LABEL_PREFIX) and obj.name not in wanted:
+            bpy.data.objects.remove(obj, do_unlink=True)
+    return objects
 
 
 # ---------------------------------------------------------------------------
@@ -488,29 +897,36 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
     sun.rotation_euler = (math.radians(35.0), 0.0, math.radians(-40.0))
     _parent(sun, root)
 
+    # props (pedestrians, crates, a pallet cart) ---------------------------
+    props = _ensure_props(scene, settings, target, root)
+
+    # ground text (前 / 后 / 左 / 右 + the field title) ----------------------
+    labels = _ensure_labels(scene, settings, target, root)
+
     _apply_active_resolution(scene, settings)
     settings.revision += 1
-    from . import coverage  # lazy: coverage imports this module for the names
-    coverage.apply_visibility(settings)
+    apply_visibility(settings)
     return {
         "root": root,
         "ground": ground,
         "car": car,
         "blocks": block_objects,
         "cameras": camera_objects,
+        "props": props,
+        "labels": labels,
         "sun": sun,
         "messages": messages,
     }
 
 
 def _apply_active_resolution(scene: bpy.types.Scene, settings) -> None:
-    """Let the active camera write the render resolution."""
-    active = settings.active_camera_settings()
-    if active is None:
-        return
-    camera = bpy.data.objects.get(f"{CAMERA_PREFIX}{CAMERA_SUFFIX[settings.active_camera]}")
+    """Make the active camera the render camera and let it write the resolution."""
+    camera = bpy.data.objects.get(
+        f"{CAMERA_PREFIX}{CAMERA_SUFFIX[settings.active_camera]}")
     if camera is None:
         return
+    # F12 renders scene.camera, not the selected object, so keep them in step
+    scene.camera = camera
     apply_mod.apply_render_resolution(scene, camera.data.opencv_cam)
 
 

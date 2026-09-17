@@ -853,11 +853,33 @@ def test_avm_scene_builder():
 
     target = bpy.data.collections.get("AVM Scene")
     names = sorted(obj.name for obj in target.objects)
-    expected = ["AVM_Block_BackLeft", "AVM_Block_BackRight",
-                "AVM_Block_FrontLeft", "AVM_Block_FrontRight",
-                "AVM_Cam_Back", "AVM_Cam_Front", "AVM_Cam_Left", "AVM_Cam_Right",
-                "AVM_Car", "AVM_Ground", "AVM_Root", "AVM_Sun"]
-    check("collection contents", names == expected, str(names))
+    core = ["AVM_Block_BackLeft", "AVM_Block_BackRight",
+            "AVM_Block_FrontLeft", "AVM_Block_FrontRight",
+            "AVM_Cam_Back", "AVM_Cam_Front", "AVM_Cam_Left", "AVM_Cam_Right",
+            "AVM_Car", "AVM_Ground", "AVM_Root", "AVM_Sun"]
+    check("collection has the core objects", set(core) <= set(names), str(names))
+    check("every object is namespaced", all(name.startswith("AVM_") for name in names),
+          str(names))
+    props = [name for name in names if name.startswith("AVM_Prop_")]
+    check("props are created (3 pedestrians + 4 crates + 1 cart)",
+          len(props) == 8, str(props))
+    check("prop object names",
+          "AVM_Prop_Pedestrian_00" in props and "AVM_Prop_Crate_03" in props
+          and "AVM_Prop_Cart_00" in props, str(props))
+
+    labels = sorted(name for name in names if name.startswith("AVM_Label_"))
+    check("ground text objects",
+          labels == ["AVM_Label_Back", "AVM_Label_Front", "AVM_Label_Left",
+                     "AVM_Label_Right", "AVM_Label_Title"], str(labels))
+    check("ground text bodies",
+          bpy.data.curves["AVM_Label_Front"].body == "前"
+          and bpy.data.curves["AVM_Label_Title"].body == "AVM 仿真标定场地",
+          bpy.data.curves["AVM_Label_Title"].body)
+    check("ground text lies flat on the ground",
+          abs(bpy.data.objects["AVM_Label_Front"].location.z - 0.002) < 1e-6
+          and all(abs(v) < 1e-9 for v in bpy.data.objects["AVM_Label_Front"].rotation_euler))
+    check("ground text font carries CJK (or is the built-in fallback)",
+          bpy.data.curves["AVM_Label_Front"].font is not None)
 
     check("four camera records",
           [record.name for record in settings.cameras] == ["front", "back", "left", "right"],
@@ -899,6 +921,20 @@ def test_avm_scene_builder():
           f"{bpy.data.objects['AVM_Block_FrontLeft'].location.x:.4f}")
     check("rebuild keeps the same objects",
           bpy.data.objects.get("AVM_Ground") is not None)
+
+    # props follow their counts
+    settings.prop_carts = 0
+    settings.prop_boxes = 1
+    settings.prop_pedestrians = 2
+    bpy.ops.opencv_cam.avm_rebuild()
+    props = sorted(obj.name for obj in target.objects
+                   if obj.name.startswith("AVM_Prop_"))
+    check("props follow the counts", len(props) == 3, str(props))
+    check("stale props are removed", "AVM_Prop_Cart_00" not in props, str(props))
+    settings.prop_carts = 1
+    settings.prop_boxes = 4
+    settings.prop_pedestrians = 3
+    bpy.ops.opencv_cam.avm_rebuild()
 
     check("reset defaults", bpy.ops.opencv_cam.avm_reset_defaults() == {"FINISHED"})
     check("reset restored the field", approx(settings.core_w, 240.0, 1e-6))
@@ -943,6 +979,18 @@ def test_avm_panels():
           bpy.context.view_layer.objects.active is not None
           and bpy.context.view_layer.objects.active.name == "AVM_Cam_Left",
           str(bpy.context.view_layer.objects.active))
+    # F12 renders scene.camera, so selecting a camera must make it the render one
+    check("selecting a camera makes it the render camera",
+          scene.camera is not None and scene.camera.name == "AVM_Cam_Left",
+          str(scene.camera))
+    check("selecting a camera updates active_camera",
+          scene.avm_scene.active_camera == "left", scene.avm_scene.active_camera)
+
+    scene.avm_scene.active_camera = "back"
+    bpy.ops.opencv_cam.avm_rebuild()
+    check("the active_camera enum drives the render camera",
+          scene.camera is not None and scene.camera.name == "AVM_Cam_Back",
+          str(scene.camera))
 
     check("remove scene", bpy.ops.opencv_cam.avm_remove_scene() == {"FINISHED"})
     check("scene panel hides after the remove",
@@ -1118,6 +1166,58 @@ def test_shader_force_compile():
     messages = shader.force_compile(cam_data)
     check("force_compile produced bytecode",
           shader.is_compiled(cam_data), "; ".join(messages)[:200])
+
+
+def test_avm_visibility_and_logo():
+    """Every AVM object can be shown/hidden, and the logo decal sits before the title."""
+    scene = setup_scene(resolution=64, samples=1)
+    clear_scene()
+    scene = setup_scene(resolution=64, samples=1)
+    check("add AVM scene", bpy.ops.opencv_cam.avm_add_scene() == {"FINISHED"})
+    settings = scene.avm_scene
+
+    def hidden(prefix):
+        return [o.name for o in scene.objects
+                if o.name.startswith(prefix) and not o.hide_render]
+
+    for prefix, flag in (("AVM_Ground", "show_ground"), ("AVM_Car", "show_car"),
+                         ("AVM_Block_", "show_blocks"), ("AVM_Cam_", "show_cameras"),
+                         ("AVM_Prop_", "show_props"), ("AVM_Label_", "show_labels"),
+                         ("AVM_Sun", "show_sun")):
+        setattr(settings, flag, False)
+        check(f"{flag} hides its objects", hidden(prefix) == [], f"{prefix} visible: {hidden(prefix)}")
+        setattr(settings, flag, True)
+        check(f"{flag} shows them again", hidden(prefix) != [], f"{prefix}")
+
+    check("layer toggles do not rebuild", settings.revision > 0)
+    revision = settings.revision
+    settings.show_props = False
+    settings.show_props = True
+    check("visibility changes skip the rebuild", settings.revision == revision)
+
+    logo_path = os.path.join(ROOT, "docs", "images", "preview_example.png")
+    check("a logo image is available for the test", os.path.exists(logo_path))
+    settings.logo_image = logo_path
+    bpy.ops.opencv_cam.avm_rebuild()
+    logo = bpy.data.objects.get("AVM_Label_Logo")
+    title = bpy.data.objects.get("AVM_Label_Title")
+    check("logo decal created", logo is not None and len(logo.data.materials) == 1)
+    check("logo decal uses Generated coordinates",
+          any(node.type == "TEX_COORD" for node in logo.data.materials[0].node_tree.nodes))
+    # preview_example.png is 384x288 (4:3): the plane must follow, not be square
+    check("logo keeps the image aspect ratio",
+          abs(logo.dimensions.x - 1.2) < 1e-4 and abs(logo.dimensions.y - 0.9) < 1e-4,
+          f"{tuple(round(v, 3) for v in logo.dimensions)}")
+    check("logo sits before the title", logo.location.x < title.location.x,
+          f"logo {logo.location.x:.2f} title {title.location.x:.2f}")
+    check("logo lies flat on the ground",
+          abs(logo.location.z - 0.002) < 1e-6
+          and all(abs(v) < 1e-9 for v in logo.rotation_euler))
+
+    settings.logo_image = ""
+    bpy.ops.opencv_cam.avm_rebuild()
+    check("logo removed when the image is cleared",
+          bpy.data.objects.get("AVM_Label_Logo") is None)
 
 
 def test_add_camera_default_preset():
@@ -1394,6 +1494,7 @@ def main():
         test_avm_panels,
         test_avm_io,
         test_avm_coverage_and_export,
+        test_avm_visibility_and_logo,
         test_shader_force_compile,
         test_presets,
         test_shader_text_upgrade_recompiles,

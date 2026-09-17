@@ -68,6 +68,9 @@
 | 2 | 车模 car | 1 | **程序化迷你巴士**（单 mesh、5 个材质槽：车身/玻璃/轮胎/前灯/尾灯），长宽 = `core`，高默认由相机安装高度推出 |
 | 3 | 鱼眼相机 fisheye camera | 4 | front / back / left / right，复用 `opencv_camera` fisheye 模型，**每台独立内外参** |
 | 4 | 标定布 / 标定块 cloth=block | 4 | **规格相同的纯黑方块**（边长 `corner`），放在车四周四对角，位置由场地方程决定 |
+| 5 | 道具 props | 0–40 | 行人 / 蓝色塑料箱 / 小板车（数量可调），摆在场地外侧，对齐真实场地观感；`show_props` 可整组隐藏 |
+| 6 | 地面文字 label | 5 | 车四周的 **前/后/左/右** + 场地外的标题（默认「AVM 仿真标定场地」）；`show_labels` 可整组隐藏 |
+| 7 | 地面 logo | 0–1 | 可选：标题**前面**的方形贴图（`logo_image`，支持带 alpha 的 PNG），没有图时不创建 |
 
 > **标定布就是标定块**：不再有单独的布面平面，4 个黑块即 4 张「布」。
 > `border` 因此不产生几何，只用于**场地范围**（BEV 边界 / `sceneW×sceneH`），与标定无关。
@@ -193,7 +196,10 @@ hy     = cOutY  + borderH/100 # 场地半长
 | 地面 | `ground_w` / `ground_d` | 30 / 30 m | 2–200 | — |
 | 标定块 | `block_lift` | 0.001 m | 0–0.05 | —（离地抬升） |
 | | `sun_shadow` | **关** | on/off | —（太阳是否投影，默认关，避免阴影被当成黑块） |
-| 显示 | `show_ground/car/blocks/cameras/coverage` | 全 on | | 图层开关 |
+| 道具 | `prop_pedestrians` / `prop_boxes` / `prop_carts` | 3 / 4 / 1 | 0–16 / 0–16 / 0–8 | —（对齐真实场地的行人/箱子/小板车） |
+| 地面文字 | `ground_title` / `label_font` | 「AVM 仿真标定场地」/ 自动 | 字符串 / 字体文件 | —（`label_font` 留空则自动找系统 CJK 字体） |
+| 地面 logo | `logo_image` / `logo_size` | 空 / 1.2 m | 图片文件 / 0.1–10 | `logo_size` 是 logo **宽度**，高度按图片宽高比推导（不拉伸）；`logo_image` 为空则不创建 |
+| 显示 | `show_ground/car/blocks/cameras/props/labels/coverage/sun` | 全 on（coverage 默认 off） | | 图层开关，**只切换显隐、不重建几何** |
 | 只读 | `scene_w` / `scene_h` / `block_area` | 派生 | | 顶部 chip / stats |
 
 默认值由 §6 的 minibus 求解结果填入（border 取 0，core 由滑杆给定，默认 2.4 m × 4.8 m）。
@@ -218,8 +224,9 @@ AVM PropertyGroup **不新增任何 K/D 字段、不覆盖那些面板**，只�
 > **场景不做位姿解算**（§1.1）：改内参不会移动相机；要恢复默认位姿用 `[恢复默认位姿]`
 > （重读内置预设 §6.4）。
 
-另有一个 `active_camera` 枚举（默认 front）：指定**哪台驱动渲染分辨率**（因为四台的 `output` 会互相争抢
-`scene.render.resolution_*`），其余相机只应用自身内参。
+另有一个 `active_camera` 枚举（默认 front）：**它就是渲染相机**——重建时会写 `scene.camera`，
+所以 **F12 渲染的是它**（Blender 的 F12 用 `scene.camera`，与当前选中的对象无关）；
+同时它也是唯一驱动 `scene.render.resolution_*` 的相机，其余相机只应用自身内参。
 
 ---
 
@@ -280,12 +287,15 @@ Scene Properties
 │   ├── 车辆：长 / 宽 / 高 / 离地间隙
 │   ├── 地面：尺寸
 │   ├── 标定块：抬升
-│   ├── 相机（仅布局）：active_camera + 四台条目（enable / location / rotation / [选中该相机]）
+│   ├── 相机（仅布局）：active_camera（= 渲染相机，F12 用它）+ 四台条目（enable / location / rotation / [选中该相机]）
 │   ├── 图层：地面 / 标定块 / 车辆 / 相机 / 覆盖 开关
 │   └── 动作：[重建] [还原默认] [快速预设 ▾] [覆盖评估] [导入参数…] [导出参数…]
 │            [生成 JSON] [应用 JSON] [移除 AVM Scene]
 ```
 
+> `[选中该相机]` 会把该相机设为激活对象**并设为渲染相机**（`active_camera` + `scene.camera`），
+> 这样按 F12 预览的就是它（选对象本身不会改变 F12 的结果）。
+>
 > **相机内参不在本面板**：`K`/`D`/输出尺寸完全复用既有的**自定义相机配置**
 > （`CV Intrinsics` / `CV Presets` / `CV Output`，挂在 `camera.data.opencv_cam` 上，§4.2）。
 > AVM 面板只负责**安装位置与姿态**；`[选中该相机]` 只是把该相机设为激活对象，
@@ -479,6 +489,9 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | 车模 | 单 mesh：车身 + 斜挡风 + 车顶盖 + 侧/后车窗 + 4 车轮 + 前/尾灯 | 5 个材质槽：车身**青绿**（对齐真实 minibus）、玻璃深灰、轮胎近黑、前灯米白、尾灯红 |
 | 标定块 ×4 | **几何面片**（独立四边形，抬高 `block_lift`） | 纯黑（对照 `--cloth-ink`） |
 | 太阳 `AVM_Sun` | — | 随场景创建的 SUN 灯，**默认不投影阴影**（`sun_shadow` 开关）：投影会被黑色区域检测器误判为标定块 |
+| 道具 | 行人（腿/夹克/头 3 槽）、塑料箱（箱体/边框 2 槽）、小板车（木板/脚轮/金属 3 槽） | 深蓝夹克行人、蓝色箱、木色板车，摆在场地外 `margin ≈ 1.7 m` 的固定槽位上（确定性散布） |
+| 地面文字 ×5 | 平面 FONT 曲线（`extrude 2 mm`，平铺在 `z = 2 mm`） | 深灰；**必须用带 CJK 的字体**（内置 Bfont 没有中文，会渲染成空白）：`label_font` 留空时按 `CJK_FONT_CANDIDATES` 自动找（macOS `Arial Unicode.ttf` / PingFang / STHeiti，Linux Noto CJK，Windows 微软雅黑/黑体） |
+| 地面 logo | quad（宽 = `logo_size`，**高 = 宽 × 图高/图宽**；`z = 2 mm`） | 贴图 + alpha（`Image Texture → Base Color/Alpha`）；quad **没有 UV**，用 `TexCoord.Generated` 喂纹理，否则只采样一个像素、贴图看不见；每次重建 `image.reload()`，覆盖图片文件后点 [Rebuild] 即刷新 |
 
 标定块按决策 D 用**真实四边形面片**（非程序化贴图）：位置/尺寸精确、可导出 GLB/FBX、便于后续检测。
 每个块是独立对象 `AVM_Block_FL/FR/RL/RR`（**独立对象**，便于单独选中/替换/导出），
@@ -673,6 +686,9 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | 15 | int cm 取整 | **面板/导出 int cm，内部 float m**；导出时取整，避免 `100.0` vs `100` |
 | 16 | `ba_opt` 导致 left/right 固有偏差 | **文档写明，非 bug**（§14） |
 | 17 | 相机内参归属与面板分工 | **内参复用既有自定义相机配置**（`camera.data.opencv_cam` + `CV Intrinsics/Presets/Output`），AVM 面板只管**安装位姿**；**N 面板只放各「大件」的布局属性**（尺寸/位置/姿态/图层），不含内参、不含导入导出 |
+| 18 | 是否加真实场地里的杂物 | **加**：车四周放行人 / 蓝色塑料箱 / 小板车（数量可调、可整组隐藏），对齐真实场地观感 |
+| 20 | 显隐切换与 logo | **所有新增物体都要能显示/隐藏**：`show_ground/car/blocks/cameras/props/labels/coverage/sun` 八个图层开关，**只切 `hide_render`/`hide_set`、不重建几何**；**地面 logo** 放在标题前面（`logo_image` 指定图片，标题自动右移让位） |
+| 19 | 地面是否写文字 | **写**：车四周地面标 **前/后/左/右**，场地外写标题「AVM 仿真标定场地」；中文字形需 CJK 字体（`label_font` 可指定，留空自动找）。另：导出素材时**临时关掉场景其它灯的阴影**（常见 Blender 默认点光源会投出会被误判的暗块） |
 
 > **#13 的影响**：删掉原 P6 的「检测回环」；新增一个「导出 4 路渲染图」的小能力
 > （`opencv_cam.avm_render_cameras`，按各相机自身的 K/D/输出尺寸渲染到 PNG 目录），
@@ -889,6 +905,9 @@ P = C + t · d_world
 `vehicle_avm_<name>.json` 是**骨架**：写出 `points_3d`（由 `points(camera)` 生成）、
 `K` / `D` / `input_size` / `enable` / `ba_opt`，**`points_2d` 留空**，
 由外部程序在导出的 PNG 上检测后回填（决议 #13）。
+
+> 导出时 `render_cameras` 会**临时关闭场景里除 `AVM_Sun` 之外所有灯的阴影**（渲染设置与灯的状态用完还原）：
+> 真实工程里常带着 Blender 默认点光源，它投的阴影会被黑色区域检测器误判为标定块。
 
 ### 16.5 实现与依赖
 

@@ -256,6 +256,11 @@ def render_cameras(context, settings, directory: str, samples: int = 64) -> List
     Each camera is rendered with its own ``K`` / ``D`` and output resolution; the
     scene render settings are saved and restored, so the export never changes the
     user's setup.
+
+    Shadows from any light *other* than ``AVM_Sun`` are muted for the duration:
+    a cast shadow is a dark ground patch that a black-region corner detector can
+    mistake for a calibration block, and the scene often carries the default
+    Blender point light.
     """
     scene = context.scene
     os.makedirs(directory, exist_ok=True)
@@ -269,11 +274,16 @@ def render_cameras(context, settings, directory: str, samples: int = 64) -> List
         "samples": scene.cycles.samples,
         "camera": scene.camera,
     }
+    other_lights = [(light, light.data.use_shadow)
+                    for light in scene.objects
+                    if light.type == "LIGHT" and light.name != builder.SUN_NAME]
     written: List[str] = []
     try:
         if scene.render.engine != "CYCLES":
             scene.render.engine = "CYCLES"
         scene.cycles.samples = int(samples)
+        for light, _ in other_lights:
+            light.data.use_shadow = False
         for name in avm_layout.CAMERAS:
             entry = settings.camera(name)
             if entry is None or not entry.enable:
@@ -296,6 +306,8 @@ def render_cameras(context, settings, directory: str, samples: int = 64) -> List
             bpy.ops.render.render(write_still=True)
             written.append(path)
     finally:
+        for light, use_shadow in other_lights:
+            light.data.use_shadow = use_shadow
         render.resolution_x = saved["resolution_x"]
         render.resolution_y = saved["resolution_y"]
         render.resolution_percentage = saved["resolution_percentage"]

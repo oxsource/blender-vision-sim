@@ -43,6 +43,12 @@ def _schedule(self, context) -> None:
     controller.schedule_rebuild(context)
 
 
+def _update_visibility(self, context) -> None:
+    """Layer flags only toggle hide_render / hide_set - no geometry rebuild."""
+    from . import builder
+    builder.apply_visibility(self)
+
+
 def _schedule_active(self, context) -> None:
     """``active_camera`` also re-applies the render resolution."""
     from . import controller
@@ -135,12 +141,54 @@ class AVMSceneSettings(bpy.types.PropertyGroup):
         "ground patches that a black-region corner detector can mistake for blocks",
         update=_schedule)
 
-    # -- layers -------------------------------------------------------------
-    show_ground: BoolProperty(name="Ground", default=True, update=_schedule)
-    show_blocks: BoolProperty(name="Calibration Blocks", default=True, update=_schedule)
-    show_car: BoolProperty(name="Car", default=True, update=_schedule)
-    show_cameras: BoolProperty(name="Cameras", default=True, update=_schedule)
-    show_coverage: BoolProperty(name="Coverage", default=False, update=_schedule)
+    # -- props around the vehicle (like the real scene) ---------------------
+    prop_pedestrians: IntProperty(
+        name="Pedestrians", default=3, min=0, max=16,
+        description="Blocky pedestrians standing around the field",
+        update=_schedule)
+    prop_boxes: IntProperty(
+        name="Crates", default=4, min=0, max=16,
+        description="Plastic crates on the floor around the field",
+        update=_schedule)
+    prop_carts: IntProperty(
+        name="Carts", default=1, min=0, max=8,
+        description="Small pallet carts with casters",
+        update=_schedule)
+
+    # -- ground text --------------------------------------------------------
+    ground_title: StringProperty(
+        name="Title",
+        description="Text painted on the ground outside the field",
+        default="AVM 仿真标定场地",
+        update=_schedule)
+    label_font: StringProperty(
+        name="Font",
+        description="Font file with CJK glyphs for the ground text; empty = "
+                    "auto-detect a system font (Blender's built-in font has no CJK)",
+        subtype="FILE_PATH",
+        default="",
+        update=_schedule)
+    logo_image: StringProperty(
+        name="Logo Image",
+        description="Image shown on the ground just before the title text "
+                    "(e.g. a PNG with alpha); empty = no logo",
+        subtype="FILE_PATH",
+        default="",
+        update=_schedule)
+    logo_size: FloatProperty(
+        name="Logo Size", default=1.2, min=0.1, max=10.0, unit="LENGTH",
+        description="Side length of the square logo decal",
+        update=_schedule)
+
+    # -- layers (toggle visibility only, no rebuild) ------------------------
+    show_ground: BoolProperty(name="Ground", default=True, update=_update_visibility)
+    show_blocks: BoolProperty(name="Calibration Blocks", default=True, update=_update_visibility)
+    show_car: BoolProperty(name="Car", default=True, update=_update_visibility)
+    show_cameras: BoolProperty(name="Cameras", default=True, update=_update_visibility)
+    show_props: BoolProperty(name="Props", default=True, update=_update_visibility)
+    show_labels: BoolProperty(name="Ground Text", default=True, update=_update_visibility)
+    show_coverage: BoolProperty(name="Coverage", default=False, update=_update_visibility)
+    show_sun: BoolProperty(name="Sun", default=True, update=_update_visibility)
 
     # -- cameras ------------------------------------------------------------
     active_camera: EnumProperty(

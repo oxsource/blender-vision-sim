@@ -135,7 +135,7 @@ class OPENCV_CAM_OT_avm_remove_scene(_AVMSceneOperator, bpy.types.Operator):
 
 
 class OPENCV_CAM_OT_avm_select_camera(_AVMSceneOperator, bpy.types.Operator):
-    """Make one of the AVM cameras the active object (to edit its CV Intrinsics)"""
+    """Select a camera, make it the render camera (F12) and focus its intrinsics"""
 
     bl_idname = "opencv_cam.avm_select_camera"
     bl_label = "Select Camera"
@@ -153,7 +153,16 @@ class OPENCV_CAM_OT_avm_select_camera(_AVMSceneOperator, bpy.types.Operator):
             obj.select_set(False)
         camera.select_set(True)
         view_layer.objects.active = camera
-        self.report({"INFO"}, f"{camera.name} selected - edit its intrinsics in CV Intrinsics")
+        # F12 renders scene.camera, not the selection: make this camera active so
+        # the render and the resolution follow the button
+        settings = _settings(context)
+        if settings is not None:
+            settings.active_camera = self.name
+            builder._apply_active_resolution(context.scene, settings)
+        self.report(
+            {"INFO"},
+            f"{camera.name} is the render camera now - edit its intrinsics in CV Intrinsics",
+        )
         return {"FINISHED"}
 
 

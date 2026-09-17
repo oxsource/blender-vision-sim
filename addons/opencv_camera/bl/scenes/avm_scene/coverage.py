@@ -80,7 +80,7 @@ def ensure_curves(scene: bpy.types.Scene, settings,
         if root is not None and obj.parent is not root:
             obj.parent = root
         curves.append(obj)
-    apply_visibility(settings)
+    builder.apply_visibility(settings)
     return curves
 
 
@@ -112,17 +112,6 @@ def _fill_spline(curve: bpy.types.Curve, footprint: avm_coverage.Footprint) -> N
     for index, (x, y) in enumerate(footprint.points):
         spline.points[index].co = (x, y, CURVE_LIFT, 1.0)
     spline.use_cyclic_u = bool(footprint.closed)
-
-
-def apply_visibility(settings) -> None:
-    """Show/hide the coverage curves with the layer toggle."""
-    for name in avm_layout.CAMERAS:
-        obj = bpy.data.objects.get(f"{CURVE_PREFIX}{builder.CAMERA_SUFFIX[name]}")
-        if obj is None:
-            continue
-        hidden = not settings.show_coverage
-        obj.hide_render = hidden
-        obj.hide_set(hidden)
 
 
 # ---------------------------------------------------------------------------

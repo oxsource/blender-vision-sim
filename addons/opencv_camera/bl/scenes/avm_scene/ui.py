@@ -82,15 +82,35 @@ def _cameras(layout, settings) -> None:
     layout.label(text="Intrinsics live in CV Intrinsics", icon="INFO")
 
 
-def _layers(layout, settings) -> None:
+def _props(layout, settings) -> None:
     column = layout.column(align=True)
-    column.label(text="Layers")
+    column.use_property_split = True
+    column.label(text="Props around the field")
+    column.prop(settings, "prop_pedestrians")
+    column.prop(settings, "prop_boxes")
+    column.prop(settings, "prop_carts")
+
+
+def _ground_text(layout, settings) -> None:
+    column = layout.column(align=True)
+    column.use_property_split = True
+    column.label(text="Ground text")
+    column.prop(settings, "ground_title")
+    column.prop(settings, "label_font")
+    column.prop(settings, "logo_image")
+    column.prop(settings, "logo_size")
+
+
+def _layers(layout, settings) -> None:
+    box = layout.box()
+    box.label(text="Show / Hide", icon="HIDE_OFF")
+    column = box.column(align=True)
     row = column.row(align=True)
-    for name in ("show_ground", "show_car", "show_blocks"):
+    for name in ("show_ground", "show_car", "show_blocks", "show_props"):
         row.prop(settings, name, toggle=True)
     row = column.row(align=True)
-    row.prop(settings, "show_cameras", toggle=True)
-    row.prop(settings, "show_coverage", toggle=True)
+    for name in ("show_cameras", "show_labels", "show_coverage", "show_sun"):
+        row.prop(settings, name, toggle=True)
 
 
 def _actions(layout, context) -> None:
@@ -138,6 +158,8 @@ class _AVMPanel(ScenePanel):
         _field(layout, settings)
         _car(layout, settings)
         _ground_and_blocks(layout, settings)
+        _props(layout, settings)
+        _ground_text(layout, settings)
         _cameras(layout, settings)
         _layers(layout, settings)
 
