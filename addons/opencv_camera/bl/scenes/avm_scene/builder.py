@@ -81,6 +81,9 @@ def _principled(name: str, color, roughness: float = 0.7) -> bpy.types.Material:
     if material is None:
         material = bpy.data.materials.new(name)
     material.use_nodes = True
+    # viewport (solid) shading uses diffuse_color, not the shader nodes
+    material.diffuse_color = color
+    material.roughness = roughness
     nodes = material.node_tree.nodes
     for node in list(nodes):
         nodes.remove(node)
@@ -98,6 +101,7 @@ def _grid_material(name: str, base, line, square: float = 1.0) -> bpy.types.Mate
     if material is None:
         material = bpy.data.materials.new(name)
     material.use_nodes = True
+    material.diffuse_color = base  # viewport solid shading
     nodes = material.node_tree.nodes
     for node in list(nodes):
         nodes.remove(node)

@@ -90,12 +90,14 @@ def _line_material(camera: str) -> bpy.types.Material:
     if material is None:
         material = bpy.data.materials.new(name)
     material.use_nodes = True
+    color = CAMERA_COLORS.get(camera, (1.0, 1.0, 1.0, 1.0))
+    material.diffuse_color = color  # viewport solid shading
     nodes = material.node_tree.nodes
     for node in list(nodes):
         nodes.remove(node)
     output = nodes.new("ShaderNodeOutputMaterial")
     emission = nodes.new("ShaderNodeEmission")
-    emission.inputs["Color"].default_value = CAMERA_COLORS.get(camera, (1.0, 1.0, 1.0, 1.0))
+    emission.inputs["Color"].default_value = color
     emission.inputs["Strength"].default_value = 1.5
     material.node_tree.links.new(emission.outputs["Emission"], output.inputs["Surface"])
     return material
