@@ -199,8 +199,10 @@ hy     = cOutY  + borderH/100 # 场地半长
 
 ### 4.2 相机（每台独立，G）
 
-每台相机的**内参/畸变**保存在各自的 `camera.data.opencv_cam`（沿用现有唯一真源，可在 `CV Intrinsics` 面板独立编辑）；
-AVM PropertyGroup 保存**安装位置与姿态**（Blender 原生表达）与调度信息，用 `CollectionProperty` 存 4 条固定记录：
+**内参完全复用既有的自定义相机配置**：`K`（fx/fy/cx/cy）、畸变 `D`、输出尺寸都住在
+`camera.data.opencv_cam` 上，仍由既有的 `CV Intrinsics` / `CV Presets` / `CV Output` 面板管理。
+AVM PropertyGroup **不新增任何 K/D 字段、不覆盖那些面板**，只保存**安装位置与姿态**（Blender 原生表达）
+与调度信息，用 `CollectionProperty` 存 4 条固定记录：
 
 | 字段 | 说明 |
 | --- | --- |
@@ -277,13 +279,21 @@ Scene Properties
 │   ├── 车辆：长 / 宽 / 高 / 离地间隙
 │   ├── 地面：尺寸
 │   ├── 标定块：抬升
-│   ├── 相机：active_camera 下拉 + 四台相机条目（enable / 位姿 / [选中该相机]）
-│   ├── 图层：地面 / 标定块 / 车辆 / 相机 开关
+│   ├── 相机（仅布局）：active_camera + 四台条目（enable / location / rotation / [选中该相机]）
+│   ├── 图层：地面 / 标定块 / 车辆 / 相机 / 覆盖 开关
 │   └── 动作：[重建] [还原默认] [快速预设 ▾] [覆盖评估] [导入参数…] [导出参数…]
 │            [生成 JSON] [应用 JSON] [移除 AVM Scene]
 ```
 
+> **相机内参不在本面板**：`K`/`D`/输出尺寸完全复用既有的**自定义相机配置**
+> （`CV Intrinsics` / `CV Presets` / `CV Output`，挂在 `camera.data.opencv_cam` 上，§4.2）。
+> AVM 面板只负责**安装位置与姿态**；`[选中该相机]` 只是把该相机设为激活对象，
+> 让用户顺手去改 `CV Intrinsics`，**不复制、不覆盖**那些面板。
+
 **B. 3D Viewport N 面板侧栏（C）**
+
+定位：**只控制各「大件」的布局属性**（尺寸 / 位置 / 姿态 / 图层），
+**不含相机内参、不含参数导入导出**——那些留在 Scene 面板与既有 `CV *` 面板。
 
 结论：**不需要绑定任何实体对象**（`AVM_Root` 只是几何容器、不承载参数），
 但**只在 AVM Scene 已建立时显示**。参数存在 **Scene 级**（决策 B）：
@@ -304,19 +314,23 @@ poll(context)     _has_scene(context)            ← 未建场景时整个侧栏
 - 若将来要支持**一个场景里多个 AVM 场地实例**，那时才需要改成「根空物体 + 面板 poll 认 active object」，
   或给面板加一个 `avm_scene.instances` 枚举来切换实例（届时再议，本期不做）。
 
-布局：与 Scene 面板**共用同一套 draw 辅助函数**，但侧栏窄，只放**紧凑子集**：
+布局（与 Scene 面板共用同一套 draw 辅助函数，只放**布局子集**）：
 
 ```text
 N ▸ VisionSim ▸ AVM Scene            （仅在 AVM Scene 存在时出现）
 ├── 概览（只读一行：场地 480×840 cm）
-├── 场地滑杆：border / corner / inner / core
+├── 场地：border / corner / inner / core 滑杆
 ├── 车辆：长 / 宽 / 高
-├── 相机：active_camera + 4 台 enable
-├── 图层开关
-└── 动作：[重建] [还原默认] [快速预设 ▾] [导入参数…] [导出参数…]
+├── 地面：尺寸
+├── 标定块：抬升
+├── 相机布局：active_camera + 4 台的 location / rotation / enable
+├── 图层开关：地面 / 标定块 / 车辆 / 相机 / 覆盖
+└── 动作：[重建] [还原默认]
 ```
 
-> JSON 文本框（§8.2 的 textarea）**只放 Scene 面板**，不塞进 N 侧栏。
+> - **相机内参**（K/D/输出尺寸）与**参数导入导出 / JSON 文本框 / 快速预设**都**只在 Scene 面板**，
+>   N 侧栏不放（侧栏窄，且这些不属于「布局」）；
+> - N 侧栏的 `[选中该相机]`（如有）同样只是切激活对象，引导到 `CV Intrinsics`。
 
 ### 5.3 快速预设（与 HTML 相同，尺寸参数）
 
@@ -536,8 +550,9 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
   成功后回填全部面板控件并触发一次重建；
 - **解析容错**：沿用 HTML 的 `sizeFrom()`（`"wxh"` / 数字 / `[w,h]` / `{width,height}`）；
 - **往返稳定**：`导出 → 导入 → 再导出` 结果逐字节稳定（单测覆盖）；
-- **相机**：完整格式的 `K/D` 写入各相机 `opencv_cam`，`location` / `rotation` 写入
-  `avm_scene.cameras[i]` 并驱动物体变换（R/t 由插件自动同步，不进文件，§5.1）；
+- **相机**：完整格式的 `K/D` 从各相机的 `opencv_cam` **读取**（导出）/ **写入**（导入），
+  不经过 AVM 自己的属性（§4.2）；`location` / `rotation` 写入 `avm_scene.cameras[i]`
+  并驱动物体变换（R/t 由插件自动同步，不进文件，§5.1）；
 - **默认值**：一键建场景时默认套用 minibus 的完整参数（即内置一份默认 `avm_scene` 参数）。
 
 ### 8.4 算子
@@ -568,7 +583,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | `bl/scenes/base.py` | 新增 | `SceneDefinition`、`has_scene`、root/集合命名、`ScenePanelMixin`、公共算子模板 |
 | `bl/scenes/debounce.py` | 新增 | 通用去抖定时器（从 `preview.py` 抽出，多场景共用） |
 | `bl/scenes/camera_scene.py` | **迁移** | ← `bl/scene_builder.py`（行为/命名不变，§17.5） |
-| `bl/scenes/avm_scene/properties.py` | 新增 | PropertyGroup（场地/车辆/地面/标定块/相机集合 + `root` 指针）+ update 回调 |
+| `bl/scenes/avm_scene/properties.py` | 新增 | PropertyGroup（场地/车辆/地面/标定块 + **相机位姿**集合 + `root` 指针；**内参不在此**，§4.2）+ update 回调 |
 | `bl/scenes/avm_scene/builder.py` | 新增 | 建/重建对象、材质、mesh；创建 `AVM_Root` 并回写 `settings.root`；4 台相机创建、内参与位姿写入；覆盖曲线对象 `AVM_Coverage_*` |
 | `bl/scenes/avm_scene/controller.py` | 新增 | 去抖重建（复用 `bl/scenes/debounce.py`） |
 | `bl/scenes/avm_scene/io.py` | 新增 | 参数序列化 / 反序列化：完整 + 精简格式、JSON/YAML、校验、版本迁移（§8） |
@@ -653,6 +668,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | 14 | 相机朝向未做图像级验证 | **P2 渲染一张对照**：检查标定块投影落在 `points_2d` 附近（残差见 §6.5） |
 | 15 | int cm 取整 | **面板/导出 int cm，内部 float m**；导出时取整，避免 `100.0` vs `100` |
 | 16 | `ba_opt` 导致 left/right 固有偏差 | **文档写明，非 bug**（§14） |
+| 17 | 相机内参归属与面板分工 | **内参复用既有自定义相机配置**（`camera.data.opencv_cam` + `CV Intrinsics/Presets/Output`），AVM 面板只管**安装位姿**；**N 面板只放各「大件」的布局属性**（尺寸/位置/姿态/图层），不含内参、不含导入导出 |
 
 > **#13 的影响**：删掉原 P6 的「检测回环」；新增一个「导出 4 路渲染图」的小能力
 > （`opencv_cam.avm_render_cameras`，按各相机自身的 K/D/输出尺寸渲染到 PNG 目录），
@@ -872,7 +888,7 @@ addons/opencv_camera/
 │       ├── camera_scene.py                 # ← 迁移自 bl/scene_builder.py（行为不变，§17.5）
 │       └── avm_scene/
 │           ├── __init__.py                 # 元数据 + register 编排
-│           ├── properties.py               # 场地/车辆/地面/标定块/相机集合 + root 指针
+│           ├── properties.py               # 场地/车辆/地面/标定块 + 相机位姿集合（内参不在此，§4.2）+ root 指针
 │           ├── builder.py                  # 建/重建对象、材质、相机、覆盖曲线
 │           ├── controller.py               # 去抖重建
 │           ├── io.py                       # 参数导入导出（完整/精简）
