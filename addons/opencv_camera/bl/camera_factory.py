@@ -40,6 +40,23 @@ def default_name(model: str) -> str:
     }.get(model, "OpenCVCamera")
 
 
+def resolve_camera(context):
+    """The camera to work on, or ``None``.
+
+    Prefers the active object when it is a camera, otherwise falls back to
+    ``context.camera`` (the camera shown in Object Data Properties) so the panel
+    operators keep working while some other object is selected.
+    """
+    obj = getattr(context, "active_object", None)
+    if obj is not None and obj.type == "CAMERA":
+        return obj
+    for candidate in (getattr(context, "camera", None),
+                      getattr(getattr(context, "scene", None), "camera", None)):
+        if candidate is not None and candidate.type == "CAMERA":
+            return candidate
+    return None
+
+
 def add_camera(
     scene: bpy.types.Scene,
     model: str = "fisheye",

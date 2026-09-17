@@ -23,7 +23,8 @@ import numpy as np  # noqa: E402
 
 import opencv_camera  # noqa: E402
 from opencv_camera.bl import apply as apply_mod
-from opencv_camera.bl import camera_factory, preview, scene_builder
+from opencv_camera.bl import camera_factory, preview
+from opencv_camera.bl.scenes import camera_scene
 from opencv_camera.bl.properties import DEFAULT_DISTORTION, DEFAULT_INTRINSICS  # noqa: E402
 from opencv_camera.bl import selftest, shader  # noqa: E402
 from opencv_camera.core import calibration_io, camera_model, presets, transform  # noqa: E402
@@ -376,12 +377,12 @@ def test_camera_scene_builder():
     set_distortion(settings)
     ok, messages = apply_mod.apply_settings(cam_data, settings, scene)
     check("scene builder: apply ok", ok, "; ".join(messages))
-    created = scene_builder.build(camera, scene)
+    created = camera_scene.build(camera, scene)
     check("scene builder creates objects", len(created) >= 6, f"{[o.name for o in created]}")
     check("scene builder sets the resolution from the intrinsics",
           (scene.render.resolution_x, scene.render.resolution_y) == (640, 480)
           or True)  # prepare_render is only called by the operator path
-    scene_builder.prepare_render(scene, settings, samples=8)
+    camera_scene.prepare_render(scene, settings, samples=8)
     check("prepare_render uses the calibrated resolution",
           (scene.render.resolution_x, scene.render.resolution_y) == (640, 480),
           f"{scene.render.resolution_x}x{scene.render.resolution_y}")
@@ -782,7 +783,7 @@ def test_menus_and_raw_params():
     check("camera scene uses a fisheye custom camera",
           scene.camera is not None and scene.camera.data.type == "CUSTOM"
           and scene.camera.data.custom_shader.name == "opencv_fisheye.osl")
-    from opencv_camera.bl import scene_builder as sb
+    from opencv_camera.bl.scenes import camera_scene as sb
     check("scene collection name", sb.COLLECTION_NAME == "OpenCV Camera Scene", sb.COLLECTION_NAME)
     names = sorted(o.name for o in bpy.data.collections[sb.COLLECTION_NAME].objects)
     check("scene elements carry no 'Test' in their names",
@@ -790,6 +791,44 @@ def test_menus_and_raw_params():
     check("scene element names", names == ["CheckerCube", "CheckerGround", "ColorBlock0",
                                            "ColorBlock1", "ColorBlock2", "ColorBlock3",
                                            "KeyLight", "SunLight"], str(names))
+
+
+def test_scene_registry():
+    """Scenes live in a registry that drives the menu and the panel scaffolding."""
+    from opencv_camera.bl import scenes as scenes_mod
+    from opencv_camera.bl.scenes import camera_scene, debounce
+
+    definitions = scenes_mod.definitions()
+    ids = [definition.id for definition in definitions]
+    check("camera scene is registered", "camera_scene" in ids, str(ids))
+    check("definitions are sorted by menu order",
+          ids == [definition.id for definition in
+                  sorted(definitions, key=lambda entry: entry.order)])
+    camera = scenes_mod.definition("camera_scene")
+    check("camera scene metadata",
+          camera is not None and camera.label == "Camera Scene"
+          and camera.add_operator == "opencv_cam.add_camera_scene"
+          and camera.collection_name == camera_scene.COLLECTION_NAME,
+          str(camera))
+    check("unknown scene id resolves to None", scenes_mod.definition("nope") is None)
+    check("one-shot scenes have no panel", not camera.has_panel)
+
+    # the deprecated shim still forwards
+    from opencv_camera.bl import scene_builder
+    check("scene_builder shim forwards",
+          scene_builder.COLLECTION_NAME == camera_scene.COLLECTION_NAME
+          and scene_builder.build is camera_scene.build)
+
+    # has_scene is False without a root pointer, and never raises
+    check("has_scene is False without a root",
+          scenes_mod.has_scene(bpy.context, camera) is False)
+
+    # the debounce timer does not fire in background mode
+    called = []
+    debounce.schedule("test", lambda: called.append(1))
+    check("debounce is a no-op in background",
+          debounce.pending("test") is False and not called)
+    debounce.cancel("test")
 
 
 def test_add_camera_default_preset():
@@ -1061,6 +1100,7 @@ def main():
         test_add_camera_default_preset,
         test_panel_layout,
         test_menus_and_raw_params,
+        test_scene_registry,
         test_presets,
         test_shader_text_upgrade_recompiles,
         test_live_apply,

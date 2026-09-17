@@ -14,24 +14,12 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from ..core import calibration_io, presets
 from . import apply as apply_mod
-from . import camera_factory, preview, scene_builder, selftest, shader
+from . import camera_factory, preview, selftest, shader
 
 
 def _camera_object(context):
-    """Resolve the camera to work on.
-
-    Prefers the active object when it is a camera, otherwise falls back to
-    ``context.camera`` (the camera shown in Object Data Properties) so the panel
-    operators keep working while some other object is selected.
-    """
-    obj = context.active_object
-    if obj is not None and obj.type == "CAMERA":
-        return obj
-    for candidate in (getattr(context, "camera", None),
-                      getattr(getattr(context, "scene", None), "camera", None)):
-        if candidate is not None and candidate.type == "CAMERA":
-            return candidate
-    return None
+    """Resolve the camera to work on (see :func:`camera_factory.resolve_camera`)."""
+    return camera_factory.resolve_camera(context)
 
 
 class _CameraOperator:
@@ -498,49 +486,6 @@ class OPENCV_CAM_OT_save_preview(_CameraOperator, bpy.types.Operator, ExportHelp
         return {"FINISHED"}
 
 
-class OPENCV_CAM_OT_add_camera_scene(bpy.types.Operator):
-    """Create a checker cube/ground/lights in front of the camera"""
-
-    bl_idname = "opencv_cam.add_camera_scene"
-    bl_label = "Camera Scene"
-    bl_description = (
-        "Create a checker cube, ground grid and lights in front of the camera, "
-        "apply the current intrinsics and set up Cycles - then press F12 to look "
-        "at the distortion. Adds a fisheye camera first when the scene has none"
-    )
-    bl_options = {"REGISTER", "UNDO"}
-
-    distance: FloatProperty(name="Distance", default=4.0, min=0.5, max=100.0)
-    samples: IntProperty(name="Samples", default=64, min=1, max=4096)
-
-    @classmethod
-    def poll(cls, context):
-        return getattr(context, "scene", None) is not None
-
-    def execute(self, context):
-        obj = _camera_object(context)
-        if obj is None:
-            try:
-                obj, messages = camera_factory.add_camera(context.scene, model="fisheye")
-            except Exception as exc:
-                self.report({"ERROR"}, f"{type(exc).__name__}: {exc}")
-                return {"CANCELLED"}
-            _report_messages(self, messages)
-            self.report({"INFO"}, f"no camera in the scene: added {obj.name} first")
-        ok, messages, created = scene_builder.apply_and_build(
-            obj, context.scene, samples=self.samples
-        )
-        _report_messages(self, messages, "INFO" if ok else "ERROR")
-        if not ok:
-            return {"CANCELLED"}
-        self.report(
-            {"INFO"},
-            f"camera scene ready ({len(created)} objects, "
-            f"{context.scene.render.resolution_x}x{context.scene.render.resolution_y}) - press F12",
-        )
-        return {"FINISHED"}
-
-
 class OPENCV_CAM_OT_selftest(_CameraOperator, bpy.types.Operator):
     bl_idname = "opencv_cam.self_test"
     bl_label = "Run Self Test"
@@ -594,7 +539,6 @@ _CLASSES = (
     OPENCV_CAM_OT_recompile,
     OPENCV_CAM_OT_preview,
     OPENCV_CAM_OT_save_preview,
-    OPENCV_CAM_OT_add_camera_scene,
     OPENCV_CAM_OT_install_shader,
     OPENCV_CAM_OT_import_calibration,
     OPENCV_CAM_OT_export_calibration,
