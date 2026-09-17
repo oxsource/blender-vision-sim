@@ -17,7 +17,7 @@ from mathutils import Matrix
 
 from ....core.scenes import avm_coverage, avm_layout
 from ... import apply as apply_mod
-from ... import camera_factory
+from ... import camera_factory, shader
 from ..base import collection, link_to_collection, remove_collection_objects
 
 ROOT_NAME = "AVM_Root"
@@ -129,9 +129,10 @@ def _parent(obj: bpy.types.Object, root: bpy.types.Object) -> None:
 
 
 def _ensure_cameras(scene: bpy.types.Scene, settings, target: bpy.types.Collection,
-                    preset_cameras: Dict[str, Dict]) -> Dict[str, bpy.types.Object]:
+                    preset_cameras: Dict[str, Dict]):
     """Create the four fisheye cameras, configured from the preset records."""
     cameras: Dict[str, bpy.types.Object] = {}
+    messages: List[str] = []
     for name in avm_layout.CAMERAS:
         object_name = f"{CAMERA_PREFIX}{CAMERA_SUFFIX[name]}"
         camera = bpy.data.objects.get(object_name)
@@ -146,15 +147,22 @@ def _ensure_cameras(scene: bpy.types.Scene, settings, target: bpy.types.Collecti
             # scene owns these names, so force them
             camera.name = object_name
             camera.data.name = object_name
-            _configure_camera(camera, record, scene)
+            ok, apply_messages = _configure_camera(camera, record, scene)
+            if not ok:
+                messages.append(f"{name}: " + "; ".join(apply_messages))
         link_to_collection(camera, target)
         cameras[name] = camera
-    return cameras
+    return cameras, messages
 
 
 def _configure_camera(camera: bpy.types.Object, record: Dict,
-                      scene: bpy.types.Scene) -> None:
-    """Write the preset's K / D / output into the camera's own settings."""
+                      scene: bpy.types.Scene):
+    """Write the preset's K / D / output into the camera's own settings.
+
+    Returns ``(ok, messages)`` - the shader compile can fail (see
+    :func:`bl.shader.force_compile`), and silently shipping an uncompiled camera
+    would render with no lens model at all.
+    """
     settings = camera.data.opencv_cam
     intrinsics = settings.intrinsics
     fx, fy, cx, cy = record.get("K", (0.0, 0.0, 0.0, 0.0))
@@ -172,7 +180,7 @@ def _configure_camera(camera: bpy.types.Object, record: Dict,
     (distortion.k1, distortion.k2, distortion.k3,
      distortion.k4) = (float(value) for value in coefficients[:4])
     settings.output.mode = "calibration"
-    apply_mod.apply_settings(camera.data, settings, scene)
+    return apply_mod.apply_settings(camera.data, settings, scene)
 
 
 def apply_camera_pose(camera: bpy.types.Object, location, rotation_deg) -> None:
@@ -195,7 +203,7 @@ def apply_camera_pose(camera: bpy.types.Object, location, rotation_deg) -> None:
 # ---------------------------------------------------------------------------
 # build / rebuild
 # ---------------------------------------------------------------------------
-def build(scene: bpy.types.Scene, settings, preset: Optional[Dict] = None) -> Dict[str, List]:
+def build(scene: bpy.types.Scene, settings, preset: Optional[Dict] = None) -> Dict:
     """Create the scene objects and return them (also stored on ``settings``)."""
     from . import controller
 
@@ -207,8 +215,10 @@ def build(scene: bpy.types.Scene, settings, preset: Optional[Dict] = None) -> Di
     settings.root = root
     preset_cameras = {record["name"]: record
                       for record in avm_layout.cameras_from_preset(preset)}
-    _ensure_cameras(scene, settings, target, preset_cameras)
-    return rebuild(scene, settings)
+    _, messages = _ensure_cameras(scene, settings, target, preset_cameras)
+    created = rebuild(scene, settings)
+    created["messages"] = messages
+    return created
 
 
 def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
@@ -268,6 +278,7 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
 
     # cameras --------------------------------------------------------------
     camera_objects = []
+    messages: List[str] = []
     for index, name in enumerate(avm_layout.CAMERAS):
         record = settings.camera(name)
         camera = bpy.data.objects.get(f"{CAMERA_PREFIX}{CAMERA_SUFFIX[name]}")
@@ -276,6 +287,13 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
         camera.hide_render = not (record.enable if record else True) or not settings.show_cameras
         if record is not None:
             apply_camera_pose(camera, record.location, record.rotation)
+        # repair a camera without bytecode (e.g. a compile that failed when it
+        # was created, or a .blend from before the Cycles osl fix)
+        if not shader.is_compiled(camera.data):
+            ok, apply_messages = apply_mod.apply_settings(
+                camera.data, camera.data.opencv_cam, scene)
+            if not ok:
+                messages.append(f"{name}: " + "; ".join(apply_messages))
         # only the active camera drives the scene resolution
         camera.data.opencv_cam.output.lock_scene_resolution = (name == settings.active_camera)
         _parent(camera, root)
@@ -302,6 +320,7 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
         "blocks": block_objects,
         "cameras": camera_objects,
         "sun": sun,
+        "messages": messages,
     }
 
 

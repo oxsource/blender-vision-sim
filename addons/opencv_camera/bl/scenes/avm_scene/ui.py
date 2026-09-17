@@ -18,7 +18,7 @@ from ....core.scenes import avm_layout
 from ..base import ScenePanel
 from . import DEFINITION
 
-CATEGORY = "VisionSim"
+CATEGORY = "AVM Scene"
 
 
 def _overview(layout, settings) -> None:

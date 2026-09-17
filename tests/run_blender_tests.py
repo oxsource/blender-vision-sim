@@ -1098,6 +1098,26 @@ def test_avm_coverage_and_export():
                                            encoding="utf-8").read())
 
 
+def test_shader_force_compile():
+    """force_compile must work: Blender 4.5 does not re-export cycles.osl."""
+    from opencv_camera.bl import shader
+
+    check("cycles osl submodule is found", shader.cycles_osl_module() is not None)
+    scene = setup_scene(resolution=128, samples=4)
+    clear_scene()
+    setup_scene(resolution=128, samples=4)
+    camera, cam_data = make_camera("ForceCompileCam")
+    apply_mod.apply_settings(cam_data, cam_data.opencv_cam, scene)
+    check("camera compiles normally", shader.is_compiled(cam_data))
+
+    # simulate the fallback path: wipe the bytecode and compile explicitly
+    cam_data.custom_bytecode = ""
+    check("bytecode cleared", not shader.is_compiled(cam_data))
+    messages = shader.force_compile(cam_data)
+    check("force_compile produced bytecode",
+          shader.is_compiled(cam_data), "; ".join(messages)[:200])
+
+
 def test_add_camera_default_preset():
     """The Add menu path (no preset argument) must use the add-on defaults.
 
@@ -1372,6 +1392,7 @@ def main():
         test_avm_panels,
         test_avm_io,
         test_avm_coverage_and_export,
+        test_shader_force_compile,
         test_presets,
         test_shader_text_upgrade_recompiles,
         test_live_apply,

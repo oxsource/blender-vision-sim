@@ -27,6 +27,23 @@ MODEL_SHADERS: Dict[str, str] = {
 }
 
 
+__all__ = [
+    "MODEL_SHADERS",
+    "shader_filename",
+    "shader_source",
+    "installed_text",
+    "install_shader",
+    "attach",
+    "is_compiled",
+    "cycles_custom_params",
+    "cycles_addon_module",
+    "cycles_osl_module",
+    "report_callback",
+    "force_compile",
+    "ensure_compiled",
+]
+
+
 def shader_filename(model: str) -> str:
     """Bundled shader that implements ``model``."""
     return MODEL_SHADERS.get(model, MODEL_SHADERS[camera_model.MODEL_BROWN_CONRADY])
@@ -117,6 +134,27 @@ def cycles_addon_module():
     return None
 
 
+def cycles_osl_module():
+    """The ``cycles.osl`` submodule, or ``None``.
+
+    Blender 4.5 no longer re-exports ``osl`` from the ``cycles`` package
+    (``cycles/__init__.py`` does not import it), so ``getattr(cycles, "osl")``
+    returns ``None`` even with Cycles enabled - the submodule has to be imported
+    explicitly.  Without this the ``force_compile`` fallback silently fails and
+    a custom camera can end up with no bytecode at all.
+    """
+    module = cycles_addon_module()
+    if module is None:
+        return None
+    osl = getattr(module, "osl", None)
+    if osl is not None:
+        return osl
+    try:
+        return importlib.import_module(f"{module.__name__}.osl")
+    except ImportError:
+        return None
+
+
 def force_compile(cam_data) -> List[str]:
     """Ask the Cycles add-on to (re)compile the attached shader.
 
@@ -125,12 +163,12 @@ def force_compile(cam_data) -> List[str]:
     add-on drives it explicitly as a fallback.
     """
     messages: List[str] = []
-    module = cycles_addon_module()
-    if module is None or not hasattr(module, "osl"):
+    osl = cycles_osl_module()
+    if osl is None or not hasattr(osl, "update_custom_camera_shader"):
         messages.append("Cycles add-on unavailable: cannot compile the OSL camera shader")
         return messages
     try:
-        module.osl.update_custom_camera_shader(cam_data, report_callback(messages))
+        osl.update_custom_camera_shader(cam_data, report_callback(messages))
     except Exception as exc:  # defensive: never break an operator on a Cycles change
         messages.append(f"{type(exc).__name__}: {exc}")
     return messages

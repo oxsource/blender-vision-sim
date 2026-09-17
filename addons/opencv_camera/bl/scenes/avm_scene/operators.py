@@ -72,6 +72,9 @@ class OPENCV_CAM_OT_avm_add_scene(_AVMOperator, bpy.types.Operator):
             self.report({"ERROR"}, f"{type(exc).__name__}: {exc}")
             return {"CANCELLED"}
         created = builder.build(scene, settings, preset=preset)
+        messages = created.get("messages") or []
+        for message in messages:
+            self.report({"WARNING"}, message)
         self.report(
             {"INFO"},
             f"AVM Scene ready: 1 ground, 1 car, {len(created['blocks'])} blocks, "
