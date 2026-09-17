@@ -5,10 +5,12 @@ Supported inputs (auto-detected from the content, not the extension):
 * OpenCV ``FileStorage`` YAML/XML-ish YAML produced by ``cv2.calibrateCamera``
   (``camera_matrix`` / ``distortion_coefficients`` / ``image_width`` / ...).
 * JSON with the same key layout (row-major ``camera_matrix`` list or nested).
-* ROS ``camera_info`` YAML (``K``/``D``/``P`` are not used; the nested
-  ``camera_matrix`` / ``distortion_coefficients`` blocks are).
+* ROS ``camera_info`` YAML (nested ``camera_matrix`` / ``distortion_coefficients``).
 * Kalibr ``camchain``/``cam`` YAML (``intrinsics: [fx, fy, cx, cy]``,
   ``distortion_coeffs``, ``distortion_model``).
+* Multi-camera app configs such as ``filament_avm`` (``cameras: [{name, K, D,
+  input_size}]``); pass ``camera_name`` to pick one, otherwise the first enabled
+  camera is used.
 
 Outputs: JSON and a ROS-style YAML mapping (readable by ``cv2.FileStorage`` and
 by any YAML parser).
@@ -190,13 +192,22 @@ def parse_yaml_subset(text: str) -> Dict:
 # extraction
 # ---------------------------------------------------------------------------
 def _floats(values) -> List[float]:
+    """Flatten numbers out of lists / nested lists / ``{"data": [...]}`` blocks."""
     if values is None:
         return []
     if isinstance(values, dict):
-        values = values.get("data", [])
+        return _floats(values.get("data", []))
     if isinstance(values, (int, float)):
         return [float(values)]
-    return [float(v) for v in values]
+    out: List[float] = []
+    for item in values:
+        if isinstance(item, (list, tuple)):
+            out.extend(_floats(item))
+        elif isinstance(item, dict):
+            out.extend(_floats(item.get("data", [])))
+        else:
+            out.append(float(item))
+    return out
 
 
 def _matrix(doc: Dict, key: str) -> List[float]:
@@ -218,9 +229,11 @@ def _model_from_name(name: str) -> str:
 def _calibration_from_doc(doc: Dict, source: str) -> Calibration:
     width = int(doc.get("image_width") or doc.get("width") or 0)
     height = int(doc.get("image_height") or doc.get("height") or 0)
-    resolution = doc.get("resolution")
-    if isinstance(resolution, (list, tuple)) and len(resolution) >= 2:
-        width, height = int(resolution[0]), int(resolution[1])
+    for key in ("resolution", "input_size", "image_size"):
+        value = doc.get(key)
+        if not width or not height:
+            if isinstance(value, (list, tuple)) and len(value) >= 2:
+                width, height = int(value[0]), int(value[1])
 
     matrix = _matrix(doc, "camera_matrix") or _matrix(doc, "K")
     intrinsics = _matrix(doc, "intrinsics")
@@ -239,7 +252,8 @@ def _calibration_from_doc(doc: Dict, source: str) -> Calibration:
     if not width or not height:
         raise ValueError("calibration has no image size (image_width/image_height)")
 
-    coeffs = _matrix(doc, "distortion_coefficients") or _matrix(doc, "distortion_coeffs")
+    coeffs = (_matrix(doc, "distortion_coefficients") or _matrix(doc, "distortion_coeffs")
+              or _matrix(doc, "D"))
     model = _model_from_name(
         doc.get("distortion_model") or doc.get("camera_model") or doc.get("model") or ""
     )
@@ -262,7 +276,30 @@ def _calibration_from_doc(doc: Dict, source: str) -> Calibration:
     )
 
 
-def load_calibration(path: str) -> Calibration:
+def _select_app_camera(doc: Dict, camera_name: Optional[str] = None) -> Optional[Dict]:
+    """Pick a camera out of a multi-camera application config (filament_avm style)."""
+    cameras = doc.get("cameras")
+    if not isinstance(cameras, list):
+        return None
+    candidates = [
+        cam for cam in cameras
+        if isinstance(cam, dict) and (cam.get("K") or cam.get("camera_matrix"))
+    ]
+    if not candidates:
+        return None
+    if camera_name:
+        for cam in candidates:
+            if str(cam.get("name", "")).lower() == camera_name.lower():
+                return cam
+        raise ValueError(
+            f"camera {camera_name!r} not found (available: "
+            + ", ".join(str(c.get("name")) for c in candidates) + ")"
+        )
+    enabled = [cam for cam in candidates if cam.get("enable", True)]
+    return (enabled or candidates)[0]
+
+
+def load_calibration(path: str, camera_name: Optional[str] = None) -> Calibration:
     """Load a calibration file, auto-detecting JSON vs the YAML subset."""
     text = open(path, "r", encoding="utf-8", errors="replace").read()
     stripped = text.lstrip()
@@ -272,14 +309,19 @@ def load_calibration(path: str) -> Calibration:
         doc = parse_yaml_subset(text)
     if not isinstance(doc, dict):
         raise ValueError(f"{os.path.basename(path)}: expected a mapping at the top level")
-    # a Kalibr camchain nests the camera under 'cam0'/'cam1'/... or 'camera'
-    for key in ("camera", "cam0", "cam"):
-        nested = doc.get(key)
-        if isinstance(nested, dict) and (
-            nested.get("camera_matrix") or nested.get("intrinsics") or nested.get("K")
-        ):
-            doc = nested
-            break
+    selected = _select_app_camera(doc, camera_name)
+    if selected is not None:
+        selected.setdefault("_camera_name", selected.get("name", ""))
+        doc = selected
+    else:
+        # a Kalibr camchain nests the camera under 'cam0'/'cam1'/... or 'camera'
+        for key in ("camera", "cam0", "cam"):
+            nested = doc.get(key)
+            if isinstance(nested, dict) and (
+                nested.get("camera_matrix") or nested.get("intrinsics") or nested.get("K")
+            ):
+                doc = nested
+                break
     return _calibration_from_doc(doc, source=path)
 
 

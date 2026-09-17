@@ -172,6 +172,28 @@ def test_bundled_preset():
                                                    calib.distortion.k3, calib.distortion.k4])
 
 
+def test_filament_avm_config():
+    """A multi-camera app config (K/D/input_size, nested K) must be importable."""
+    path = os.path.join(ROOT, "..", "..", "..", "codes", "filament_avm", "configs",
+                        "vehicle_avm_minibus.json")
+    path = os.path.normpath(path)
+    if not os.path.exists(path):
+        print("[SKIP] filament_avm config not present")
+        return
+    calib = calibration_io.load_calibration(path, camera_name="front")
+    check("avm config intrinsics", approx(calib.intrinsics.fx, 317.77563818112867)
+          and approx(calib.intrinsics.cy, 477.8201435641188))
+    check("avm config size from input_size", (calib.width, calib.height) == (1280, 960))
+    # the file has no distortion_model, so the 4 values are read with the default
+    # (Brown-Conrady) meaning; the UI/model selector is where fisheye is chosen
+    check("avm config coefficients parsed",
+          approx(calib.distortion.k1, 0.08476733270570755)
+          and approx(calib.distortion.p1, -0.037989564107367736)
+          and calib.model_name == "")
+    other = calibration_io.load_calibration(path, camera_name="left")
+    check("avm config camera selection", other.source.endswith("vehicle_avm_minibus.json"))
+
+
 def test_calibration_io():
     tmp = tempfile.mkdtemp(prefix="opencv_cam_test_")
     opencv_yaml = """
@@ -246,7 +268,8 @@ cam0:
 
 def main():
     for test in (test_intrinsics, test_distortion_roundtrip, test_fisheye, test_projection,
-                 test_transform, test_lens_conversion, test_bundled_preset, test_calibration_io):
+                 test_transform, test_lens_conversion, test_bundled_preset,
+                 test_filament_avm_config, test_calibration_io):
         test()
     print()
     if FAILURES:

@@ -123,7 +123,8 @@ class OPENCV_CAM_OT_import_calibration(_CameraOperator, bpy.types.Operator, Impo
         note = ""
         if not calibration.model_name:
             note = (" (no distortion_model in the file: coefficients were read as "
-                    f"{calibration.distortion.model}; switch the model if that is wrong)")
+                    f"{calibration.distortion.model} - pick Fisheye in the panel if this "
+                    "is a wide angle / AVM lens)")
         self.report(
             {"INFO"},
             f"{os.path.basename(self.filepath)}: {calibration.width}x{calibration.height}, "

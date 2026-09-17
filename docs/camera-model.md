@@ -194,7 +194,22 @@ R_wc = R_bᵀ               # camera → world，即 object 旋转
 两张图使用同一套 K（fx=317.78, cx=636.23, cy=477.82，1280×960）与同一场景，仅切换
 `enable_distortion`。
 
-## 9. 参考
+## 9. 导入其它工程的相机配置
+
+除标准标定文件外，`Import Calibration` 也接受多相机应用配置（如 `filament_avm` 的
+`configs/vehicle_avm_minibus.json`：`cameras: [{name, K, D, input_size}]`），可用
+`camera_name` 选择具体相机：
+
+```python
+from opencv_camera.core import calibration_io
+calib = calibration_io.load_calibration("vehicle_avm_minibus.json", camera_name="front")
+```
+
+注意：该类配置**没有** `distortion_model` 字段，插件会按默认的 Brown-Conrady 读取 4 个系数并给出
+提示——AVM 这类广角镜头应把面板里的 `Model` 切到 `Fisheye`（仓库自带的
+`presets/avm_minibus_front.yaml` 已显式写为 `distortion_model: equidistant`，可直接导入）。
+
+## 10. 参考
 
 - Blender Manual · Custom Camera · <https://docs.blender.org/manual/en/5.2/render/cycles/osl/camera.html>
 - Blender Manual · OSL · <https://docs.blender.org/manual/en/5.2/render/cycles/osl/index.html>
