@@ -28,7 +28,7 @@ from opencv_camera.bl import camera_factory, preview
 from opencv_camera.bl.scenes import camera_scene
 from opencv_camera.bl.properties import DEFAULT_DISTORTION, DEFAULT_INTRINSICS  # noqa: E402
 from opencv_camera.bl import selftest, shader  # noqa: E402
-from opencv_camera.core import calibration_io, camera_model, presets, transform  # noqa: E402
+from opencv_camera.core import calibration_io, camera_model, paths, presets, transform  # noqa: E402
 
 FAILURES = []
 TMPDL = tempfile.mkdtemp(prefix="opencv_cam_blender_test_")
@@ -842,7 +842,10 @@ def test_avm_scene_builder():
     scene = setup_scene(resolution=128, samples=4)
 
     check("avm add operator registered", "avm_add_scene" in dir(bpy.ops.opencv_cam))
+    scene.render.engine = "BLENDER_EEVEE_NEXT"
     check("add AVM scene", bpy.ops.opencv_cam.avm_add_scene() == {"FINISHED"})
+    check("building switches the scene to Cycles (custom cameras need it)",
+          scene.render.engine == "CYCLES", scene.render.engine)
 
     settings = scene.avm_scene
     definition = scenes_mod.definition("avm_scene")
@@ -870,7 +873,10 @@ def test_avm_scene_builder():
     labels = sorted(name for name in names if name.startswith("AVM_Label_"))
     check("ground text objects",
           labels == ["AVM_Label_Back", "AVM_Label_Front", "AVM_Label_Left",
-                     "AVM_Label_Right", "AVM_Label_Title"], str(labels))
+                     "AVM_Label_Logo", "AVM_Label_Right", "AVM_Label_Title"],
+          str(labels))
+    check("the bundled logo is used by default",
+          bpy.data.objects["AVM_Label_Logo"].data.materials[0] is not None)
     check("ground text bodies",
           bpy.data.curves["AVM_Label_Front"].body == "前"
           and bpy.data.curves["AVM_Label_Title"].body == "AVM 仿真标定场地",
@@ -1195,6 +1201,23 @@ def test_avm_visibility_and_logo():
     settings.show_props = True
     check("visibility changes skip the rebuild", settings.revision == revision)
 
+    # default: the logo bundled with the add-on (so it survives a restart)
+    check("bundled logo exists", os.path.exists(paths.logo_file()), paths.logo_file())
+    settings.logo_image = ""
+    settings.logo_enabled = True
+    bpy.ops.opencv_cam.avm_rebuild()
+    logo = bpy.data.objects.get("AVM_Label_Logo")
+    check("empty logo_image falls back to the bundled logo", logo is not None)
+    check("bundled logo is square (750x750)",
+          abs(logo.dimensions.x - 1.2) < 1e-4 and abs(logo.dimensions.y - 1.2) < 1e-4,
+          f"{tuple(round(v, 3) for v in logo.dimensions)}")
+
+    settings.logo_enabled = False
+    bpy.ops.opencv_cam.avm_rebuild()
+    check("logo_enabled = False removes the logo",
+          bpy.data.objects.get("AVM_Label_Logo") is None)
+    settings.logo_enabled = True
+
     logo_path = os.path.join(ROOT, "docs", "images", "preview_example.png")
     check("a logo image is available for the test", os.path.exists(logo_path))
     settings.logo_image = logo_path
@@ -1216,8 +1239,8 @@ def test_avm_visibility_and_logo():
 
     settings.logo_image = ""
     bpy.ops.opencv_cam.avm_rebuild()
-    check("logo removed when the image is cleared",
-          bpy.data.objects.get("AVM_Label_Logo") is None)
+    check("clearing logo_image falls back to the bundled logo",
+          bpy.data.objects.get("AVM_Label_Logo") is not None)
 
 
 def test_add_camera_default_preset():

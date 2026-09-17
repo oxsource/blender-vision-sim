@@ -97,7 +97,10 @@ def _ground_text(layout, settings) -> None:
     column.label(text="Ground text")
     column.prop(settings, "ground_title")
     column.prop(settings, "label_font")
-    column.prop(settings, "logo_image")
+    column.prop(settings, "logo_enabled")
+    row = column.row()
+    row.enabled = settings.logo_enabled
+    row.prop(settings, "logo_image")
     column.prop(settings, "logo_size")
 
 

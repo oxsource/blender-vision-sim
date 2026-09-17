@@ -95,6 +95,8 @@ class OPENCV_CAM_OT_avm_rebuild(_AVMSceneOperator, bpy.types.Operator):
         if created is None:
             self.report({"WARNING"}, "no AVM Scene to rebuild")
             return {"CANCELLED"}
+        for message in created.get("messages") or []:
+            self.report({"WARNING"}, message)
         self.report({"INFO"}, "AVM Scene rebuilt")
         return {"FINISHED"}
 

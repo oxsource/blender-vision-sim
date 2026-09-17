@@ -16,6 +16,7 @@ import bmesh
 import bpy
 from mathutils import Matrix
 
+from ....core import paths
 from ....core.scenes import avm_coverage, avm_layout
 from ... import apply as apply_mod
 from ... import camera_factory, shader
@@ -550,15 +551,31 @@ def _logo_material(image) -> bpy.types.Material:
     return material
 
 
+def _logo_path(settings) -> Optional[str]:
+    """Which logo image to draw: a custom one, the bundled one, or none.
+
+    An empty ``logo_image`` means "use the bundled logo" - that file lives in the
+    add-on (``logos/``) so it ships in the package and survives a restart, unlike
+    a path into the repository.
+    """
+    if not settings.logo_enabled:
+        return None
+    custom = (settings.logo_image or "").strip()
+    if custom:
+        return bpy.path.abspath(custom)
+    bundled = paths.logo_file()
+    return bundled if os.path.exists(bundled) else None
+
+
 def _ensure_logo(settings, target: bpy.types.Collection, y: float,
                  size: float) -> Optional[bpy.types.Object]:
-    """The ground logo plane; removed again when ``logo_image`` is cleared.
+    """The ground logo plane; removed again when the logo is turned off.
 
     ``logo_size`` is the logo **width**; the height follows the image aspect
     ratio, so a non-square logo is never stretched.
     """
     name = f"{LABEL_PREFIX}Logo"
-    path = (settings.logo_image or "").strip()
+    path = _logo_path(settings)
     if not path:
         existing = bpy.data.objects.get(name)
         if existing is not None:
@@ -797,12 +814,26 @@ def build(scene: bpy.types.Scene, settings, preset: Optional[Dict] = None) -> Di
                       for record in avm_layout.cameras_from_preset(preset)}
     _, messages = _ensure_cameras(scene, settings, target, preset_cameras)
     created = rebuild(scene, settings)
-    created["messages"] = messages
+    created["messages"] = messages + (created.get("messages") or [])
     return created
+
+
+def _ensure_cycles(scene: bpy.types.Scene, messages: List[str]) -> None:
+    """Custom OSL cameras only render in Cycles.
+
+    A fresh scene (e.g. after a Blender restart) defaults to EEVEE, where the
+    custom lens model does not exist and F12 comes out empty - so the scene is
+    switched, like the Camera Scene builder does.
+    """
+    if scene.render.engine != "CYCLES":
+        scene.render.engine = "CYCLES"
+        messages.append("switched the render engine to Cycles (custom cameras need it)")
 
 
 def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
     """Update every object in place; creates anything that is missing."""
+    messages: List[str] = []
+    _ensure_cycles(scene, messages)
     if settings.root is None:
         target = collection(COLLECTION_NAME, scene, create=True)
         settings.root = _ensure_root(scene, target)
@@ -863,7 +894,6 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
 
     # cameras --------------------------------------------------------------
     camera_objects = []
-    messages: List[str] = []
     for index, name in enumerate(avm_layout.CAMERAS):
         record = settings.camera(name)
         camera = bpy.data.objects.get(f"{CAMERA_PREFIX}{CAMERA_SUFFIX[name]}")

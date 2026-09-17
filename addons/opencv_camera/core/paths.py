@@ -12,8 +12,26 @@ from typing import List
 
 ADDON_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHADERS_DIR = os.path.join(ADDON_ROOT, "shaders")
+LOGOS_DIR = os.path.join(ADDON_ROOT, "logos")
 #: bundled camera calibration presets (scanned by :mod:`core.presets`)
 PRESETS_DIR = os.path.join(ADDON_ROOT, "presets")
+
+#: logo shipped with the add-on, used by the AVM Scene ground decal when no
+#: custom image is chosen (so it survives a Blender restart and ships in the zip)
+DEFAULT_LOGO = "avm_logo"
+
+
+def logo_file(name: str = DEFAULT_LOGO) -> str:
+    """Absolute path of a bundled logo image."""
+    return os.path.join(LOGOS_DIR, f"{name}.png")
+
+
+def bundled_logos() -> List[str]:
+    """Names of the bundled logos (sorted, without extension)."""
+    try:
+        return sorted(n[:-4] for n in os.listdir(LOGOS_DIR) if n.endswith(".png"))
+    except OSError:
+        return []
 
 
 def scene_preset_file(scene_id: str, name: str = "default") -> str:

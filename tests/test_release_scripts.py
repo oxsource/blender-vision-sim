@@ -81,10 +81,11 @@ def test_package_build_is_reproducible():
                   not any("__pycache__" in n or n.endswith((".pyc", ".DS_Store", ".zip"))
                           for n in names),
                   str([n for n in names if "__pycache__" in n][:3]))
-            check("shaders, icons and presets are packed",
+            check("shaders, icons, presets and logos are packed",
                   any(n.startswith("shaders/") for n in names)
                   and any(n.startswith("icons/") for n in names)
-                  and any(n.startswith("presets/") for n in names))
+                  and any(n.startswith("presets/") for n in names)
+                  and any(n.startswith("logos/") for n in names))
             manifest = tomllib.loads(archive.read("blender_manifest.toml").decode("utf-8"))
             check("packed manifest version matches", manifest["version"] == version)
 

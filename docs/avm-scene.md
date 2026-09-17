@@ -198,7 +198,7 @@ hy     = cOutY  + borderH/100 # 场地半长
 | | `sun_shadow` | **关** | on/off | —（太阳是否投影，默认关，避免阴影被当成黑块） |
 | 道具 | `prop_pedestrians` / `prop_boxes` / `prop_carts` | 3 / 4 / 1 | 0–16 / 0–16 / 0–8 | —（对齐真实场地的行人/箱子/小板车） |
 | 地面文字 | `ground_title` / `label_font` | 「AVM 仿真标定场地」/ 自动 | 字符串 / 字体文件 | —（`label_font` 留空则自动找系统 CJK 字体） |
-| 地面 logo | `logo_image` / `logo_size` | 空 / 1.2 m | 图片文件 / 0.1–10 | `logo_size` 是 logo **宽度**，高度按图片宽高比推导（不拉伸）；`logo_image` 为空则不创建 |
+| 地面 logo | `logo_enabled` / `logo_image` / `logo_size` | 开 / 空 / 1.2 m | 开关 / 图片文件 / 0.1–10 | `logo_size` 是 logo **宽度**，高度按图片宽高比推导（不拉伸）；`logo_image` 为空时用**插件内置 logo**（`logos/avm_logo.png`，随包分发、重启仍在）；`logo_enabled` 关掉则不创建 |
 | 显示 | `show_ground/car/blocks/cameras/props/labels/coverage/sun` | 全 on（coverage 默认 off） | | 图层开关，**只切换显隐、不重建几何** |
 | 只读 | `scene_w` / `scene_h` / `block_area` | 派生 | | 顶部 chip / stats |
 
@@ -491,7 +491,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | 太阳 `AVM_Sun` | — | 随场景创建的 SUN 灯，**默认不投影阴影**（`sun_shadow` 开关）：投影会被黑色区域检测器误判为标定块 |
 | 道具 | 行人（腿/夹克/头 3 槽）、塑料箱（箱体/边框 2 槽）、小板车（木板/脚轮/金属 3 槽） | 深蓝夹克行人、蓝色箱、木色板车，摆在场地外 `margin ≈ 1.7 m` 的固定槽位上（确定性散布） |
 | 地面文字 ×5 | 平面 FONT 曲线（`extrude 2 mm`，平铺在 `z = 2 mm`） | 深灰；**必须用带 CJK 的字体**（内置 Bfont 没有中文，会渲染成空白）：`label_font` 留空时按 `CJK_FONT_CANDIDATES` 自动找（macOS `Arial Unicode.ttf` / PingFang / STHeiti，Linux Noto CJK，Windows 微软雅黑/黑体） |
-| 地面 logo | quad（宽 = `logo_size`，**高 = 宽 × 图高/图宽**；`z = 2 mm`） | 贴图 + alpha（`Image Texture → Base Color/Alpha`）；quad **没有 UV**，用 `TexCoord.Generated` 喂纹理，否则只采样一个像素、贴图看不见；每次重建 `image.reload()`，覆盖图片文件后点 [Rebuild] 即刷新 |
+| 地面 logo | quad（宽 = `logo_size`，**高 = 宽 × 图高/图宽**；`z = 2 mm`）；图片来自 `logos/avm_logo.png`（内置）或 `logo_image` | 贴图 + alpha（`Image Texture → Base Color/Alpha`）；quad **没有 UV**，用 `TexCoord.Generated` 喂纹理，否则只采样一个像素、贴图看不见；每次重建 `image.reload()`，覆盖图片文件后点 [Rebuild] 即刷新 |
 
 标定块按决策 D 用**真实四边形面片**（非程序化贴图）：位置/尺寸精确、可导出 GLB/FBX、便于后续检测。
 每个块是独立对象 `AVM_Block_FL/FR/RL/RR`（**独立对象**，便于单独选中/替换/导出），

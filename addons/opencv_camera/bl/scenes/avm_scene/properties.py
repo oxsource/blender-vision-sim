@@ -168,16 +168,20 @@ class AVMSceneSettings(bpy.types.PropertyGroup):
         subtype="FILE_PATH",
         default="",
         update=_schedule)
+    logo_enabled: BoolProperty(
+        name="Show Logo", default=True,
+        description="Draw the logo decal before the title text",
+        update=_schedule)
     logo_image: StringProperty(
         name="Logo Image",
-        description="Image shown on the ground just before the title text "
-                    "(e.g. a PNG with alpha); empty = no logo",
+        description="Custom logo image (e.g. a PNG with alpha); empty = the "
+                    "add-on's bundled logo, which ships with the package",
         subtype="FILE_PATH",
         default="",
         update=_schedule)
     logo_size: FloatProperty(
         name="Logo Size", default=1.2, min=0.1, max=10.0, unit="LENGTH",
-        description="Side length of the square logo decal",
+        description="Logo width in metres; the height follows the image aspect ratio",
         update=_schedule)
 
     # -- layers (toggle visibility only, no rebuild) ------------------------
