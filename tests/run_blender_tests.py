@@ -911,6 +911,45 @@ def test_avm_scene_builder():
     check("cameras gone", bpy.data.objects.get("AVM_Cam_Front") is None)
 
 
+def test_avm_panels():
+    """Both AVM panels only appear while the scene exists."""
+    scene = setup_scene(resolution=128, samples=4)
+    clear_scene()
+    scene = setup_scene(resolution=128, samples=4)
+
+    panels = (("OPENCV_CAM_PT_avm_scene", "PROPERTIES", "WINDOW"),
+              ("OPENCV_CAM_PT_avm_scene_view3d", "VIEW_3D", "UI"))
+    for name, space, region in panels:
+        panel = getattr(bpy.types, name, None)
+        check(f"{name} registered", panel is not None)
+        if panel is None:
+            continue
+        check(f"{name} label", panel.bl_label == "AVM Scene", panel.bl_label)
+        check(f"{name} space/region",
+              panel.bl_space_type == space and panel.bl_region_type == region,
+              f"{panel.bl_space_type}/{panel.bl_region_type}")
+        check(f"{name} hidden before the build", panel.poll(bpy.context) is False)
+
+    check("add AVM scene", bpy.ops.opencv_cam.avm_add_scene() == {"FINISHED"})
+    check("scene panel shows",
+          bpy.types.OPENCV_CAM_PT_avm_scene.poll(bpy.context) is True)
+    check("N panel shows",
+          bpy.types.OPENCV_CAM_PT_avm_scene_view3d.poll(bpy.context) is True)
+
+    check("select camera operator",
+          bpy.ops.opencv_cam.avm_select_camera(name="left") == {"FINISHED"})
+    check("selected the left camera",
+          bpy.context.view_layer.objects.active is not None
+          and bpy.context.view_layer.objects.active.name == "AVM_Cam_Left",
+          str(bpy.context.view_layer.objects.active))
+
+    check("remove scene", bpy.ops.opencv_cam.avm_remove_scene() == {"FINISHED"})
+    check("scene panel hides after the remove",
+          bpy.types.OPENCV_CAM_PT_avm_scene.poll(bpy.context) is False)
+    check("N panel hides after the remove",
+          bpy.types.OPENCV_CAM_PT_avm_scene_view3d.poll(bpy.context) is False)
+
+
 def test_add_camera_default_preset():
     """The Add menu path (no preset argument) must use the add-on defaults.
 
@@ -1182,6 +1221,7 @@ def main():
         test_menus_and_raw_params,
         test_scene_registry,
         test_avm_scene_builder,
+        test_avm_panels,
         test_presets,
         test_shader_text_upgrade_recompiles,
         test_live_apply,

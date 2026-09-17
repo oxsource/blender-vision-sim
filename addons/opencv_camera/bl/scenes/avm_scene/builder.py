@@ -160,6 +160,11 @@ def _ensure_cameras(scene: bpy.types.Scene, settings, target: bpy.types.Collecti
                 scene, model="fisheye", preset=None, name=object_name,
                 location=tuple(record.get("location", (0.0, 0.0, 0.0))),
             )
+            # add_camera names the object after the camera data-block, which
+            # Blender may suffix (.001) when an old data-block lingers; the AVM
+            # scene owns these names, so force them
+            camera.name = object_name
+            camera.data.name = object_name
             _configure_camera(camera, record, scene)
         link_to_collection(camera, target)
         cameras[name] = camera

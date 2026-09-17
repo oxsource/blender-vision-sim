@@ -7,11 +7,11 @@ own modules (``io.py`` / ``coverage.py``) so this file stays a thin action layer
 from __future__ import annotations
 
 import bpy
-from bpy.props import BoolProperty
+from bpy.props import BoolProperty, EnumProperty
 
 from ....core.scenes import avm_layout
 from ..base import has_scene
-from . import DEFINITION, builder, controller
+from . import DEFINITION, builder, controller, properties
 
 
 def _scene(context):
@@ -128,11 +128,35 @@ class OPENCV_CAM_OT_avm_remove_scene(_AVMSceneOperator, bpy.types.Operator):
         return {"FINISHED"}
 
 
+class OPENCV_CAM_OT_avm_select_camera(_AVMSceneOperator, bpy.types.Operator):
+    """Make one of the AVM cameras the active object (to edit its CV Intrinsics)"""
+
+    bl_idname = "opencv_cam.avm_select_camera"
+    bl_label = "Select Camera"
+    bl_options = {"REGISTER", "UNDO"}
+
+    name: EnumProperty(name="Camera", items=properties.CAMERA_ITEMS)
+
+    def execute(self, context):
+        camera = bpy.data.objects.get(f"{builder.CAMERA_PREFIX}{builder.CAMERA_SUFFIX[self.name]}")
+        if camera is None:
+            self.report({"WARNING"}, f"camera {self.name} is missing")
+            return {"CANCELLED"}
+        view_layer = context.view_layer
+        for obj in view_layer.objects:
+            obj.select_set(False)
+        camera.select_set(True)
+        view_layer.objects.active = camera
+        self.report({"INFO"}, f"{camera.name} selected - edit its intrinsics in CV Intrinsics")
+        return {"FINISHED"}
+
+
 _CLASSES = (
     OPENCV_CAM_OT_avm_add_scene,
     OPENCV_CAM_OT_avm_rebuild,
     OPENCV_CAM_OT_avm_reset_defaults,
     OPENCV_CAM_OT_avm_remove_scene,
+    OPENCV_CAM_OT_avm_select_camera,
 )
 
 
