@@ -108,12 +108,19 @@ class OPENCV_CAM_OT_import_calibration(_CameraOperator, bpy.types.Operator, Impo
 
     filename_ext = ""
     filter_glob: StringProperty(default="*.yaml;*.yml;*.json;*.xml", options={"HIDDEN"})
+    camera_name: StringProperty(
+        name="Camera",
+        description="Camera to pick from a multi-camera config (empty = first enabled)",
+        default="",
+    )
 
     def execute(self, context):
         _, cam_data = self.camera(context)
         settings = cam_data.opencv_cam
         try:
-            calibration = calibration_io.load_calibration(self.filepath)
+            calibration = calibration_io.load_calibration(
+                self.filepath, camera_name=self.camera_name or None
+            )
         except Exception as exc:
             self.report({"ERROR"}, f"{type(exc).__name__}: {exc}")
             return {"CANCELLED"}
