@@ -1,14 +1,15 @@
 """Panels.
 
-Layout (:menuselection:`Object Data Properties ▸ Lens`):
+Layout: one standalone group in the camera's Object Data Properties, independent
+of Blender's *Lens* panel:
 
-* ``OpenCV Camera``      - status, apply/live/raw-parameter toggles
-    * ``Intrinsics``      - K, calibration size and the distortion model
-        * ``Distortion``  - coefficients of the selected model
-        * ``Output Image``- the image size the render should produce
-        * ``Preview``     - preview render settings and tools
-* ``Extrinsics (OpenCV)``- R/t, world frame (a separate block on purpose)
-* ``Calibration IO``     - import/export files, presets, defaults
+* ``OpenCV``           - status, apply/live/raw-parameter toggles
+    * ``Intrinsics``   - K and the resolution K/D were calibrated at
+    * ``Distortion``   - coefficients of the selected model
+    * ``Output Image`` - the image size the render should produce
+    * ``Extrinsics``   - R/t, world frame
+    * ``Calibration IO`` - files, presets, defaults
+    * ``Preview``      - preview render settings and tools
 """
 
 from __future__ import annotations
@@ -30,9 +31,15 @@ class _CameraPanel:
 
 
 class OPENCV_CAM_PT_main(_CameraPanel, bpy.types.Panel):
+    """Top level group: everything the add-on owns lives in here.
+
+    Deliberately *not* parented to ``DATA_PT_lens``: the OpenCV camera settings
+    (intrinsics, distortion, output size, extrinsics, IO) are an independent group
+    rather than more Lens options.
+    """
+
     bl_idname = "OPENCV_CAM_PT_main"
-    bl_label = "OpenCV Camera"
-    bl_parent_id = "DATA_PT_lens"
+    bl_label = "OpenCV"
 
     def draw(self, context):
         layout = self.layout
@@ -223,8 +230,8 @@ class OPENCV_CAM_PT_preview(_CameraPanel, bpy.types.Panel):
 
 class OPENCV_CAM_PT_extrinsics(_CameraPanel, bpy.types.Panel):
     bl_idname = "OPENCV_CAM_PT_extrinsics"
-    bl_label = "Extrinsics (OpenCV)"
-    bl_parent_id = "DATA_PT_lens"
+    bl_label = "Extrinsics"
+    bl_parent_id = "OPENCV_CAM_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -249,7 +256,7 @@ class OPENCV_CAM_PT_extrinsics(_CameraPanel, bpy.types.Panel):
 class OPENCV_CAM_PT_io(_CameraPanel, bpy.types.Panel):
     bl_idname = "OPENCV_CAM_PT_io"
     bl_label = "Calibration IO"
-    bl_parent_id = "DATA_PT_lens"
+    bl_parent_id = "OPENCV_CAM_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
@@ -276,9 +283,9 @@ _CLASSES = (
     OPENCV_CAM_PT_intrinsics,
     OPENCV_CAM_PT_distortion,
     OPENCV_CAM_PT_output,
-    OPENCV_CAM_PT_preview,
     OPENCV_CAM_PT_extrinsics,
     OPENCV_CAM_PT_io,
+    OPENCV_CAM_PT_preview,
 )
 
 

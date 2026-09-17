@@ -18,8 +18,9 @@ Blender 视觉算法仿真插件集合：用 Blender/Cycles 生成**与真实相
 
 ### 入口与图标
 
-`Add ▸ VisionSim` 下的条目带插件自绘图标（三个彩色弧 + 鱼眼镜头同心环，向 OpenCV 配色致敬的
-**原创标识**，不是 OpenCV 商标本身；由 `scripts/make_icon.py` 纯 Python 生成，可重新生成）：
+菜单图标是自绘的：**三个彩色弧 + 5 点标定网格（外圈点被"桶形"外扩）**，一眼能看出是视觉/畸变工具
+而不是又一个相机图标；`Add ▸ VisionSim` 这一级也用它（`UILayout.menu` 支持 `icon_value`）。
+这是**原创标识**，不是 OpenCV 商标本身；由 `scripts/make_icon.py` 纯 Python 生成，可重新生成：
 
 ```bash
 python3 scripts/make_icon.py     # 重新生成 addons/opencv_camera/icons/visionsim.png
@@ -120,15 +121,16 @@ Blender 中使用：
 
 ### 面板结构
 
+设置集中在**独立的一组 `OpenCV`** 里（Object Data Properties ▸ OpenCV，**不**挂在 Lens 面板下）：
+
 ```
-Object Data Properties ▸ Lens
-├── OpenCV Camera        状态 / Apply / Preview / Live Apply / Recompile / 是否显示 Cycles 原始参数
-│   ├── Intrinsics       fx fy cx cy、标定分辨率、渲染时生效值、从 Blender 镜头反推
-│   ├── Distortion       模型 + 系数（鱼眼/radtan/rational）、迭代次数、Discard Invalid Rays
-│   ├── Output Image     输出图像尺寸（内参/自定义/跟随场景）+ 是否驱动场景分辨率
-│   └── Preview          预览尺寸/采样/去噪/改参数自动预览/自检
-├── Extrinsics (OpenCV)  外参 R/t、可选自定义世界系（与内参分开成独立块）
-└── Calibration IO       标定文件导入导出、Presets、Reset Defaults
+Object Data Properties ▸ OpenCV            状态 / Apply / Live Apply / Recompile / 是否显示 Cycles 原始参数
+├── Intrinsics      fx fy cx cy、标定分辨率、渲染时生效值、From Blender Lens
+├── Distortion      模型 + 系数（鱼眼/radtan/rational）、迭代次数、Discard Invalid Rays
+├── Output Image    输出图像尺寸（标定/自定义/跟随场景）+ 是否驱动场景分辨率
+├── Extrinsics      外参 R/t、可选自定义世界系
+├── Calibration IO  标定文件导入导出、Presets、Reset Defaults
+└── Preview         预览尺寸/采样/去噪/改参数自动预览/自检
 ```
 
 - **内参 / 外参 / IO 分成三个块**，各自独立，不再混在一起。

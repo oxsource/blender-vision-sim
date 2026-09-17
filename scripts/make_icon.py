@@ -6,9 +6,10 @@ sampling.  Run with any python3:
 
     python3 scripts/make_icon.py
 
-Design: three coloured arcs (red/green/blue, echoing the OpenCV logo palette)
-around a lens with concentric fisheye rings.  It is an original mark - do not ship
-the OpenCV logo itself, it is a trademark of the OpenCV project.
+Design: three coloured arcs (red/green/blue, echoing the OpenCV palette) around a
+slightly barrel-warped 3x3 calibration grid.  No lens/aperture body, so the mark
+does not read as "just another camera icon" at menu size.  It is an original mark -
+do not ship the OpenCV logo itself, it is a trademark of the OpenCV project.
 """
 
 from __future__ import annotations
@@ -24,25 +25,36 @@ SS = 3  # super sampling factor
 RED = (0.898, 0.157, 0.157)
 GREEN = (0.196, 0.678, 0.239)
 BLUE = (0.129, 0.451, 0.851)
-BODY = (0.078, 0.125, 0.180)
-RIM = (0.694, 0.831, 0.945)
-RING = (0.498, 0.820, 1.000)
-PUPIL = (1.0, 1.0, 1.0)
 
 ARC_RADIUS = 0.385
-ARC_WIDTH = 0.105
-ARC_SPAN = 100.0        # degrees per arc
+ARC_WIDTH = 0.098
+ARC_SPAN = 96.0         # degrees per arc
 ARC_CENTERS = ((90.0, RED), (210.0, GREEN), (330.0, BLUE))
 
-LENS_RADIUS = 0.230
-LENS_RIM = 0.255
-RING_RADII = (0.155, 0.098)
-RING_WIDTH = 0.020
-PUPIL_RADIUS = 0.045
+#: five calibration dots (a cross) ; the outer ones are pushed further out to hint
+#: at the barrel/fisheye warp this add-on is about.  Few and large so the mark
+#: still reads at menu size (16 px).
+GRID_STEP = 0.135
+DOT_RADIUS = 0.042
+WARP = 0.45
+DOT_COLOR = (0.560, 0.830, 1.000)
+DOT_CENTER_COLOR = (1.0, 1.0, 1.0)
 
 
 def _mix(dst, src, alpha):
     return tuple(d + (s - d) * alpha for d, s in zip(dst, src))
+
+
+def _dot_centres():
+    """Centre plus four dots in a cross, radially displaced (barrel warp)."""
+    points = [(0.0, 0.0, True)]
+    for gx, gy in ((GRID_STEP, 0.0), (-GRID_STEP, 0.0), (0.0, GRID_STEP), (0.0, -GRID_STEP)):
+        scale = 1.0 + WARP
+        points.append((gx * scale, gy * scale, False))
+    return points
+
+
+DOTS = _dot_centres()
 
 
 def shade(x: float, y: float) -> tuple:
@@ -51,23 +63,15 @@ def shade(x: float, y: float) -> tuple:
     radius = math.hypot(dx, dy)
     angle = math.degrees(math.atan2(dy, dx))
 
-    # lens rim + body
-    if radius <= LENS_RIM:
-        base = BODY if radius <= LENS_RADIUS else RIM
-        colour = base
-        # fisheye rings inside the lens
-        for ring in RING_RADII:
-            if abs(radius - ring * LENS_RADIUS / 0.230) <= RING_WIDTH * 0.5:
-                colour = _mix(colour, RING, 0.85)
-        if radius <= PUPIL_RADIUS:
-            colour = PUPIL
-        return colour
+    # calibration grid
+    for gx, gy, is_center in DOTS:
+        if math.hypot(dx - gx, dy - gy) <= DOT_RADIUS:
+            return DOT_CENTER_COLOR if is_center else DOT_COLOR
 
     # coloured arcs
     for center, rgb in ARC_CENTERS:
         delta = (angle - center + 180.0) % 360.0 - 180.0
         if abs(delta) <= ARC_SPAN * 0.5 and abs(radius - ARC_RADIUS) <= ARC_WIDTH * 0.5:
-            # slight shading across the arc thickness for a rounded look
             offset = abs(radius - ARC_RADIUS) / (ARC_WIDTH * 0.5)
             return _mix(rgb, (1.0, 1.0, 1.0), 0.25 * (1.0 - offset) ** 2)
     return (0.0, 0.0, 0.0, 0.0)

@@ -23,8 +23,8 @@ addons/opencv_camera/
 │   ├── menus.py           Add ▸ VisionSim 子菜单（Camera / Test Scene / Camera Rig）
 │   ├── icons.py           自绘图标载入（bpy.utils.previews + icon_value，带内置图标回退）
 │   ├── panels_patch.py    隐藏 Cycles 自动生成的裸参数面板（可开关，卸载时还原）
-│   ├── ui.py              Lens 下的面板：OpenCV Camera / Intrinsics / Distortion /
-│   │                      Output Image / Preview / Extrinsics / Calibration IO
+│   ├── ui.py              独立的 OpenCV 面板组：主面板 + Intrinsics / Distortion /
+│   │                      Output Image / Extrinsics / Calibration IO / Preview
 │   ── operators.py       算子：薄壳，只做 context 解析、调用 bl 逻辑、report
 └── shaders/opencv_camera.osl   权威着色器源文件
 ```
@@ -43,7 +43,7 @@ addons/opencv_camera/
 | 导入方式 | 插件内部**只用相对导入**；扩展模式下模块名是 `bl_ext.<repo>.<id>` |
 | 资源路径 | 用 `__file__` 定位（`core/paths.py`），不要依赖 `__package__` 或当前工作目录 |
 | 注册顺序 | `properties → operators → ui`，卸载时反序（UI 依赖算子/属性，属性依赖属性组） |
-| 面板挂载 | `bl_space_type='PROPERTIES'`、`bl_context='data'`、`bl_parent_id='DATA_PT_lens'`（与 Cycles 自带面板一致） |
+| 面板挂载 | 自己的顶层面板组（`bl_space_type='PROPERTIES'`、`bl_context='data'`，**不设** `bl_parent_id`），子面板挂 `bl_parent_id='OPENCV_CAM_PT_main'`：内参/畸变/输出/外参/IO 属于插件自己的组，而不是 Lens 的附加项 |
 | 自定义相机入口 | **不能**扩展 `Camera.type`（C 侧 RNA 枚举）；用 `Add ▸ Camera` 菜单算子创建已配置好的 Custom 相机（`VIEW3D_MT_camera_add.append`） |
 | 属性即时生效 | 属性 `update=` 回调 → `bl/apply.apply_values()`（只写 `cycles_custom`，快）；切换模型时走完整的 `apply_settings()`（要换着色器并重编译） |
 | 插件入口 | 所有入口集中在 `Add ▸ vision-sim`（Camera / Test Scene / Camera Rig）；不额外往 `Add ▸ Camera` 里塞条目（Blender 不允许扩展 `Camera.type`，塞进去也只能建 Custom 相机，容易误导） |
@@ -74,7 +74,7 @@ bpy 会在注册时用 `typing.get_type_hints` 重新求值注解字符串，任
 - 图标是 64×64 PNG（`icons/visionsim.png`，由 `scripts/make_icon.py` 生成），用
   `bpy.utils.previews.new()` / `pcoll.load(name, path, 'IMAGE')` 载入，`icon_value` 用在**算子按钮**上；
 - `bpy.utils.previews` 是惰性子模块，必须写 `import bpy.utils.previews`（直接 `bpy.utils.previews` 会 AttributeError）；
-- **子菜单按钮（`layout.menu`）只接受内置图标名**，所以 `Add ▸ VisionSim` 这一级用 `CAMERA_DATA`，我们的图标用在子菜单里的算子条目；
+- `UILayout.menu()` 在 4.5 **支持 `icon_value`**，所以 `Add ▸ VisionSim` 这一级也用自绘图标（拿不到 id 时回退内置 `TRACKING`，避免和相机图标混淆）；
 - 后台/无 UI 会话 `icon_id` 为 0（无效），`icons.operator()` 会自动回退到内置图标；
 - 图标是**原创**标识（三弧 + 鱼眼镜头），不要分发 OpenCV 官方 logo（商标）。
 

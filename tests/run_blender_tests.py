@@ -532,6 +532,26 @@ def test_add_camera_operator():
     check("Add Camera menu entry", hasattr(bpy.types, "VIEW3D_MT_camera_add"))
 
 
+def test_panel_layout():
+    """The OpenCV settings are their own group, not children of Lens."""
+    main = bpy.types.OPENCV_CAM_PT_main
+    check("OpenCV group is top level", not getattr(main, "bl_parent_id", ""),
+          f"bl_parent_id={getattr(main, 'bl_parent_id', '')!r}")
+    check("OpenCV group label", main.bl_label == "OpenCV", main.bl_label)
+    for name in ("OPENCV_CAM_PT_intrinsics", "OPENCV_CAM_PT_distortion",
+                 "OPENCV_CAM_PT_output", "OPENCV_CAM_PT_extrinsics",
+                 "OPENCV_CAM_PT_io", "OPENCV_CAM_PT_preview"):
+        panel = getattr(bpy.types, name)
+        check(f"{name} is inside the OpenCV group",
+              panel.bl_parent_id == "OPENCV_CAM_PT_main",
+              f"bl_parent_id={panel.bl_parent_id}")
+    check("nothing of ours hangs off the Lens panel",
+          all(getattr(getattr(bpy.types, name), "bl_parent_id", "") != "DATA_PT_lens"
+              for name in ("OPENCV_CAM_PT_main", "OPENCV_CAM_PT_extrinsics",
+                           "OPENCV_CAM_PT_io")))
+    check("extrinsics label", bpy.types.OPENCV_CAM_PT_extrinsics.bl_label == "Extrinsics")
+
+
 def test_menus_and_raw_params():
     """Add ▸ vision-sim holds our operators; the Cycles raw list is hidden."""
     check("VisionSim submenu registered", hasattr(bpy.types, "OPENCV_CAM_MT_vision_sim"))
@@ -797,6 +817,7 @@ def main():
         test_sync_from_lens,
         test_operator_end_to_end,
         test_add_camera_operator,
+        test_panel_layout,
         test_menus_and_raw_params,
         test_presets,
         test_shader_text_upgrade_recompiles,

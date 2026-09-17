@@ -38,15 +38,23 @@ class OPENCV_CAM_MT_vision_sim(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
-        layout.menu(MENU_CAMERA_ID, icon=icons.FALLBACK_ICON)
+        layout.menu(MENU_CAMERA_ID, **_submenu_kwargs("Camera"))
         layout.separator()
         icons.operator(layout, "opencv_cam.add_test_scene", "Test Scene", fallback_icon="MESH_CUBE")
         icons.operator(layout, "opencv_cam.add_rig_empty", "Camera Rig", fallback_icon="EMPTY_AXIS")
 
 
+def _submenu_kwargs(text: str = MENU_LABEL) -> dict:
+    """``layout.menu`` arguments with our own icon (built-in name as fallback)."""
+    value = icons.icon_id()
+    if value > 0:
+        return {"text": text, "icon_value": value}
+    return {"text": text, "icon": "TRACKING"}  # crosshair, not another camera icon
+
+
 def _menu_add(self, context):
-    """Draw the VisionSim submenu inside Add (a submenu button takes a named icon)."""
-    self.layout.menu(MENU_ID, icon=icons.FALLBACK_ICON)
+    """Draw the VisionSim submenu inside Add."""
+    self.layout.menu(MENU_ID, **_submenu_kwargs())
 
 
 _CLASSES = (OPENCV_CAM_MT_camera, OPENCV_CAM_MT_vision_sim)
