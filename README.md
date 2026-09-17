@@ -8,7 +8,7 @@ Blender 视觉算法仿真插件集合：用 Blender/Cycles 生成**与真实相
 
 | 插件 | 状态 | 说明 |
 | --- | --- | --- |
-| [`opencv_camera`](addons/opencv_camera) | 0.1.0 可用 | Cycles 自定义相机，支持 OpenCV 内参（fx/fy/cx/cy）与畸变（**fisheye / Brown-Conrady / rational**），可导入导出标定文件、设置 OpenCV 外参、一键生成验证场景、渲染自检 |
+| [`opencv_camera`](addons/opencv_camera) | 0.17.0 可用 | Cycles 自定义相机，支持 OpenCV 内参（fx/fy/cx/cy）与畸变（**fisheye / Brown-Conrady / rational**），可导入导出标定文件、设置 OpenCV 外参、渲染自检；**算法场景**（`Camera Scene`、`AVM Scene`）统一在 `bl/scenes/` 注册，见 [`docs/avm-scene.md`](docs/avm-scene.md) |
 | `camera_rig` | 规划中 | 多相机刚体（外参）、同步渲染、标定数据集导出 |
 | `sensor_sim` | 规划中 | IMU / GNSS / LiDAR 轨迹与噪声仿真 |
 | `dataset_export` | 规划中 | 渲染 + 真值导出（位姿/内参/深度/分割），KITTI / COLMAP / EuRoC 布局 |
@@ -30,6 +30,7 @@ Blender 视觉算法仿真插件集合：用 Blender/Cycles 生成**与真实相
 | `rational` | Rational 条目 | 方 + 外弓十字 + 中心点（高阶项） |
 | `pinhole` | Pinhole 条目 | 方 + 笔直十字 |
 | `camera_scene` | Camera Scene | 立方体轮廓 |
+| `avm_scene` | AVM Scene | 俯视场地 + 四角实心标定块 + 车体轮廓 |
 
 这些都是**原创标识**（不是 OpenCV 商标本身），想改图案改脚本里的形状定义后重跑：
 
@@ -48,7 +49,13 @@ blender-vision-sim/
 │   ├── blender_manifest.toml    # Extensions 规范清单（唯一的插件元数据来源）
 │   ├── __init__.py              # 只做 register / unregister 编排
 │   ├── core/                    # 纯 Python：模型、变换、IO（禁止 import bpy）
+│   │   └── scenes/              # 每个算法场景的几何/模型/IO（avm_layout / avm_coverage）
 │   ├── bl/                      # Blender 集成：properties / shader / apply / selftest / ui / operators
+│   │   └── scenes/              # 场景框架 + 每个场景一个模块/包
+│   │       ├── base.py / debounce.py    # SceneDefinition、has_scene、通用去抖
+│   │       ├── camera_scene.py          # 原 bl/scene_builder.py
+│   │       └── avm_scene/               # AVM Scene（properties/builder/controller/io/coverage/operators/ui）
+│   ├── presets/avm_scene/default.json   # AVM 内置默认参数（离线反算产物）
 │   └── shaders/*.osl            # 随插件分发的 OSL 源文件（权威副本）
 ├── docs/                        # 架构、相机模型、路线图
 ├── .github/workflows/ci.yml     # 打 v* tag 自动测试+出包+发 Release（不依赖 Blender）
@@ -202,6 +209,29 @@ Object Data Properties
 | ![鱼眼](docs/images/fisheye_on.png) | ![针孔](docs/images/pinhole_off.png) |
 
 地面网格的弯曲程度就是鱼眼畸变的直接体现；两图均可用 `docs/camera-model.md` 中的公式复算。
+
+### AVM Scene（环视标定场景）
+
+`Add ▸ VisionSim ▸ AVM Scene` 一键搭出「真实场景的仿真版」：1 个地面、1 个立方体车模、
+4 个规格相同的实心标定块（放在车四周四对角）与 4 台 OpenCV 鱼眼相机，
+默认参数来自 `filament_avm` 的 minibus 配置（离线反算，见 `scripts/solve_avm_defaults.py`）。
+
+```text
+输入：各部件的位置姿态（场地尺寸 / 车辆 / 相机安装位姿）+ 相机内参
+输出：4 路相机预览图像 + 各元素大小/位置/姿态与相机内参的导出
+```
+
+- **面板**：`AVM Scene` 在 Scene Properties（全部参数 + 覆盖评估 + 导入导出）；
+  3D 视口 N 侧栏 `VisionSim ▸ AVM Scene` 只放**布局**（尺寸/位姿/图层）。
+  相机内参不在这里，继续用既有的 `CV Intrinsics` / `CV Presets` / `CV Output`。
+- **本场景不做位姿解算**：只摆放、渲染、导出；PnP 只在离线脚本里跑一次用来产出默认预设。
+- **覆盖评估**：`[Analyze Coverage]` 给出每台相机的贴地覆盖曲线、并集/重叠/盲区、
+  场地覆盖率，以及「哪个标定块被哪几台相机看到」的可见性矩阵。
+- **素材导出**：`[Export Materials]` 一次产出 4 张相机图 + `plane_scene.json` +
+  `avm_scene.json` + `coverage.json` + `vehicle_avm_*.json`（骨架，`points_2d` 留给外部检测）+
+  `scene_spec.md`。
+- 完整设计见 [`docs/avm-scene.md`](docs/avm-scene.md)（含与 HTML 工具 / `mediapipe_avm_calib`
+  的字段对齐、场景目录结构与新增场景的方法）。
 
 ## 开发约定
 
