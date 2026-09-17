@@ -146,6 +146,11 @@ def test_workflow_present():
     text = open(path, encoding="utf-8").read()
 
     check("runs the test suites", "test_core.py" in text and "test_release_scripts.py" in text)
+    # inspect the trigger block only (the header comment mentions the alternatives)
+    trigger = text.split("\non:", 1)[1].split("\njobs:", 1)[0]
+    check("only v* tags trigger it", 'tags: ["v*"]' in trigger, trigger.strip()[:80])
+    check("branch pushes do not trigger a build",
+          "branches:" not in trigger and "pull_request:" not in trigger, trigger.strip()[:80])
     check("runs the headless Blender tests", "run_blender_tests.py" in text)
     check("triggers on v* tags", 'tags: ["v*"]' in text)
     check("release job only runs for tags or a named tag",

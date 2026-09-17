@@ -99,7 +99,8 @@ scripts/version.sh <patch|minor|major|X.Y.Z> [--push] [--dry-run]
 
 - `--dry-run` 只打印将要发生的版本变化；`--show` 打印当前版本；工作区不干净时拒绝执行（和 npm 一致）。
 - **只有一个工作流文件** `.github/workflows/ci.yml`，三个 job：`checks`（编译检查/核心单测/发布工具测试/打包+artifact）、`blender`（下载指定版本 Blender 跑无头集成测试 + 官方 builder 校验）、`release`（**仅 tag 触发**，`needs: [checks, blender]`，所以测试只跑一次就够门禁）。
-- 普通 push / PR 只跑前两个 job；打 tag（或手动 `workflow_dispatch` 指定 tag）才会执行 release job。
+- **只有推送 `v*` tag 才会触发构建**（普通 commit / 分支推送不会跑 CI，避免重复任务）；`workflow_dispatch` 手动运行只跑 `checks` + `blender`，填了 `tag` 才会执行 release job。
+- 若想恢复"提交/PR 也先跑检查"，在 `on.push` 下加 `branches: ["**"]` 并加回 `pull_request:` 即可（release job 仍然只对 tag 生效）。
 - Blender 版本用 `BLENDER_VERSION` 环境变量固定（当前 4.5.3）；补发历史版本：`gh workflow run ci.yml -f tag=vX.Y.Z`。
 
 ### 目录结构

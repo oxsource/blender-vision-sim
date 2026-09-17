@@ -1,18 +1,19 @@
 name: ci
 
-# One workflow for everything:
-#   * push / pull request  -> checks, tests, package, artifact
-#   * v* tag (or a manual run with `tag`) -> the same checks, then publish a Release
-#     with the extension zip and its sha256
+# One workflow for everything.  It only runs for v* tags, so ordinary commits and
+# branch pushes do not start a build (add `branches: ["**"]` / `pull_request:` below
+# if you want pre-tag checks; the release job stays tag-only either way):
+#   * v* tag                            -> checks + tests, then publish a Release
+#                                          with the extension zip and its sha256
+#   * manual run (workflow_dispatch)    -> checks + tests only; with a `tag` input it
+#                                          also (re)publishes that tag's release
 on:
   push:
-    branches: ["**"]
     tags: ["v*"]
-  pull_request:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to publish (leave empty for a plain CI run)"
+        description: "Existing tag to publish (leave empty to run the checks only)"
         required: false
 
 permissions:
