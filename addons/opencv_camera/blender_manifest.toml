@@ -1,0 +1,15 @@
+schema_version = "1.0.0"
+
+id = "opencv_camera"
+version = "0.1.0"
+name = "OpenCV Camera"
+tagline = "Render with OpenCV intrinsics and distortion coefficients"
+maintainer = "moks"
+type = "add-on"
+
+tags = ["Render", "Camera", "Development"]
+blender_version_min = "4.5.0"
+license = ["SPDX:GPL-3.0-or-later"]
+
+[permissions]
+files = "Import and export calibration files"

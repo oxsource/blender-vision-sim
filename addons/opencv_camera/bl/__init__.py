@@ -1,0 +1,1 @@
+"""Blender integration layer: properties, shader handling, operators, UI."""

@@ -1,0 +1,96 @@
+# 架构与开发约定
+
+## 1. 分层：`core` / `bl` / `shaders`
+
+```text
+addons/opencv_camera/
+├── __init__.py          register() / unregister() 编排，不写业务逻辑
+├── core/                纯 Python，禁止 import bpy
+│   ├── camera_model.py    内参、畸变、正投影与反投影（固定点迭代）
+│   ├── transform.py       OpenCV ↔ Blender 坐标/矩阵/内参换算
+│   ├── calibration_io.py  标定文件读写（含无依赖 YAML 子集解析器）
+│   └── paths.py           包内文件定位（基于 __file__，兼容扩展/legacy 两种安装）
+├── bl/                  Blender 集成层
+│   ├── properties.py      PropertyGroup / PointerProperty 定义
+│   ├── shader.py          OSL Text 数据块安装、编译校验、强制重编译
+│   ├── apply.py           参数下发、位姿设置、镜头反推、分辨率一致性检查
+│   ├── selftest.py        渲染自检（临时场景/隐藏其他对象，跑完还原）
+│   ├── ui.py              Object Data Properties ▸ Lens  OpenCV Camera 面板
+│   └── operators.py       算子：薄壳，只做 context 解析、调用 bl 逻辑、report
+└── shaders/opencv_camera.osl   权威着色器源文件
+```
+
+为什么这样分：
+
+- **可测试**：`core` 不依赖 Blender，`python3 tests/test_core.py` 就能跑（畸变往返、坐标变换、标定文件解析）。
+- **可复用**：数据集导出、标定回环、参数校验工具都能直接 import `core`，不必启动 Blender。
+- **可移植**：插件换成别的渲染器（或改为导出 OSL/GLSL）时，只需替换 `bl/` 与 `shaders/`。
+
+## 2. Blender 规范要点（4.2+ Extension）
+
+| 约定 | 做法 |
+| --- | --- |
+| 插件元数据 | 只写 `blender_manifest.toml`（`schema_version`/`id`/`version`/`type`/`blender_version_min`/`license`），不写 `bl_info` |
+| 导入方式 | 插件内部**只用相对导入**；扩展模式下模块名是 `bl_ext.<repo>.<id>` |
+| 资源路径 | 用 `__file__` 定位（`core/paths.py`），不要依赖 `__package__` 或当前工作目录 |
+| 注册顺序 | `properties → operators → ui`，卸载时反序（UI 依赖算子/属性，属性依赖属性组） |
+| 面板挂载 | `bl_space_type='PROPERTIES'`、`bl_context='data'`、`bl_parent_id='DATA_PT_lens'`（与 Cycles 自带面板一致） |
+| 算子 | `bl_idname = "opencv_cam.<action>"`；需要撤销的加 `{'REGISTER','UNDO'}`；文件对话框用 `ImportHelper`/`ExportHelper` |
+| 不污染用户场景 | 自检/预览类操作要保存并还原 `scene.render.*`、`view_settings`、`scene.camera`、`view_layer.objects.active`、各对象 `hide_render` |
+| 持久化 | 安装的 OSL Text 数据块加 `use_fake_user = True`，随 `.blend` 保存 |
+| 版本管理 | `blender_manifest.toml` 的 `version`；行为/接口变化时提升并记入 `docs/roadmap.md` |
+
+### 2.1 两个必须记住的 Cycles 行为
+
+1. **编译失败会静默沿用旧字节码**。`custom_shader` 赋值后若 oslc 报错，`custom_bytecode` 保持旧值，渲染继续用旧着色器，Python 侧不抛异常（错误只写系统控制台）。因此 `bl/shader.py: ensure_compiled()` 是所有写入路径的必经关口，`tests` 里专门有一条「broken shader detected」用例。
+2. **编译由 RNA update 回调触发**，回调里会查当前场景的渲染引擎；在脚本/无场景上下文中不一定触发。`bl/shader.py: force_compile()` 直接调用 Cycles 插件的 `osl.update_custom_camera_shader()` 作为兜底（注意这是 Cycles 内部 API，升级 Blender 后需回归）。
+
+## 3. 参数流向
+
+```text
+addons/opencv_camera/core/*            （数学、IO，纯 Python）
+        ▲                                    │
+        │ 读取核心模型对象                     │ 标定文件导入
+        │                                    ▼
+Camera.opencv_cam（PropertyGroup）  ← 唯一真源，用户/脚本都改这里
+        │  Apply to Camera（算子）
+        ▼
+bl/apply.apply_settings()
+   1. bl/shader.attach()        写/刷新 Text，Lens Type = Custom / Internal
+   2. bl/shader.ensure_compiled()  校验 custom_bytecode（失败即报错中止）
+   3. camera.cycles_custom[param] = value   （参数由 Cycles 从 OSL 形参自动创建）
+```
+
+参数名与类型由 OSL 形参决定（float/int/bool/数组/字符串），列表在 `bl/apply.py: SHADER_PARAMS` 与 `shaders/opencv_camera.osl` 之间必须保持同步。
+
+## 4. 测试策略
+
+| 层次 | 文件 | 覆盖内容 |
+| --- | --- | --- |
+| 核心单测 | `tests/test_core.py` | 内参缩放、畸变正反解往返、投影往返、坐标变换不变式、镜头/主点换算、标定文件读写（OpenCV YAML / ROS camera_info / Kalibr / JSON） |
+| 集成测试 | `tests/run_blender_tests.py` | 注册与面板、着色器编译、参数下发（含 float32 精度）、**坏着色器检测**、渲染自检、与自带透视相机逐像素等价、主点偏移等价、分辨率换算、位姿往返、算子端到端 |
+| 手测 | Blender GUI | 面板交互、导入导出对话框、自检在真实场景中的表现 |
+
+```bash
+scripts/run_tests.sh                     # 全部
+python3 tests/test_core.py               # 只跑核心
+BLENDER=/path/to/blender scripts/run_tests.sh
+```
+
+集成测试通过 `sys.path` 直接导入插件包（最接近 legacy add-on 的加载方式），另有扩展安装路径的验证流程：
+
+```bash
+scripts/dev_install.sh
+# 然后在 Blender 中 enable bl_ext.user_default.opencv_camera 并再次运行自检
+```
+
+> 扩展模式与 `sys.path` 模式的**代码路径相同但上下文不同**，两种方式都要跑一遍自检：曾经出现过「默认灰色世界 + film_transparent=False 导致自检质心偏到画面中心」的问题，只在扩展模式下暴露。
+
+## 5. 新增插件时的清单
+
+1. `addons/<id>/blender_manifest.toml`（`id` 与目录名一致，`blender_version_min = "4.5.0"`）；
+2. `core/` + `bl/` 分层，`__init__.py` 只做注册编排；
+3. 面板挂在合适的 `bl_parent_id` 下，算子命名 `<id>.<action>`；
+4. `tests/test_core.py` 或 `tests/run_blender_tests.py` 增加用例；
+5. `scripts/package.sh` 能构建出 `dist/<id>-<version>.zip`；
+6. 更新根 `README.md` 插件表与 `docs/roadmap.md` 状态。

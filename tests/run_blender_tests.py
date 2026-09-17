@@ -1,0 +1,408 @@
+"""Blender integration tests for the OpenCV camera add-on.
+
+    /Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup \
+        --python tests/run_blender_tests.py
+
+Checks the whole chain: registration, shader compile, parameter transfer,
+the render self test and the equivalence against Blender's built-in perspective
+camera (which also validates ``transform.shift_from_principal_point``).
+"""
+
+from __future__ import annotations
+
+import bmesh
+import os
+import sys
+import tempfile
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "addons"))
+
+import bpy  # noqa: E402
+import numpy as np  # noqa: E402
+
+import opencv_camera  # noqa: E402
+from opencv_camera.bl import apply as apply_mod  # noqa: E402
+from opencv_camera.bl import selftest, shader  # noqa: E402
+from opencv_camera.core import calibration_io, camera_model, transform  # noqa: E402
+
+FAILURES = []
+TMPDL = tempfile.mkdtemp(prefix="opencv_cam_blender_test_")
+
+
+def check(name, condition, detail=""):
+    status = "PASS" if condition else "FAIL"
+    print(f"[{status}] {name}" + (f" - {detail}" if detail else ""))
+    if not condition:
+        FAILURES.append(name)
+
+
+def approx(a, b, tol=1e-9):
+    return abs(a - b) <= tol
+
+
+# ---------------------------------------------------------------------------
+def clear_scene():
+    for obj in list(bpy.data.objects):
+        bpy.data.objects.remove(obj, do_unlink=True)
+    for mesh in list(bpy.data.meshes):
+        bpy.data.meshes.remove(mesh)
+    for material in list(bpy.data.materials):
+        bpy.data.materials.remove(material)
+
+
+def setup_scene(resolution=128, samples=4):
+    scene = bpy.context.scene
+    scene.render.engine = "CYCLES"
+    scene.cycles.device = "CPU"
+    scene.cycles.samples = samples
+    scene.cycles.use_denoising = False
+    scene.render.resolution_x = resolution
+    scene.render.resolution_y = resolution
+    scene.render.resolution_percentage = 100
+    scene.view_settings.view_transform = "Standard"
+    world = scene.world or bpy.data.worlds.new("World")
+    scene.world = world
+    world.use_nodes = True
+    world.node_tree.nodes["Background"].inputs[1].default_value = 0.0
+    return scene
+
+
+def checker_plane(scene):
+    mesh = bpy.data.meshes.new("plane")
+    bm = bmesh.new()
+    bmesh.ops.create_grid(bm, x_segments=1, y_segments=1, size=6.0)
+    bm.to_mesh(mesh)
+    bm.free()
+    plane = bpy.data.objects.new("Plane", mesh)
+    plane.location = (0.0, 0.0, -3.0)
+    scene.collection.objects.link(plane)
+
+    material = bpy.data.materials.new("checker")
+    material.use_nodes = True
+    nodes = material.node_tree.nodes
+    for node in list(nodes):
+        nodes.remove(node)
+    output = nodes.new("ShaderNodeOutputMaterial")
+    emission = nodes.new("ShaderNodeEmission")
+    checker = nodes.new("ShaderNodeTexChecker")
+    coords = nodes.new("ShaderNodeTexCoord")
+    checker.inputs["Scale"].default_value = 40.0
+    material.node_tree.links.new(coords.outputs["Generated"], checker.inputs["Vector"])
+    material.node_tree.links.new(checker.outputs["Color"], emission.inputs["Color"])
+    material.node_tree.links.new(emission.outputs["Emission"], output.inputs["Surface"])
+    plane.data.materials.append(material)
+    return plane
+
+
+def make_camera(name, custom=True):
+    cam_data = bpy.data.cameras.new(name)
+    camera = bpy.data.objects.new(name, cam_data)
+    bpy.context.scene.collection.objects.link(camera)
+    if not custom:
+        cam_data.lens = 50.0
+        cam_data.sensor_width = 36.0
+        cam_data.sensor_fit = "AUTO"
+    return camera, cam_data
+
+
+def render_to(scene, camera, path):
+    scene.camera = camera
+    scene.render.filepath = path
+    bpy.ops.render.render(write_still=True)
+    image = bpy.data.images.load(path)
+    try:
+        width, height = image.size
+        pixels = np.array(image.pixels[:], dtype=np.float32).reshape(height, width, 4)[..., :3]
+    finally:
+        bpy.data.images.remove(image)
+    return pixels
+
+
+# ---------------------------------------------------------------------------
+def test_registration():
+    check("addon registers on the camera data", hasattr(bpy.types.Camera, "opencv_cam"))
+    camera, cam_data = make_camera("RegCam")
+    check("property group instance", cam_data.opencv_cam is not None)
+    check("default shader text name", cam_data.opencv_cam.shader_text_name == "opencv_camera.osl")
+
+
+def test_apply_and_compile():
+    scene = setup_scene()
+    camera, cam_data = make_camera("ApplyCam")
+    settings = cam_data.opencv_cam
+    settings.intrinsics.fx = 500.0
+    settings.intrinsics.fy = 505.0
+    settings.intrinsics.image_width = 128
+    settings.intrinsics.image_height = 128
+    settings.distortion.k1 = -0.2
+    settings.distortion.k2 = 0.05
+    ok, messages = apply_mod.apply_settings(cam_data, settings, scene)
+    check("apply_settings ok", ok, "; ".join(messages))
+    check("camera switched to custom", cam_data.type == "CUSTOM")
+    check("bytecode present", len(cam_data.custom_bytecode) > 0,
+          f"{len(cam_data.custom_bytecode)} chars")
+    params = cam_data.cycles_custom
+    check("all shader parameters present",
+          all(name in params for name in apply_mod.SHADER_PARAMS),
+          f"missing {[n for n in apply_mod.SHADER_PARAMS if n not in params]}")
+    # Cycles stores the parameters as float32
+    check("parameter values transferred",
+          approx(params["fx"], 500.0, 1e-4) and approx(params["k1"], -0.2, 1e-6)
+          and int(params["enable_distortion"]) == 1,
+          f"fx={params['fx']} k1={params['k1']}")
+    return camera, cam_data
+
+
+def test_shader_failure_is_detected():
+    camera, cam_data = make_camera("BadShaderCam")
+    settings = cam_data.opencv_cam
+    broken = bpy.data.texts.new("__broken_camera.osl")
+    broken.write("shader opencv_camera(float fx = 1.0, output point position = 0.0, "
+                 "output vector direction = 0.0, output color throughput = 1.0) "
+                 "{ float u = 0.5; direction = normalize(vector(u, 0.0, 1.0)); }")
+    cam_data.type = "CUSTOM"
+    cam_data.custom_mode = "INTERNAL"
+    cam_data.custom_bytecode = ""
+    cam_data.custom_shader = broken
+    ok, messages = shader.ensure_compiled(cam_data)
+    bpy.data.texts.remove(broken)
+    bpy.data.objects.remove(camera, do_unlink=True)
+    check("broken shader detected", not ok, "; ".join(messages)[:120])
+
+
+def test_selftest():
+    scene = setup_scene(resolution=128, samples=4)
+    camera, cam_data = make_camera("TestCam")
+    settings = cam_data.opencv_cam
+    settings.intrinsics.fx = 300.0
+    settings.intrinsics.fy = 300.0
+    settings.intrinsics.image_width = 128
+    settings.intrinsics.image_height = 128
+    settings.distortion.k1 = -0.25
+    settings.distortion.k2 = 0.06
+    settings.distortion.p1 = 2e-4
+    apply_mod.apply_settings(cam_data, settings, scene)
+    result = selftest.run(cam_data, settings, scene, resolution=128, samples=4, tolerance_px=0.3)
+    check("self test passes", result["passed"],
+          f"error {result['error_px']:.4f} px (tolerance {result['tolerance_px']})")
+
+
+def test_selftest_with_default_world():
+    """The self test must survive a non-black world (default factory scene)."""
+    scene = setup_scene(resolution=128, samples=4)
+    scene.world.node_tree.nodes["Background"].inputs[1].default_value = 1.0
+    camera, cam_data = make_camera("WorldCam")
+    settings = cam_data.opencv_cam
+    settings.intrinsics.fx = 350.0
+    settings.intrinsics.fy = 350.0
+    settings.intrinsics.image_width = 128
+    settings.intrinsics.image_height = 128
+    apply_mod.apply_settings(cam_data, settings, scene)
+    result = selftest.run(cam_data, settings, scene, resolution=128, samples=4, tolerance_px=0.3)
+    check("self test passes with a bright world", result["passed"],
+          f"error {result['error_px']:.4f} px")
+
+
+def test_builtin_camera_equivalence():
+    """Zero-distortion custom camera must match Blender's perspective camera."""
+    scene = setup_scene(resolution=128, samples=4)
+    clear_scene()
+    setup_scene(resolution=128, samples=4)
+    checker_plane(scene)
+
+    custom, custom_data = make_camera("EquivCustom", custom=True)
+    builtin, builtin_data = make_camera("EquivBuiltin", custom=False)
+
+    settings = custom_data.opencv_cam
+    focal_px = transform.fx_from_lens_mm(builtin_data.lens, builtin_data.sensor_width, 128)
+    settings.intrinsics.fx = focal_px
+    settings.intrinsics.fy = focal_px
+    settings.intrinsics.image_width = 128
+    settings.intrinsics.image_height = 128
+    settings.intrinsics.auto_center = True
+    settings.distortion.enabled = False
+    ok, messages = apply_mod.apply_settings(custom_data, settings, scene)
+    check("equivalence: apply ok", ok, "; ".join(messages))
+
+    custom_pixels = render_to(scene, custom, os.path.join(TMPDL, "equiv_custom.png"))
+    builtin_pixels = render_to(scene, builtin, os.path.join(TMPDL, "equiv_builtin.png"))
+    diff = np.abs(custom_pixels - builtin_pixels)
+    check("equivalence: image has structure",
+          float(custom_pixels.std()) > 0.05, f"std {float(custom_pixels.std()):.4f}")
+    check("equivalence: pixel identical", float(diff.max()) == 0.0,
+          f"mean {float(diff.mean()):.3e} max {float(diff.max()):.3e}")
+
+
+def test_shift_equivalence():
+    """Principal point <-> Blender shift must match the built-in camera."""
+    scene = setup_scene(resolution=128, samples=4)
+    clear_scene()
+    setup_scene(resolution=128, samples=4)
+    checker_plane(scene)
+
+    custom, custom_data = make_camera("ShiftCustom", custom=True)
+    builtin, builtin_data = make_camera("ShiftBuiltin", custom=False)
+    builtin_data.shift_x = 0.1
+    builtin_data.shift_y = 0.15
+
+    settings = custom_data.opencv_cam
+    focal_px = transform.fx_from_lens_mm(builtin_data.lens, builtin_data.sensor_width, 128)
+    settings.intrinsics.fx = focal_px
+    settings.intrinsics.fy = focal_px
+    settings.intrinsics.image_width = 128
+    settings.intrinsics.image_height = 128
+    settings.intrinsics.auto_center = False
+    cx, cy = transform.principal_point_from_shift(builtin_data.shift_x, builtin_data.shift_y, 128, 128)
+    settings.intrinsics.cx = cx
+    settings.intrinsics.cy = cy
+    settings.distortion.enabled = False
+    ok, messages = apply_mod.apply_settings(custom_data, settings, scene)
+    check("shift: apply ok", ok, "; ".join(messages))
+
+    custom_pixels = render_to(scene, custom, os.path.join(TMPDL, "shift_custom.png"))
+    builtin_pixels = render_to(scene, builtin, os.path.join(TMPDL, "shift_builtin.png"))
+    diff = np.abs(custom_pixels - builtin_pixels)
+    check("shift equivalence: pixel identical", float(diff.max()) == 0.0,
+          f"cx={cx:.2f} cy={cy:.2f}, mean {float(diff.mean()):.3e} max {float(diff.max()):.3e}")
+
+
+def test_resolution_scaling():
+    scene = setup_scene(resolution=128, samples=4)
+    camera, cam_data = make_camera("ScaleCam")
+    settings = cam_data.opencv_cam
+    settings.intrinsics.fx = 1500.0
+    settings.intrinsics.fy = 1500.0
+    settings.intrinsics.image_width = 1920
+    settings.intrinsics.image_height = 1080
+    settings.intrinsics.auto_center = True
+    settings.intrinsics.scale_to_render = True
+    apply_mod.apply_settings(cam_data, settings, scene)
+    check("intrinsics scaled to render resolution",
+          approx(cam_data.cycles_custom["fx"], 1500.0 * 128 / 1920, 1e-6),
+          f"fx={cam_data.cycles_custom['fx']:.4f}")
+    effective = apply_mod.effective_intrinsics(settings, 1920, 1080)
+    check("unscaled intrinsics unchanged at calibration resolution",
+          approx(effective.fx, 1500.0) and effective.auto_center)
+
+
+def test_pose_roundtrip():
+    scene = setup_scene()
+    camera, cam_data = make_camera("PoseCam")
+    settings = cam_data.opencv_cam
+    R_cv = (0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+    t_cv = (0.4, -0.2, 2.5)
+    settings.pose.rotation = R_cv
+    settings.pose.translation = t_cv
+    apply_mod.apply_opencv_pose(camera, settings)
+    rotation, translation = apply_mod.read_opencv_pose(camera, settings)
+    error = max(abs(a - b) for a, b in zip(rotation, R_cv)) + max(
+        abs(a - b) for a, b in zip(translation, t_cv))
+    check("opencv pose round trip", error < 1e-6, f"max error {error:.3e}")
+
+
+def test_calibration_roundtrip():
+    scene = setup_scene()
+    camera, cam_data = make_camera("CalibCam")
+    settings = cam_data.opencv_cam
+    calibration = calibration_io.Calibration(
+        intrinsics=camera_model.Intrinsics(fx=812.5, fy=810.25, cx=649.5, cy=365.25,
+                                           width=1280, height=720),
+        distortion=camera_model.Distortion.from_coefficients(
+            [-0.31, 0.12, 3.1e-4, -1.7e-4, -0.02]),
+    )
+    path = calibration_io.save_calibration(os.path.join(TMPDL, "export.yaml"), calibration)
+    settings.set_from_core(*[calibration.intrinsics, calibration.distortion])
+    # property group floats are float32
+    check("yaml export/import",
+          approx(settings.intrinsics.fx, 812.5, 1e-4) and approx(settings.intrinsics.cy, 365.25, 1e-4)
+          and approx(settings.distortion.k2, 0.12, 1e-6), os.path.basename(path))
+    loaded = calibration_io.load_calibration(path)
+    check("yaml reload keeps coefficients",
+          approx(loaded.distortion.p1, 3.1e-4, 1e-12) and approx(loaded.distortion.k3, -0.02, 1e-12))
+
+
+def test_sync_from_lens():
+    scene = setup_scene(resolution=128)
+    camera, cam_data = make_camera("LensCam", custom=False)
+    settings = cam_data.opencv_cam
+    messages = apply_mod.sync_intrinsics_from_lens(cam_data, settings, scene)
+    expected = 50.0 * 128 / 36.0
+    check("intrinsics from blender lens",
+          approx(settings.intrinsics.fx, expected, 1e-4)
+          and approx(settings.intrinsics.fy, expected, 1e-4)
+          and settings.intrinsics.auto_center is False
+          and approx(settings.intrinsics.cx, 64.0, 1e-4),
+          "; ".join(messages))
+
+
+def test_operator_end_to_end():
+    scene = setup_scene(resolution=128, samples=4)
+    clear_scene()
+    setup_scene(resolution=128, samples=4)
+    camera, cam_data = make_camera("OperatorCam")
+    bpy.context.view_layer.objects.active = camera
+    camera.select_set(True)
+    settings = cam_data.opencv_cam
+    settings.intrinsics.fx = 320.0
+    settings.intrinsics.fy = 320.0
+    settings.intrinsics.image_width = 128
+    settings.intrinsics.image_height = 128
+    settings.distortion.k1 = -0.15
+
+    check("panel classes registered", hasattr(bpy.types, "OPENCV_CAM_PT_main"))
+    check("operator registered", hasattr(bpy.ops.opencv_cam, "apply_settings"))
+
+    check("operator apply_settings", bpy.ops.opencv_cam.apply_settings() == {"FINISHED"})
+    check("operator install_shader", bpy.ops.opencv_cam.install_shader() == {"FINISHED"})
+    check("operator self_test",
+          bpy.ops.opencv_cam.self_test(resolution=128, samples=4, tolerance_px=0.5) == {"FINISHED"})
+    check("operator sync_from_lens", bpy.ops.opencv_cam.sync_from_lens() == {"FINISHED"})
+
+    export_path = os.path.join(TMPDL, "operator_export.yaml")
+    result = bpy.ops.opencv_cam.export_calibration(filepath=export_path)
+    check("operator export_calibration", result == {"FINISHED"} and os.path.exists(export_path))
+    check("operator import_calibration",
+          bpy.ops.opencv_cam.import_calibration(filepath=export_path) == {"FINISHED"})
+
+    settings.pose.translation = (0.1, 0.2, 3.0)
+    check("operator apply_pose", bpy.ops.opencv_cam.apply_pose() == {"FINISHED"})
+    check("operator read_pose", bpy.ops.opencv_cam.read_pose() == {"FINISHED"})
+
+
+def main():
+    tests = (
+        test_registration,
+        test_apply_and_compile,
+        test_shader_failure_is_detected,
+        test_selftest,
+        test_selftest_with_default_world,
+        test_builtin_camera_equivalence,
+        test_shift_equivalence,
+        test_resolution_scaling,
+        test_pose_roundtrip,
+        test_calibration_roundtrip,
+        test_sync_from_lens,
+        test_operator_end_to_end,
+    )
+    opencv_camera.register()
+    try:
+        for test in tests:
+            try:
+                test()
+            except Exception as exc:
+                import traceback
+                traceback.print_exc()
+                check(test.__name__, False, f"{type(exc).__name__}: {exc}")
+    finally:
+        opencv_camera.unregister()
+
+    print()
+    if FAILURES:
+        print(f"FAILED ({len(FAILURES)}): {', '.join(FAILURES)}")
+        sys.exit(1)
+    print("all Blender integration tests passed")
+
+
+if __name__ == "__main__":
+    main()

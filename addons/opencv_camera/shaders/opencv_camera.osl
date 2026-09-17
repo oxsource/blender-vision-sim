@@ -1,0 +1,81 @@
+/* OpenCV camera shader for Cycles "Lens Type = Custom".
+ *
+ * Intrinsics follow the OpenCV pinhole model, pixel coordinates use the OpenCV
+ * convention (origin at the top-left corner, v down, pixel centres at
+ * (i + 0.5, j + 0.5)) and the output ray is expressed in Blender camera space
+ * (+X right, +Y up, +Z towards the scene).
+ *
+ * Distortion is Brown-Conrady (k1, k2, p1, p2, k3) with the optional rational
+ * terms (k4, k5, k6); the inverse is obtained with the same fixed point
+ * iteration as cv2.undistortPoints.
+ *
+ * Keep the parameter list in sync with bl/apply.py (_PARAMS).
+ */
+shader opencv_camera(
+    float fx = 800.0 [[ string help = "Focal length in pixels (x)" ]],
+    float fy = 800.0 [[ string help = "Focal length in pixels (y)" ]],
+    float cx = -1.0 [[ string help = "Principal point u [px], -1 = image center" ]],
+    float cy = -1.0 [[ string help = "Principal point v [px], -1 = image center" ]],
+    int enable_distortion = 1 [[ string widget = "checkbox" ]],
+    float k1 = 0.0,
+    float k2 = 0.0,
+    float k3 = 0.0,
+    float k4 = 0.0 [[ string help = "Rational numerator, 0 = rational model off" ]],
+    float k5 = 0.0,
+    float k6 = 0.0,
+    float p1 = 0.0,
+    float p2 = 0.0,
+    int undistort_iterations = 10 [[ int min = 1, int max = 50 ]],
+    int allow_off_sensor = 1 [[ string widget = "checkbox" ]],
+    output point position = 0.0,
+    output vector direction = 0.0,
+    output color throughput = 1.0)
+{
+    vector res;
+    getattribute("cam:image_resolution", res);
+    float W = res.x;
+    float H = res.y;
+
+    /* Raster position: 0..1 across the image, y up (Blender convention).
+     * Note: "u" and "v" are reserved OSL globals, do not shadow them. */
+    point r = camera_shader_raster_position();
+    float px = r.x * W;
+    float py = (1.0 - r.y) * H;
+
+    float u0 = (cx < 0.0) ? 0.5 * W : cx;
+    float v0 = (cy < 0.0) ? 0.5 * H : cy;
+
+    float xd = (px - u0) / fx;
+    float yd = (py - v0) / fy;
+
+    float x = xd;
+    float y = yd;
+
+    if (enable_distortion) {
+        for (int i = 0; i < undistort_iterations; i++) {
+            float r2 = x * x + y * y;
+            float r4 = r2 * r2;
+            float r6 = r4 * r2;
+            float num = 1.0 + k1 * r2 + k2 * r4 + k3 * r6;
+            float den = 1.0 + k4 * r2 + k5 * r4 + k6 * r6;
+            if (fabs(den) < 1.0e-8) {
+                break;
+            }
+            float icdist = den / num;
+            float dx = 2.0 * p1 * x * y + p2 * (r2 + 2.0 * x * x);
+            float dy = p1 * (r2 + 2.0 * y * y) + 2.0 * p2 * x * y;
+            x = (xd - dx) * icdist;
+            y = (yd - dy) * icdist;
+            if (fabs(x) > 1.0e3 || fabs(y) > 1.0e3) {
+                break;
+            }
+        }
+        if (!allow_off_sensor && (fabs(x) > 1.0e2 || fabs(y) > 1.0e2)) {
+            throughput = color(0.0);
+            return;
+        }
+    }
+
+    /* OpenCV y-down -> Blender camera y-up. */
+    direction = normalize(vector(x, -y, 1.0));
+}

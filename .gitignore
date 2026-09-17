@@ -1,0 +1,19 @@
+# Blender build artefacts
+dist/
+*.blend1
+*.blend2
+*.blend@
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Shader bytecode
+*.oso
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
