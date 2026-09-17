@@ -96,8 +96,7 @@ scripts/version.sh <patch|minor|major|X.Y.Z> [--push] [--dry-run]
                                  2. 快速检查（编译 + 核心单测 + 发布工具测试，纯 Python 数秒）
                                  3. 打包（scripts/package.py，可复现 zip + sha256）
                                  4. 创建/更新 GitHub Release，附带本版本的 zip 与 sha256
-                                 无头 Blender 集成测试**不在发版路径上**，需要时手动触发
-                                 （workflow_dispatch 勾选 run_blender_tests）
+                                 （CI 不下载 Blender；无头集成测试只在本地跑）
 ```
 
 - `--dry-run` 只打印将要发生的版本变化；`--show` 打印当前版本；工作区不干净时拒绝执行（和 npm 一致）。
