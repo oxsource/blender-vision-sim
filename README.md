@@ -89,17 +89,18 @@ scripts/version.sh <patch|minor|major|X.Y.Z> [--push] [--dry-run]
         │  commit: chore(release): vX.Y.Z
         └─ tag:    vX.Y.Z（带注释）
                 │
-                └─ push tag ──► GitHub Actions「release」工作流
-                                 1. 校验 tag 与 manifest 版本一致
-                                 2. 核心单测 + 无头 Blender 集成测试
-                                 3. 官方 `blender --command extension build`（清单校验）
-                                    + scripts/package.py（可复现 zip）
-                                 4. 创建 GitHub Release，附带 zip 与 sha256
+                └─ push tag ──► GitHub Actions（单一工作流 .github/workflows/ci.yml）
+                                 1. checks job：核心单测 + 发布工具测试 + 打包
+                                 2. blender job：无头集成测试 + 官方 builder 清单校验
+                                 3. release job（仅 tag 触发，needs 上面两个）：
+                                    校验 tag 与 manifest 版本一致 → 出包 → 创建 GitHub Release
+                                    附带本版本的 zip 与 sha256
 ```
 
 - `--dry-run` 只打印将要发生的版本变化；`--show` 打印当前版本；工作区不干净时拒绝执行（和 npm 一致）。
-- 普通 push / PR 触发「ci」工作流：编译检查、核心单测、发布工具测试、打包，并上传 zip 作为 artifact；无头 Blender 集成测试在单独的 job 里跑（自动下载指定版本的 Blender）。
-- 两个工作流都在 `.github/workflows/`；Blender 版本用 `BLENDER_VERSION` 环境变量固定（当前 4.5.3）。
+- **只有一个工作流文件** `.github/workflows/ci.yml`，三个 job：`checks`（编译检查/核心单测/发布工具测试/打包+artifact）、`blender`（下载指定版本 Blender 跑无头集成测试 + 官方 builder 校验）、`release`（**仅 tag 触发**，`needs: [checks, blender]`，所以测试只跑一次就够门禁）。
+- 普通 push / PR 只跑前两个 job；打 tag（或手动 `workflow_dispatch` 指定 tag）才会执行 release job。
+- Blender 版本用 `BLENDER_VERSION` 环境变量固定（当前 4.5.3）；补发历史版本：`gh workflow run ci.yml -f tag=vX.Y.Z`。
 
 ### 目录结构
 

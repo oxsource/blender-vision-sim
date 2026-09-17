@@ -135,32 +135,39 @@ def test_version_script():
     check("invalid bump rejected", bad.returncode != 0)
 
 
-def test_workflows_present():
-    for path in (".github/workflows/ci.yml", ".github/workflows/release.yml"):
-        full = os.path.join(ROOT, path)
-        check(f"{path} exists", os.path.exists(full))
-        if os.path.exists(full):
-            text = open(full, encoding="utf-8").read()
-            check(f"{path} triggers on v* tags" if "release" in path else f"{path} runs tests",
-                  "tags: [\"v*\"]" in text if "release" in path else "test_core.py" in text)
-    release = os.path.join(ROOT, ".github/workflows/release.yml")
-    if os.path.exists(release):
-        text = open(release, encoding="utf-8").read()
-        check("release attaches the zip and checksum of this version",
-              "dist/opencv_camera-${version}.zip" in text
-              and "dist/opencv_camera-${version}.zip.sha256" in text)
-        check("release creates the output directories before the official build",
-              "mkdir -p dist dist-official" in text)
-        check("manual runs check out the requested tag",
-              "github.event.inputs.tag || github.ref" in text)
-        check("release verifies the tag against the manifest",
-              "does not match the manifest version" in text)
+def test_workflow_present():
+    """A single workflow handles CI and releases."""
+    path = os.path.join(ROOT, ".github/workflows/ci.yml")
+    check("workflow exists", os.path.exists(path))
+    check("the separate release workflow is gone",
+          not os.path.exists(os.path.join(ROOT, ".github/workflows/release.yml")))
+    if not os.path.exists(path):
+        return
+    text = open(path, encoding="utf-8").read()
+
+    check("runs the test suites", "test_core.py" in text and "test_release_scripts.py" in text)
+    check("runs the headless Blender tests", "run_blender_tests.py" in text)
+    check("triggers on v* tags", 'tags: ["v*"]' in text)
+    check("release job only runs for tags or a named tag",
+          "startsWith(github.ref, 'refs/tags/v')" in text and "github.event.inputs.tag" in text)
+    check("release waits for the test jobs", "needs: [checks, blender]" in text)
+    check("release has write permission", "contents: write" in text)
+    check("release creates the build output dirs", "mkdir -p dist dist-official" in text)
+    check("release attaches the zip and checksum of this version",
+          "dist/opencv_camera-${version}.zip" in text
+          and "dist/opencv_camera-${version}.zip.sha256" in text)
+    check("manual runs check out the requested tag",
+          "github.event.inputs.tag || github.ref" in text)
+    check("release verifies the tag against the manifest",
+          "does not match the manifest version" in text)
+    check("uses Node 24 action versions",
+          "actions/checkout@v5" in text and "actions/setup-python@v6" in text)
 
 
 def main() -> int:
     for test in (test_package_check, test_package_build_is_reproducible,
                  test_package_rejects_bad_manifest, test_version_script,
-                 test_workflows_present):
+                 test_workflow_present):
         test()
     print()
     if FAILURES:
