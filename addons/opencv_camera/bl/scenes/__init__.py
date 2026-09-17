@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from . import camera_scene, debounce
+from . import avm_scene, camera_scene, debounce
 from .base import (
     SceneDefinition,
     ScenePanel,
@@ -32,7 +32,7 @@ __all__ = [
 ]
 
 #: scene modules, in registration order (a scene added later goes last)
-_MODULES = (camera_scene,)
+_MODULES = (camera_scene, avm_scene)
 
 
 def definitions() -> List[SceneDefinition]:

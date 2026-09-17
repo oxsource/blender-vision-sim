@@ -87,6 +87,21 @@ def rounded_rect(x0: float, y0: float, x1: float, y1: float, radius: float = COR
     return sdf
 
 
+def filled_rect(x0: float, y0: float, x1: float, y1: float, radius: float = 0.02) -> Shape:
+    """Solid rounded rectangle (negative inside, so it rasterises as a fill)."""
+    cx, cy = (x0 + x1) * 0.5, (y0 + y1) * 0.5
+    hx, hy = (x1 - x0) * 0.5 - radius, (y1 - y0) * 0.5 - radius
+
+    def sdf(x: float, y: float) -> float:
+        dx = abs(x - cx) - hx
+        dy = abs(y - cy) - hy
+        outside = math.hypot(max(dx, 0.0), max(dy, 0.0))
+        inside = min(max(dx, dy), 0.0)
+        return outside + inside - radius  # negative inside
+
+    return sdf
+
+
 def curve(function: Callable[[float], Point], t0: float, t1: float, samples: int = 48) -> Shape:
     points = [function(t0 + (t1 - t0) * i / samples) for i in range(samples + 1)]
     return polyline(points)
@@ -164,6 +179,16 @@ def build_icons() -> Dict[str, List[Shape]]:
                      circle((0.5, 0.5), 0.065)],
         "pinhole": [rounded_rect(0.10, 0.10, 0.90, 0.90), warped_grid(0.5, 0.5, 0.22, 2, 0.0)],
         "camera_scene": [cube_shape()],
+        # AVM: top view of the field with the four solid blocks in the corners
+        # and the car outline in the middle
+        "avm_scene": [
+            rounded_rect(0.08, 0.08, 0.92, 0.92),
+            filled_rect(0.13, 0.13, 0.32, 0.32),
+            filled_rect(0.68, 0.13, 0.87, 0.32),
+            filled_rect(0.13, 0.68, 0.32, 0.87),
+            filled_rect(0.68, 0.68, 0.87, 0.87),
+            rounded_rect(0.37, 0.28, 0.63, 0.72, 0.06),
+        ],
     }
 
 

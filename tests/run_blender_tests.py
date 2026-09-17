@@ -736,9 +736,9 @@ def test_menus_and_raw_params():
     check("icons loaded into a preview collection",
           all(icons_mod.is_loaded(name) for name in
               ("visionsim", "camera", "fisheye", "brown_conrady", "rational",
-               "pinhole", "camera_scene")),
+               "pinhole", "camera_scene", "avm_scene")),
           str(icons_mod.available()))
-    check("icon files ship with the add-on", len(icons_mod.available()) == 7,
+    check("icon files ship with the add-on", len(icons_mod.available()) == 8,
           str(icons_mod.available()))
     check("every menu entry has its own icon",
           menus_mod.MODEL_ICONS == {"fisheye": "fisheye", "brown_conrady": "brown_conrady",
@@ -829,6 +829,86 @@ def test_scene_registry():
     check("debounce is a no-op in background",
           debounce.pending("test") is False and not called)
     debounce.cancel("test")
+
+
+def test_avm_scene_builder():
+    """The AVM Scene builds, rebuilds in place, resets and tears down."""
+    import math
+    from opencv_camera.bl import scenes as scenes_mod
+
+    scene = setup_scene(resolution=128, samples=4)
+    clear_scene()
+    scene = setup_scene(resolution=128, samples=4)
+
+    check("avm add operator registered", "avm_add_scene" in dir(bpy.ops.opencv_cam))
+    check("add AVM scene", bpy.ops.opencv_cam.avm_add_scene() == {"FINISHED"})
+
+    settings = scene.avm_scene
+    definition = scenes_mod.definition("avm_scene")
+    check("root pointer set",
+          settings.root is not None and settings.root.name == "AVM_Root",
+          str(settings.root))
+    check("panels would show", scenes_mod.has_scene(bpy.context, definition))
+
+    target = bpy.data.collections.get("AVM Scene")
+    names = sorted(obj.name for obj in target.objects)
+    expected = ["AVM_Block_BackLeft", "AVM_Block_BackRight",
+                "AVM_Block_FrontLeft", "AVM_Block_FrontRight",
+                "AVM_Cam_Back", "AVM_Cam_Front", "AVM_Cam_Left", "AVM_Cam_Right",
+                "AVM_Car", "AVM_Ground", "AVM_Root"]
+    check("collection contents", names == expected, str(names))
+
+    check("four camera records",
+          [record.name for record in settings.cameras] == ["front", "back", "left", "right"],
+          str([record.name for record in settings.cameras]))
+
+    camera = bpy.data.objects["AVM_Cam_Front"]
+    check("camera is a compiled custom fisheye",
+          camera.data.type == "CUSTOM"
+          and camera.data.custom_shader is not None
+          and camera.data.custom_shader.name == "opencv_fisheye.osl"
+          and len(camera.data.custom_bytecode) > 0)
+    check("camera intrinsics from the preset",
+          approx(camera.data.opencv_cam.intrinsics.fx, 317.77563818112867, 1e-3)
+          and approx(camera.data.opencv_cam.intrinsics.cy, 477.8201435641188, 1e-3))
+    check("camera pose from the preset",
+          approx(camera.location.x, -0.030997, 1e-4)
+          and approx(camera.location.y, 2.466796, 1e-4)
+          and approx(camera.location.z, 2.69068, 1e-4),
+          f"{tuple(round(v, 4) for v in camera.location)}")
+    check("CV Extrinsics synced from the pose",
+          abs(camera.data.opencv_cam.pose.euler[0] - math.radians(20.4365)) < 1e-3,
+          str(camera.data.opencv_cam.pose.euler))
+
+    block = bpy.data.objects["AVM_Block_FrontLeft"]
+    check("front-left block centre",
+          approx(block.location.x, -1.9, 1e-6) and approx(block.location.y, 3.7, 1e-6),
+          f"{tuple(round(v, 4) for v in block.location)}")
+    check("block is a real quad",
+          len(block.data.polygons) == 1 and len(block.data.vertices) == 4)
+
+    # editing only schedules the debounced rebuild (a no-op in background)
+    revision = settings.revision
+    settings.core_w = 300.0
+    check("editing does not rebuild in background", settings.revision == revision)
+    check("manual rebuild", bpy.ops.opencv_cam.avm_rebuild() == {"FINISHED"})
+    check("rebuild bumped the revision", settings.revision > revision)
+    check("blocks follow core_w",
+          approx(bpy.data.objects["AVM_Block_FrontLeft"].location.x, -2.2, 1e-6),
+          f"{bpy.data.objects['AVM_Block_FrontLeft'].location.x:.4f}")
+    check("rebuild keeps the same objects",
+          bpy.data.objects.get("AVM_Ground") is not None)
+
+    check("reset defaults", bpy.ops.opencv_cam.avm_reset_defaults() == {"FINISHED"})
+    check("reset restored the field", approx(settings.core_w, 240.0, 1e-6))
+    check("reset restored the block",
+          approx(bpy.data.objects["AVM_Block_FrontLeft"].location.x, -1.9, 1e-6))
+
+    check("remove scene", bpy.ops.opencv_cam.avm_remove_scene() == {"FINISHED"})
+    check("root cleared", settings.root is None)
+    check("panels hidden", not scenes_mod.has_scene(bpy.context, definition))
+    check("collection gone", bpy.data.collections.get("AVM Scene") is None)
+    check("cameras gone", bpy.data.objects.get("AVM_Cam_Front") is None)
 
 
 def test_add_camera_default_preset():
@@ -1101,6 +1181,7 @@ def main():
         test_panel_layout,
         test_menus_and_raw_params,
         test_scene_registry,
+        test_avm_scene_builder,
         test_presets,
         test_shader_text_upgrade_recompiles,
         test_live_apply,

@@ -1,0 +1,195 @@
+"""AVM Scene properties.
+
+The scene owns its settings on the **Scene** (``scene.avm_scene``), so the panels
+need no selected object.  Camera *intrinsics* are deliberately **not** here: they
+stay on ``camera.data.opencv_cam`` and are edited in the existing
+``CV Intrinsics`` / ``CV Presets`` / ``CV Output`` panels (see
+``docs/avm-scene.md`` §4.2).  Only the camera *mount pose* lives here.
+
+Every editable value schedules a debounced rebuild (dragging a slider fires one
+update per mouse move, so the rebuild has to wait until the user stops).
+"""
+
+from __future__ import annotations
+
+import bpy
+from bpy.props import (
+    BoolProperty,
+    CollectionProperty,
+    EnumProperty,
+    FloatProperty,
+    FloatVectorProperty,
+    IntProperty,
+    PointerProperty,
+    StringProperty,
+)
+
+from .. import base
+from ..base import SceneDefinition  # noqa: F401  (re-exported for convenience)
+from . import DEFINITION
+
+#: enum items must be a plain module level list (annotations are re-evaluated)
+CAMERA_ITEMS = [
+    ("front", "Front", "Front camera"),
+    ("back", "Back", "Rear camera"),
+    ("left", "Left", "Left camera"),
+    ("right", "Right", "Right camera"),
+]
+
+
+def _schedule(self, context) -> None:
+    """Debounced rebuild for any layout change."""
+    from . import controller
+    controller.schedule_rebuild(context)
+
+
+def _schedule_active(self, context) -> None:
+    """``active_camera`` also re-applies the render resolution."""
+    from . import controller
+    controller.apply_active_camera(context)
+    controller.schedule_rebuild(context)
+
+
+class AVMCameraSettings(bpy.types.PropertyGroup):
+    """One camera's mount pose (intrinsics live on the camera data-block)."""
+
+    name: StringProperty(name="Name", default="camera")
+    enable: BoolProperty(name="Enable", default=True, update=_schedule)
+    location: FloatVectorProperty(
+        name="Location",
+        description="Camera mount position in the vehicle frame [m]",
+        size=3,
+        subtype="TRANSLATION",
+        unit="LENGTH",
+        precision=4,
+        default=(0.0, 0.0, 0.0),
+        update=_schedule,
+    )
+    rotation: FloatVectorProperty(
+        name="Rotation",
+        description="Camera mount orientation, XYZ euler [deg]",
+        size=3,
+        subtype="EULER",
+        unit="ROTATION",
+        precision=3,
+        default=(0.0, 0.0, 0.0),
+        update=_schedule,
+    )
+
+
+class AVMSceneSettings(bpy.types.PropertyGroup):
+    """The whole AVM Scene layout (Scene level)."""
+
+    # -- field (cm, the unit of the HTML tool and the App sliders) -----------
+    border_w: FloatProperty(name="Border W", default=0.0, min=0.0, max=2000.0,
+                            description="Outer margin, width direction [cm]",
+                            update=_schedule)
+    border_h: FloatProperty(name="Border H", default=0.0, min=0.0, max=2000.0,
+                            description="Outer margin, height direction [cm]",
+                            update=_schedule)
+    corner: FloatProperty(name="Corner", default=100.0, min=1.0, max=2000.0,
+                          description="Calibration block edge length [cm]",
+                          update=_schedule)
+    inner_w: FloatProperty(name="Inner W", default=20.0, min=0.0, max=2000.0,
+                           description="Gap between the car and the blocks, width [cm]",
+                           update=_schedule)
+    inner_h: FloatProperty(name="Inner H", default=80.0, min=0.0, max=2000.0,
+                           description="Gap between the car and the blocks, height [cm]",
+                           update=_schedule)
+    core_w: FloatProperty(name="Core W", default=240.0, min=10.0, max=2000.0,
+                          description="Car footprint width [cm]",
+                          update=_schedule)
+    core_h: FloatProperty(name="Core H", default=480.0, min=10.0, max=2000.0,
+                          description="Car footprint length [cm]",
+                          update=_schedule)
+
+    # -- car ----------------------------------------------------------------
+    car_follow_core: BoolProperty(
+        name="Follow Core", default=True,
+        description="Use the core footprint as the car length/width",
+        update=_schedule)
+    car_length: FloatProperty(name="Length", default=4.8, min=0.1, max=30.0,
+                              unit="LENGTH", update=_schedule)
+    car_width: FloatProperty(name="Width", default=2.4, min=0.1, max=30.0,
+                             unit="LENGTH", update=_schedule)
+    car_height: FloatProperty(name="Height", default=1.6, min=0.05, max=10.0,
+                              unit="LENGTH", update=_schedule)
+    car_clearance: FloatProperty(name="Clearance", default=0.0, min=0.0, max=2.0,
+                                 unit="LENGTH", update=_schedule)
+
+    # -- ground / blocks ----------------------------------------------------
+    ground_w: FloatProperty(name="Ground W", default=30.0, min=1.0, max=500.0,
+                            unit="LENGTH", update=_schedule)
+    ground_d: FloatProperty(name="Ground D", default=30.0, min=1.0, max=500.0,
+                            unit="LENGTH", update=_schedule)
+    block_lift: FloatProperty(name="Block Lift", default=0.001, min=0.0, max=0.05,
+                              unit="LENGTH", precision=4,
+                              description="Blocks hover this far above the ground (z-fighting)",
+                              update=_schedule)
+
+    # -- layers -------------------------------------------------------------
+    show_ground: BoolProperty(name="Ground", default=True, update=_schedule)
+    show_blocks: BoolProperty(name="Calibration Blocks", default=True, update=_schedule)
+    show_car: BoolProperty(name="Car", default=True, update=_schedule)
+    show_cameras: BoolProperty(name="Cameras", default=True, update=_schedule)
+    show_coverage: BoolProperty(name="Coverage", default=False, update=_schedule)
+
+    # -- cameras ------------------------------------------------------------
+    active_camera: EnumProperty(
+        name="Active Camera", items=CAMERA_ITEMS, default="front",
+        description="Camera that drives the render resolution (all four share it)",
+        update=_schedule_active)
+    cameras: CollectionProperty(type=AVMCameraSettings)
+
+    # -- state --------------------------------------------------------------
+    root: PointerProperty(
+        name="Root",
+        description="AVM_Root empty; its presence is what makes the panels show",
+        type=bpy.types.Object)
+
+    #: rebuild counter, handy in tests / the status line
+    revision: IntProperty(name="Revision", default=0, options={"HIDDEN"})
+
+    # -- helpers ------------------------------------------------------------
+    def field_spec(self):
+        """The layout as a pure-Python :class:`core.scenes.avm_layout.FieldSpec`."""
+        from ....core.scenes import avm_layout
+        return avm_layout.FieldSpec(
+            border_w=self.border_w, border_h=self.border_h,
+            corner=self.corner, inner_w=self.inner_w, inner_h=self.inner_h,
+            core_w=self.core_w, core_h=self.core_h,
+        )
+
+    def camera(self, name: str):
+        for entry in self.cameras:
+            if entry.name == name:
+                return entry
+        return None
+
+    def active_camera_settings(self):
+        return self.camera(self.active_camera)
+
+    def car_size(self):
+        """``(length, width)`` in metres."""
+        if self.car_follow_core:
+            return self.core_h * 0.01, self.core_w * 0.01
+        return self.car_length, self.car_width
+
+
+_CLASSES = (AVMCameraSettings, AVMSceneSettings)
+
+
+def register() -> None:
+    for cls in _CLASSES:
+        bpy.utils.register_class(cls)
+    bpy.types.Scene.avm_scene = PointerProperty(
+        name="AVM Scene",
+        description="AVM plane scene layout (blocks, car, cameras, ground)",
+        type=AVMSceneSettings,
+    )
+
+
+def unregister() -> None:
+    del bpy.types.Scene.avm_scene
+    for cls in reversed(_CLASSES):
+        bpy.utils.unregister_class(cls)
