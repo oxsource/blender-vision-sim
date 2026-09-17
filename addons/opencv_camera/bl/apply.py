@@ -37,6 +37,37 @@ def shader_params(model: str) -> Tuple[str, ...]:
     return SHADER_PARAMS[param_group(model)]
 
 
+def output_resolution(settings, scene=None) -> Tuple[int, int]:
+    """The image size the render should produce, per ``settings.output``."""
+    output = settings.output
+    if output.mode == "custom":
+        return max(8, int(output.width)), max(8, int(output.height))
+    if output.mode == "scene" or scene is None:
+        scene = scene or bpy.context.scene
+        return int(scene.render.resolution_x), int(scene.render.resolution_y)
+    intrinsics = settings.intrinsics
+    return max(8, int(intrinsics.image_width)), max(8, int(intrinsics.image_height))
+
+
+def apply_render_resolution(scene, settings) -> Tuple[bool, List[str]]:
+    """Write the output size into the scene render settings.
+
+    Returns ``(changed, messages)``.  Does nothing when the output follows the
+    scene (``mode == 'scene'``) or when driving the scene is switched off.
+    """
+    output = settings.output
+    if output.mode == "scene" or not output.lock_scene_resolution:
+        return False, []
+    width, height = output_resolution(settings, scene)
+    changed = (scene.render.resolution_x, scene.render.resolution_y,
+               scene.render.resolution_percentage) != (width, height, 100)
+    if changed:
+        scene.render.resolution_x = width
+        scene.render.resolution_y = height
+        scene.render.resolution_percentage = 100
+    return changed, []
+
+
 def effective_intrinsics(settings, width: int = 0, height: int = 0) -> camera_model.Intrinsics:
     """Intrinsics for a given render resolution.
 
@@ -116,10 +147,13 @@ def apply_values(cam_data, settings, scene=None,
     """Push the current settings to ``camera.cycles_custom`` (no recompile).
 
     Used by the live ("auto apply") path: the shader is assumed to be attached
-    and compiled already.  Returns ``(ok, messages)``.
+    and compiled already.  Also keeps the scene render size in sync when the
+    output size drives it.  Returns ``(ok, messages)``.
     """
     messages: List[str] = []
     scene = scene or bpy.context.scene
+    if scene is not None:
+        apply_render_resolution(scene, settings)
     params = shader.cycles_custom_params(cam_data)
     if params is None:
         messages.append("Cycles is not enabled: camera.cycles_custom is unavailable")
@@ -160,6 +194,8 @@ def apply_settings(cam_data, settings, scene=None,
     would render with a stale shader, which is worse than a hard failure.
     """
     messages: List[str] = []
+    scene = scene or bpy.context.scene
+    apply_render_resolution(scene, settings)
     shader.attach(cam_data, settings)
     ok, compile_messages = shader.ensure_compiled(cam_data)
     messages.extend(compile_messages)
@@ -231,7 +267,11 @@ def resolution_notes(settings, scene) -> List[str]:
     """Human readable notes about the stored vs. current resolution."""
     intr = settings.intrinsics
     width, height = scene.render.resolution_x, scene.render.resolution_y
+    output = settings.output
     notes: List[str] = []
+    if output.mode != "scene" and output.lock_scene_resolution:
+        out_w, out_h = output_resolution(settings, scene)
+        notes.append(f"output size {out_w}x{out_h} drives the scene resolution")
     if (intr.image_width, intr.image_height) != (width, height):
         if intr.scale_to_render and intr.image_height and height:
             same_aspect = abs(intr.image_width / intr.image_height - width / height) < 1e-3

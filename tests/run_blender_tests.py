@@ -362,7 +362,10 @@ def test_shift_equivalence():
 
 
 def test_resolution_scaling():
+    """Scaling policy: same aspect -> FOV preserving, different aspect -> crop."""
     scene = setup_scene(resolution=128, samples=4)
+    clear_scene()
+    setup_scene(resolution=128, samples=4)
     camera, cam_data = make_camera("ScaleCam")
     settings = cam_data.opencv_cam
     set_distortion(settings)
@@ -372,23 +375,25 @@ def test_resolution_scaling():
     settings.intrinsics.image_height = 1080
     settings.intrinsics.auto_center = True
     settings.intrinsics.scale_to_render = True
+    output = settings.output
 
-    # same aspect ratio (960x540 is 16:9) -> FOV preserving rescale
-    scene.render.resolution_x, scene.render.resolution_y = 960, 540
+    # same aspect ratio (960x540 is 16:9) -> rescale, FOV preserved
+    output.mode = "custom"
+    output.width, output.height = 960, 540
     apply_mod.apply_settings(cam_data, settings, scene)
     check("same aspect: intrinsics rescaled",
-          approx(cam_data.cycles_custom["fx"], 750.0, 1e-4) and
-          approx(cam_data.cycles_custom["fy"], 750.0, 1e-4),
+          approx(cam_data.cycles_custom["fx"], 750.0, 1e-4)
+          and approx(cam_data.cycles_custom["fy"], 750.0, 1e-4),
           f"fx={cam_data.cycles_custom['fx']:.4f}")
     check("at the calibration resolution the values are unchanged",
           approx(apply_mod.effective_intrinsics(settings, 1920, 1080).fx, 1500.0, 1e-4))
 
-    # different aspect ratio (square) -> centre crop at the original pixel pitch
-    scene.render.resolution_x = scene.render.resolution_y = 128
+    # different aspect ratio -> centre crop at the original pixel pitch
+    output.width = output.height = 1280
     apply_mod.apply_settings(cam_data, settings, scene)
     check("aspect mismatch: pixel pitch kept (crop)",
-          approx(cam_data.cycles_custom["fx"], 1500.0, 1e-4) and
-          approx(cam_data.cycles_custom["cx"], 64.0, 1e-4),
+          approx(cam_data.cycles_custom["fx"], 1500.0, 1e-4)
+          and approx(cam_data.cycles_custom["cx"], 640.0, 1e-4),
           f"fx={cam_data.cycles_custom['fx']:.4f} cx={cam_data.cycles_custom['cx']:.4f}")
     notes = " ".join(apply_mod.resolution_notes(settings, scene))
     check("aspect mismatch is reported", "aspect mismatch" in notes, notes)
@@ -568,6 +573,87 @@ def test_live_apply():
           str(cam_data.custom_shader.name))
 
 
+def test_output_resolution():
+    """The output size must drive the scene resolution and the intrinsics."""
+    scene = setup_scene(resolution=128, samples=4)
+    clear_scene()
+    setup_scene(resolution=128, samples=4)
+    camera, cam_data = make_camera("OutputCam")
+    settings = cam_data.opencv_cam
+    set_distortion(settings)
+    settings.intrinsics.fx = 1500.0
+    settings.intrinsics.fy = 1500.0
+    settings.intrinsics.image_width = 1920
+    settings.intrinsics.image_height = 1080
+    settings.intrinsics.auto_center = True
+    output = settings.output
+
+    # default: the output size *is* the calibration size (real camera output)
+    check("output defaults to the calibration size", output.mode == "calibration")
+    apply_mod.apply_settings(cam_data, settings, scene)
+    check("calibration size drives the scene",
+          (scene.render.resolution_x, scene.render.resolution_y) == (1920, 1080),
+          f"{scene.render.resolution_x}x{scene.render.resolution_y}")
+    check("intrinsics untouched at the calibration size",
+          approx(cam_data.cycles_custom["fx"], 1500.0, 1e-4))
+
+    # custom output at the same aspect (16:9) -> FOV preserving rescale
+    output.mode = "custom"
+    output.preset = "640x480"
+    check("preset fills width/height", (output.width, output.height) == (640, 480))
+    output.width, output.height = 640, 360
+    output.preset = "custom"
+    check("custom output drives the scene",
+          (scene.render.resolution_x, scene.render.resolution_y) == (640, 360),
+          f"{scene.render.resolution_x}x{scene.render.resolution_y}")
+    check("intrinsics rescaled for the output size",
+          approx(cam_data.cycles_custom["fx"], 1500.0 * 640 / 1920, 1e-3),
+          f"fx={cam_data.cycles_custom['fx']:.4f}")
+    check("preview aspect follows the output size",
+          preview.preview_resolution(settings, "256") == (256, 144),
+          str(preview.preview_resolution(settings, "256")))
+
+    # custom output with a different aspect -> centre crop, pixel pitch kept
+    output.width = output.height = 640
+    output.preset = "custom"
+    check("square output drives the scene",
+          (scene.render.resolution_x, scene.render.resolution_y) == (640, 640))
+    check("square output keeps the pixel pitch (crop)",
+          approx(cam_data.cycles_custom["fx"], 1500.0, 1e-3),
+          f"fx={cam_data.cycles_custom['fx']:.4f}")
+
+    # scene mode leaves Blender's resolution alone
+    output.mode = "scene"
+    scene.render.resolution_x, scene.render.resolution_y = 640, 360
+    apply_mod.apply_settings(cam_data, settings, scene)
+    check("scene mode does not touch the scene",
+          (scene.render.resolution_x, scene.render.resolution_y) == (640, 360))
+    check("scene mode scales to the scene size",
+          approx(cam_data.cycles_custom["fx"], 1500.0 * 640 / 1920, 1e-3),
+          f"fx={cam_data.cycles_custom['fx']:.4f}")
+
+    # operators
+    bpy.context.view_layer.objects.active = camera
+    scene.camera = camera
+    output.mode = "custom"
+    output.width, output.height = 1280, 720
+    check("set_render_resolution operator",
+          bpy.ops.opencv_cam.set_render_resolution() == {"FINISHED"}
+          and (scene.render.resolution_x, scene.render.resolution_y) == (1280, 720))
+    scene.render.resolution_x, scene.render.resolution_y = 800, 600
+    check("read_scene_resolution operator",
+          bpy.ops.opencv_cam.read_scene_resolution() == {"FINISHED"}
+          and (output.width, output.height) == (800, 600))
+    check("output read switched the mode to custom", output.mode == "custom")
+    check("lock can be switched off",
+          output.lock_scene_resolution is True)
+    output.lock_scene_resolution = False
+    output.width, output.height = 1024, 768
+    check("unlocked output leaves the scene alone",
+          (scene.render.resolution_x, scene.render.resolution_y) == (800, 600))
+    output.lock_scene_resolution = True
+
+
 def test_preview():
     scene = setup_scene(resolution=128, samples=4)
     clear_scene()
@@ -579,13 +665,13 @@ def test_preview():
     settings = cam_data.opencv_cam
     settings.intrinsics.image_width = 1280
     settings.intrinsics.image_height = 960
+    settings.output.mode = "scene"   # keep the test's small scene resolution
     before = (scene.render.resolution_x, scene.render.resolution_y, scene.cycles.samples)
     result = preview.render_preview(cam_data, settings, scene, size_key="256", samples=2, show=False)
     check("preview renders", result["ok"] and result["resolution"][1] > 0,
           f"{result['resolution']} {result['messages']}")
-    check("preview keeps the calibration aspect",
-          abs(result["resolution"][0] / result["resolution"][1] - 1280 / 960) < 0.05,
-          str(result["resolution"]))
+    check("preview follows the output size (square here)",
+          result["resolution"] == (256, 256), str(result["resolution"]))
     check("preview restores the render settings",
           (scene.render.resolution_x, scene.render.resolution_y, scene.cycles.samples) == before,
           f"{scene.render.resolution_x}x{scene.render.resolution_y}@{scene.cycles.samples}")
@@ -618,6 +704,7 @@ def main():
         test_add_camera_operator,
         test_presets,
         test_live_apply,
+        test_output_resolution,
         test_preview,
     )
     opencv_camera.register()

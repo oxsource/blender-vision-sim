@@ -137,6 +137,52 @@ class OPENCV_CAM_PT_intrinsics(_CameraPanel, bpy.types.Panel):
         layout.operator("opencv_cam.sync_from_lens", icon="DRIVER_ROTATIONAL_DIFFERENCE")
 
 
+class OPENCV_CAM_PT_output(_CameraPanel, bpy.types.Panel):
+    bl_idname = "OPENCV_CAM_PT_output"
+    bl_label = "Output Image"
+    bl_parent_id = "OPENCV_CAM_PT_main"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        settings = context.camera.opencv_cam
+        output = settings.output
+        scene = context.scene
+
+        layout.prop(output, "mode")
+        if output.mode == "custom":
+            layout.prop(output, "preset")
+            column = layout.column(align=True)
+            column.prop(output, "width")
+            column.prop(output, "height")
+        if output.mode != "scene":
+            layout.prop(output, "lock_scene_resolution")
+            row = layout.row(align=True)
+            row.operator("opencv_cam.set_render_resolution", icon="FULLSCREEN_ENTER")
+            row.operator("opencv_cam.read_scene_resolution", icon="FULLSCREEN_EXIT")
+
+        width, height = apply_mod.output_resolution(settings, scene)
+        intrinsics = settings.intrinsics
+        box = layout.box()
+        box.label(
+            text=f"output {width}x{height}  |  scene "
+                 f"{scene.render.resolution_x}x{scene.render.resolution_y}"
+        )
+        box.label(
+            text=f"calibrated {intrinsics.image_width}x{intrinsics.image_height}"
+        )
+        effective = apply_mod.effective_intrinsics(settings, width, height)
+        box.label(text=f"effective fx={effective.fx:.2f} fy={effective.fy:.2f}")
+        if (width, height) != (intrinsics.image_width, intrinsics.image_height):
+            same_aspect = (height > 0 and intrinsics.image_height > 0
+                           and abs(width / height - intrinsics.image_width / intrinsics.image_height) < 1e-3)
+            box.label(
+                text="rescaled: same field of view" if same_aspect
+                else "centre crop at the original pixel pitch",
+                icon="INFO",
+            )
+
+
 class OPENCV_CAM_PT_distortion(_CameraPanel, bpy.types.Panel):
     bl_idname = "OPENCV_CAM_PT_distortion"
     bl_label = "Distortion"
@@ -218,6 +264,7 @@ _CLASSES = (
     OPENCV_CAM_PT_preview,
     OPENCV_CAM_PT_presets,
     OPENCV_CAM_PT_intrinsics,
+    OPENCV_CAM_PT_output,
     OPENCV_CAM_PT_distortion,
     OPENCV_CAM_PT_calibration,
     OPENCV_CAM_PT_pose,

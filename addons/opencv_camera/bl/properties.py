@@ -236,6 +236,93 @@ class DistortionSettings(bpy.types.PropertyGroup):
     )
 
 
+#: common output sizes (identifier -> (width, height))
+OUTPUT_PRESETS = {
+    "1280x960": (1280, 960),
+    "1920x1080": (1920, 1080),
+    "1280x720": (1280, 720),
+    "640x480": (640, 480),
+    "3840x2160": (3840, 2160),
+    "1920x1200": (1920, 1200),
+}
+
+
+#: enum items for the output preset.  A *list* (not a callable) so the default can
+#: be a string identifier - with callable items bpy requires an index.
+OUTPUT_PRESET_ITEMS = [
+    (key, key.replace("x", " x "), "") for key in OUTPUT_PRESETS
+] + [("custom", "Custom", "Use the width/height fields")]
+
+
+def _update_output_preset(self, context):
+    # note: ``self`` is the OutputSettings group itself, not the root settings
+    if self.preset in OUTPUT_PRESETS:
+        width, height = OUTPUT_PRESETS[self.preset]
+        self.width = width
+        self.height = height
+    _apply_output(self, context)
+
+
+def _update_output(self, context):
+    _apply_output(self, context)
+
+
+def _apply_output(group, context=None):
+    """Keep the scene render size in sync with the output settings."""
+    settings = _root_settings(group)
+    if settings is None or not settings.output.lock_scene_resolution:
+        return
+    if settings.output.mode == "scene":
+        return
+    from . import apply as apply_mod
+    scene = context.scene if context is not None else bpy.context.scene
+    try:
+        changed, messages = apply_mod.apply_render_resolution(scene, settings)
+        if changed or messages:
+            settings.status = "resolution set" if not messages else messages[0][:120]
+        if settings.auto_apply and group.id_data.type == "CUSTOM":
+            apply_mod.apply_values(group.id_data, settings, scene)
+    except Exception as exc:
+        settings.status = f"output error: {type(exc).__name__}: {exc}"
+
+
+class OutputSettings(bpy.types.PropertyGroup):
+    mode: EnumProperty(
+        name="Output Size",
+        description="Where the render/output image size comes from",
+        items=[
+            ("calibration", "Calibration Size",
+             "Render at the size the intrinsics were calibrated for (real camera output size)"),
+            ("custom", "Custom", "Use the width/height below"),
+            ("scene", "Scene Settings", "Leave Blender's render resolution alone"),
+        ],
+        default="calibration",
+        update=_update_output,
+    )
+    preset: EnumProperty(
+        name="Preset",
+        description="Common sensor output sizes",
+        items=OUTPUT_PRESET_ITEMS,
+        default="1280x960",
+        update=_update_output_preset,
+    )
+    width: IntProperty(
+        name="Width", description="Output width in pixels", default=1280, min=8, max=16384,
+        update=_update_output,
+    )
+    height: IntProperty(
+        name="Height", description="Output height in pixels", default=960, min=8, max=16384,
+        update=_update_output,
+    )
+    lock_scene_resolution: BoolProperty(
+        name="Drive Scene Resolution",
+        description="Write the output size into Blender's render resolution whenever settings are "
+        "applied, so F12 always produces the camera's real output size",
+        default=True,
+        update=_update_output,
+    )
+
+
 class CalibrationSettings(bpy.types.PropertyGroup):
     filepath: StringProperty(
         name="File",
@@ -311,6 +398,7 @@ class OpenCVCameraSettings(bpy.types.PropertyGroup):
     calibration: PointerProperty(type=CalibrationSettings)
     pose: PointerProperty(type=PoseSettings)
     preview: PointerProperty(type=PreviewSettings)
+    output: PointerProperty(type=OutputSettings)
     auto_apply: BoolProperty(
         name="Live Apply",
         description="Push parameter changes to the camera immediately. Only applies once the "
@@ -372,6 +460,7 @@ _CLASSES = (
     CalibrationSettings,
     PoseSettings,
     PreviewSettings,
+    OutputSettings,
     OpenCVCameraSettings,
 )
 

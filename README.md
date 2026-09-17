@@ -72,6 +72,23 @@ Blender 中使用：
 > `Add ▸ Camera` 菜单算子的形式提供，这是 Blender 插件生态里的标准做法；相机数据块本身仍是
 > `Lens Type = Custom` + 我们的 OSL 着色器。
 
+### 输出图像尺寸
+
+`Output Image` 面板专门管"模拟真实摄像头的输出尺寸"：
+
+| Output Size | 含义 |
+| --- | --- |
+| `Calibration Size`（默认） | 直接按内参标定时的那套分辨率输出（例如参考相机 1280×960） |
+| `Custom` | 从预设选（1280×960 / 1920×1080 / 1280×720 / 640×480 / 3840×2160 / 1920×1200）或手填宽高 |
+| `Scene Settings` | 不动 Blender 的渲染分辨率，跟随场景 |
+
+- `Drive Scene Resolution`（默认开）：每次应用参数时把输出尺寸写进 `scene.render.resolution_*`，
+  所以 **F12 出来的就是相机原生尺寸**；关掉则只在插件里记录。
+- `Set Render Resolution` / `From Scene` 两个按钮用于双向同步。
+- 缩放策略（面板会实时提示）：**宽高比一致 → 等比缩放**（FOV 不变）；**宽高比不一致 → 保持像素尺度的中心裁剪**，
+  避免把图像拉伸。预览与自检也按输出尺寸的宽高比走。
+- `Add Camera` / `Load Preset` / `Reset Defaults` 都会顺带把场景分辨率设成该相机的输出尺寸。
+
 ### 参数面板与预览
 
 - **Live Apply**（默认开）：面板上改任意内参/畸变/外参即时写入 Cycles，不需要再点 Apply；

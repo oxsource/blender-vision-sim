@@ -13,7 +13,7 @@ addons/opencv_camera/
 ├── core/
 │   └── presets.py          presets/ 目录的扫描与加载
 ├── bl/                  Blender 集成层
-│   ├── properties.py      PropertyGroup / PointerProperty 定义 + Live Apply 回调
+│   ├── properties.py      PropertyGroup / PointerProperty 定义 + Live Apply / 输出尺寸回调
 │   ├── shader.py          OSL Text 数据块安装、编译校验、强制重编译
 │   ├── apply.py           apply_values（快，供 Live Apply）/ apply_settings（含编译）
 │   ├── camera_factory.py  Add Camera 的相机创建（模型 + 预设 + 可选 rig 空物体）
@@ -42,7 +42,8 @@ addons/opencv_camera/
 | 面板挂载 | `bl_space_type='PROPERTIES'`、`bl_context='data'`、`bl_parent_id='DATA_PT_lens'`（与 Cycles 自带面板一致） |
 | 自定义相机入口 | **不能**扩展 `Camera.type`（C 侧 RNA 枚举）；用 `Add ▸ Camera` 菜单算子创建已配置好的 Custom 相机（`VIEW3D_MT_camera_add.append`） |
 | 属性即时生效 | 属性 `update=` 回调 → `bl/apply.apply_values()`（只写 `cycles_custom`，快）；切换模型时走完整的 `apply_settings()`（要换着色器并重编译） |
-| 预览 | Blender 4.x 无面板内嵌图片 API（`template_preview`/`Image.preview` 已移除）→ 预览渲染后用 `bpy.ops.render.view_show()` 显示在 Image Editor；渲染设置必须还原 |
+| 预览 | Blender 4.x 无面板内嵌图片 API（`template_preview`/`Image.preview` 已移除）→ 预览渲染后用 `bpy.ops.render.view_show()` 显示在 Image Editor；渲染设置与内参都要还原 |
+| 分辨率所有权 | 输出尺寸由插件管理（`output.*`）并驱动 `scene.render.resolution_*`；面板/算子必须用同一处逻辑（`apply.output_resolution`），不要在别处硬编码分辨率 |
 | 算子 | `bl_idname = "opencv_cam.<action>"`；需要撤销的加 `{'REGISTER','UNDO'}`；文件对话框用 `ImportHelper`/`ExportHelper` |
 | 不污染用户场景 | 自检/预览类操作要保存并还原 `scene.render.*`、`view_settings`、`scene.camera`、`view_layer.objects.active`、各对象 `hide_render` |
 | 持久化 | 安装的 OSL Text 数据块加 `use_fake_user = True`，随 `.blend` 保存 |
@@ -73,10 +74,16 @@ Camera.opencv_cam（PropertyGroup）  ← 唯一真源，用户/脚本都改这�
         │  Apply to Camera（算子）
         ▼
 bl/apply.apply_settings()
-   1. bl/shader.attach()        写/刷新 Text，Lens Type = Custom / Internal
-   2. bl/shader.ensure_compiled()  校验 custom_bytecode（失败即报错中止）
-   3. camera.cycles_custom[param] = value   （参数由 Cycles 从 OSL 形参自动创建）
+   1. apply_render_resolution()    按 output.* 把输出尺寸写进 scene.render（可关）
+   2. bl/shader.attach()           写/刷新 Text，Lens Type = Custom / Internal
+   3. bl/shader.ensure_compiled()  校验 custom_bytecode（失败即报错中止）
+   4. apply_values(): camera.cycles_custom[param] = value
+                                    （参数由 Cycles 从 OSL 形参自动创建）
 ```
+
+顺序不可颠倒：内参要按**当前渲染分辨率**换算，所以第 1 步必须在第 4 步之前。
+`apply_values()` 是给 Live Apply 用的轻量路径（不碰着色器）；切换畸变模型走完整的
+`apply_settings()`（需要换着色器并重编译）。
 
 参数名与类型由 OSL 形参决定（float/int/bool/数组/字符串），列表在 `bl/apply.py: SHADER_PARAMS` 与 `shaders/opencv_camera.osl` 之间必须保持同步。
 
