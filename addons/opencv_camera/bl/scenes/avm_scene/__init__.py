@@ -31,9 +31,10 @@ DEFINITION = SceneDefinition(
     collection_name="AVM Scene",
 )
 
-from . import builder, controller, operators, properties, ui  # noqa: E402
+from . import builder, controller, coverage, io, operators, properties, ui  # noqa: E402
 
-__all__ = ["DEFINITION", "builder", "controller", "operators", "properties", "ui"]
+__all__ = ["DEFINITION", "builder", "controller", "coverage", "io",
+           "operators", "properties", "ui"]
 
 
 def register() -> None:

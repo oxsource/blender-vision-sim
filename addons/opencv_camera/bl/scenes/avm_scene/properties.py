@@ -158,6 +158,10 @@ class AVMSceneSettings(bpy.types.PropertyGroup):
     )
     io_status: StringProperty(name="Status", default="", options={"HIDDEN"})
 
+    # -- coverage (cached by the analyze operator, §16) ---------------------
+    coverage_status: StringProperty(name="Coverage", default="", options={"HIDDEN"})
+    coverage_matrix: StringProperty(name="Visibility", default="", options={"HIDDEN"})
+
     # -- helpers ------------------------------------------------------------
     def field_spec(self):
         """The layout as a pure-Python :class:`core.scenes.avm_layout.FieldSpec`."""

@@ -114,6 +114,18 @@ def _io_section(layout, settings) -> None:
         box.label(text=settings.io_status)
 
 
+def _coverage_section(layout, settings) -> None:
+    box = layout.box()
+    box.label(text="Coverage", icon="MESH_GRID")
+    box.operator("opencv_cam.avm_analyze_coverage", icon="DRIVER_DISTANCE")
+    if settings.coverage_status:
+        box.label(text=settings.coverage_status)
+    if settings.coverage_matrix:
+        for part in settings.coverage_matrix.split(" | "):
+            box.label(text=part, icon="CHECKMARK")
+    box.operator("opencv_cam.avm_export_materials", icon="PACKAGE")
+
+
 class _AVMPanel(ScenePanel):
     definition = DEFINITION
 
@@ -136,6 +148,7 @@ class OPENCV_CAM_PT_avm_scene(_AVMPanel, bpy.types.Panel):
         layout = self.layout
         self.draw_layout(layout, context)
         _actions(layout, context)
+        _coverage_section(layout, context.scene.avm_scene)
         _io_section(layout, context.scene.avm_scene)
 
 

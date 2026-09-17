@@ -301,6 +301,8 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
 
     _apply_active_resolution(scene, settings)
     settings.revision += 1
+    from . import coverage  # lazy: coverage imports this module for the names
+    coverage.apply_visibility(settings)
     return {
         "root": root,
         "ground": ground,

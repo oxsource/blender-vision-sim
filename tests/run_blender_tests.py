@@ -11,6 +11,7 @@ camera (which also validates ``transform.shift_from_principal_point``).
 from __future__ import annotations
 
 import bmesh
+import json
 import os
 import sys
 import tempfile
@@ -1041,6 +1042,62 @@ def test_avm_io():
           f"{scene.render.resolution_x}x{scene.render.resolution_y}")
 
 
+def test_avm_coverage_and_export():
+    """Coverage curves + report, and the raw-material export."""
+    from opencv_camera.bl.scenes.avm_scene import coverage as coverage_mod
+
+    scene = setup_scene(resolution=64, samples=1)
+    clear_scene()
+    scene = setup_scene(resolution=64, samples=1)
+    check("add AVM scene", bpy.ops.opencv_cam.avm_add_scene() == {"FINISHED"})
+    settings = scene.avm_scene
+
+    check("analyze coverage",
+          bpy.ops.opencv_cam.avm_analyze_coverage(step=0.2) == {"FINISHED"})
+    check("coverage summary set", bool(settings.coverage_status),
+          settings.coverage_status)
+    check("visibility matrix set",
+          "front_left: front, left" in settings.coverage_matrix,
+          settings.coverage_matrix)
+    curves = [bpy.data.objects.get(f"AVM_Coverage_{suffix}")
+              for suffix in ("Front", "Back", "Left", "Right")]
+    check("four coverage curves", all(obj is not None for obj in curves))
+    check("curves are closed polylines",
+          all(obj.data.splines and obj.data.splines[0].type == "POLY" for obj in curves))
+    check("coverage layer switched on", settings.show_coverage is True)
+    settings.show_coverage = False
+    check("hiding the layer hides the curves",
+          all(obj.hide_render for obj in curves))
+
+    for name in ("front", "back", "left", "right"):
+        cam_settings = bpy.data.objects[f"AVM_Cam_{name.capitalize()}"].data.opencv_cam
+        cam_settings.output.mode = "custom"
+        cam_settings.output.width, cam_settings.output.height = 64, 48
+    tmp = tempfile.mkdtemp(prefix="avm_mat_")
+    check("export materials",
+          bpy.ops.opencv_cam.avm_export_materials(
+              filepath=os.path.join(tmp, "avm_scene.json"), samples=1) == {"FINISHED"})
+    for expected in ("front.png", "back.png", "left.png", "right.png",
+                     "plane_scene.json", "avm_scene.json", "coverage.json",
+                     "vehicle_avm_scene.json", "scene_spec.md"):
+        check(f"material file {expected}", os.path.exists(os.path.join(tmp, expected)))
+
+    with open(os.path.join(tmp, "vehicle_avm_scene.json"), encoding="utf-8") as handle:
+        skeleton = json.load(handle)
+    check("filament skeleton has points_3d and empty points_2d",
+          len(skeleton["cameras"]) == 4
+          and len(skeleton["cameras"][0]["points_3d"]) == 8
+          and skeleton["cameras"][0]["points_2d"] == [])
+    with open(os.path.join(tmp, "coverage.json"), encoding="utf-8") as handle:
+        report = json.load(handle)
+    check("coverage report has footprints and visibility",
+          len(report["footprints"]) == 4 and len(report["visibility"]) == 4
+          and report["field_ok"] is True)
+    check("spec mentions the field",
+          "AVM Scene specification" in open(os.path.join(tmp, "scene_spec.md"),
+                                           encoding="utf-8").read())
+
+
 def test_add_camera_default_preset():
     """The Add menu path (no preset argument) must use the add-on defaults.
 
@@ -1314,6 +1371,7 @@ def main():
         test_avm_scene_builder,
         test_avm_panels,
         test_avm_io,
+        test_avm_coverage_and_export,
         test_presets,
         test_shader_text_upgrade_recompiles,
         test_live_apply,

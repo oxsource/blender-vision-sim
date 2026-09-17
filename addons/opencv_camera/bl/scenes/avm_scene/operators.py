@@ -297,6 +297,57 @@ class OPENCV_CAM_OT_avm_render_cameras(_AVMSceneOperator, bpy.types.Operator, Ex
         return {"FINISHED"}
 
 
+class OPENCV_CAM_OT_avm_analyze_coverage(_AVMSceneOperator, bpy.types.Operator):
+    """Compute the ground coverage, blind spots and block visibility"""
+
+    bl_idname = "opencv_cam.avm_analyze_coverage"
+    bl_label = "Analyze Coverage"
+    bl_options = {"REGISTER", "UNDO"}
+
+    step: bpy.props.FloatProperty(
+        name="Grid Step", default=0.05, min=0.005, max=1.0, unit="LENGTH",
+        description="Grid resolution of the area statistics")
+
+    def execute(self, context):
+        from . import coverage
+        settings = _settings(context)
+        report = coverage.analyze(settings, step=self.step)
+        coverage.ensure_curves(context.scene, settings, report)
+        settings.show_coverage = True
+        self.report({"INFO"}, settings.coverage_status)
+        return {"FINISHED"}
+
+
+class OPENCV_CAM_OT_avm_export_materials(_AVMSceneOperator, bpy.types.Operator, ExportHelper):
+    """Render the four cameras and write the parameters + coverage report"""
+
+    bl_idname = "opencv_cam.avm_export_materials"
+    bl_label = "Export Materials"
+    bl_options = {"REGISTER"}
+
+    filename_ext = ".json"
+    filter_glob: StringProperty(default="*.json", options={"HIDDEN"})
+    samples: bpy.props.IntProperty(name="Samples", default=64, min=1, max=4096)
+
+    def invoke(self, context, event):
+        if not self.filepath:
+            self.filepath = "avm_scene.json"
+        return super().invoke(context, event)
+
+    def execute(self, context):
+        from . import coverage
+        settings = _settings(context)
+        directory = os.path.dirname(os.path.abspath(self.filepath))
+        try:
+            written = coverage.export_materials(context, settings, directory,
+                                                samples=self.samples)
+        except Exception as exc:
+            self.report({"ERROR"}, f"{type(exc).__name__}: {exc}")
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"{len(written)} files written to {directory}")
+        return {"FINISHED"}
+
+
 _CLASSES = (
     OPENCV_CAM_OT_avm_add_scene,
     OPENCV_CAM_OT_avm_rebuild,
@@ -309,6 +360,8 @@ _CLASSES = (
     OPENCV_CAM_OT_avm_export_params,
     OPENCV_CAM_OT_avm_import_params,
     OPENCV_CAM_OT_avm_render_cameras,
+    OPENCV_CAM_OT_avm_analyze_coverage,
+    OPENCV_CAM_OT_avm_export_materials,
 )
 
 

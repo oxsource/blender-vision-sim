@@ -625,7 +625,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | **P2 ✅** | `avm_scene/{properties,controller,builder,operators}.py` + 图标：一键建静态场景 | ✅ `Add ▸ VisionSim ▸ AVM Scene` 出 10 个对象（地面/车/4 块/4 相机 + `AVM_Root`）；相机是已编译的 `opencv_fisheye.osl`，K/D/位姿取自预设；改参数 + `[重建]` 幂等更新；`test_avm_scene_builder` 覆盖 |
 | **P3 ✅** | 控制器面板：Scene 面板 + 3D 视口 N 面板（`root` 存在才显示） | ✅ 两个面板均已注册且 `poll` 随建/删切换；N 面板**只放布局**（尺寸/位姿/图层），内参留在 `CV Intrinsics`；`[选中该相机]` 引导到内参面板；`test_avm_panels` 覆盖 |
 | **P4 ✅** | 预设 / 图层 / **参数导入导出（完整 + 精简、文件 + 文本框）** / **导出 4 路渲染图** | ✅ `io.py` 完整+精简格式、JSON 精确往返、校验失败**不半套用**；`avm_apply_preset` 5 个预设；`avm_render_cameras` 按各相机输出尺寸落盘 4 张 PNG；`test_avm_io` 覆盖 |
-| P5 | **覆盖评估与素材导出**（§16）：覆盖曲线 + 可见性矩阵 + `avm_export_materials` | 改尺寸后覆盖/盲区实时更新；一键产出图 + 参数 + 报告 |
+| **P5 ✅** | **覆盖评估与素材导出**（§16）：覆盖曲线 + 可见性矩阵 + `avm_export_materials` | ✅ `avm_analyze_coverage` 出 4 条贴地 POLY 曲线 + 摘要/矩阵；`avm_export_materials` 产出 4 PNG + `plane_scene.json` + `avm_scene.json` + `coverage.json` + `vehicle_avm_scene.json`（骨架，`points_2d` 留空）+ `scene_spec.md`；`test_avm_coverage_and_export` 覆盖 |
 | P6 | 文档（含 `docs/architecture.md` 目录树）、README、roadmap、版本号 | `scripts/run_tests.sh` 全绿 |
 | P7（后续，可选） | 真实 GLB 车模、BEV 拼图、外部标定回环对接、**DMS Scene**（走 §17 的框架） | — |
 
