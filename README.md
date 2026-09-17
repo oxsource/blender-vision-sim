@@ -23,13 +23,13 @@ Blender 视觉算法仿真插件集合：用 Blender/Cycles 生成**与真实相
 
 | 图标 | 用于 | 形状 |
 | --- | --- | --- |
-| `visionsim` | `Add ▸ VisionSim` | 眼睛 + 瞳孔（视觉） |
-| `camera` | `VisionSim ▸ Camera` | 相机机身 + 镜头 + 取景器 |
-| `fisheye` | Fisheye 条目 | 圆 + 桶形外扩网格 |
-| `brown_conrady` | Brown-Conrady 条目 | 方 + 桶形外扩网格 |
-| `rational` | Rational 条目 | 方 + 外扩网格 + 中心环（高阶项） |
-| `pinhole` | Pinhole 条目 | 方 + 完全笔直的网格 |
-| `camera_scene` | Camera Scene | 等轴测立方体 |
+| `visionsim` | `Add ▸ VisionSim` | 眼睛 + 实心瞳孔 |
+| `camera` | `VisionSim ▸ Camera` | 相机机身 + 镜头 |
+| `fisheye` | Fisheye 条目 | 圆 + 外弓十字（广角） |
+| `brown_conrady` | Brown-Conrady 条目 | 方 + 外弓十字 |
+| `rational` | Rational 条目 | 方 + 外弓十字 + 中心点（高阶项） |
+| `pinhole` | Pinhole 条目 | 方 + 笔直十字 |
+| `camera_scene` | Camera Scene | 立方体轮廓 |
 
 这些都是**原创标识**（不是 OpenCV 商标本身），想改图案改脚本里的形状定义后重跑：
 
@@ -141,6 +141,7 @@ Object Data Properties
 │                   标定分辨率 + From Blender Lens、生效值只读框，
 │                   然后才是 [Apply] [Preview] [Live Apply] [Recompile] 与状态框
 ├── CV Extrinsics   Euler（XYZ 三轴角度）/ R / t、Apply Pose / Read Pose
+│                   ├── OpenCV Pose：R / t（与上面的角度分开成两组）
 │                   └── World Frame（可折叠）：自定义世界系开关 + 4×4 矩阵
 ├── CV Presets      标定文件 [Import] / [Export]、Load Preset、Reset Defaults（默认折叠）
 ├── CV Preview      预览尺寸/采样/去噪/自动预览、Save Preview、Self Test（默认折叠）

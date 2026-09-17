@@ -6,17 +6,17 @@ Pure Python (no Pillow): a tiny PNG writer plus signed-distance-field drawing wi
 
     python3 scripts/make_icon.py
 
-Style: one monochrome line drawing per menu entry (no colour), so each entry is
-recognisable at menu size:
+Style: one monochrome line drawing per menu entry (no colour), drawn with as few
+strokes as possible so it stays readable at menu size (16 px):
 
 ===============  ==========================================================
-``visionsim``    eye with a grid pupil - the add-on itself
-``camera``       camera body, for the Camera submenu
-``fisheye``      circle with a barrel-warped grid (wide angle)
-``brown_conrady``square with a barrel-warped grid
+``visionsim``    eye with a pupil - the add-on itself
+``camera``       camera body with a lens, for the Camera submenu
+``fisheye``      circle with a bowed cross (wide angle)
+``brown_conrady``square with a bowed cross
 ``rational``     like brown_conrady plus a centre ring (higher order terms)
-``pinhole``      square with a perfectly straight grid
-``camera_scene`` isometric cube (the checker camera scene)
+``pinhole``      square with a straight cross
+``camera_scene`` cube outline (the checker camera scene)
 ===============  ==========================================================
 
 The marks are original; do not ship the OpenCV logo (a trademark of the OpenCV
@@ -33,7 +33,7 @@ from typing import Callable, Dict, Iterable, List, Sequence, Tuple
 
 SIZE = 64
 SS = 3                      # super sampling factor
-HALF_WIDTH = 0.036          # stroke half width in normalised units
+HALF_WIDTH = 0.038          # stroke half width in normalised units
 INK = (0.878, 0.902, 0.929)  # light neutral, readable on the dark UI
 CORNER = 0.10
 
@@ -133,17 +133,17 @@ def eye_shape() -> Shape:
 
 
 def cube_shape() -> Shape:
-    """Isometric wireframe cube."""
-    top = (0.5, 0.16)
-    left = (0.16, 0.34)
-    right = (0.84, 0.34)
-    front = (0.5, 0.52)
-    bottom_left = (0.16, 0.70)
-    bottom_right = (0.84, 0.70)
-    bottom = (0.5, 0.88)
+    """Isometric cube: hexagon plus two inner edges (three strokes in total)."""
+    top = (0.5, 0.18)
+    left = (0.18, 0.36)
+    right = (0.82, 0.36)
+    front = (0.5, 0.54)
+    bottom_left = (0.18, 0.72)
+    bottom_right = (0.82, 0.72)
+    bottom = (0.5, 0.90)
     shapes = [
         polyline([top, left, bottom_left, bottom, bottom_right, right, top]),  # hexagon
-        line(front, top), line(front, bottom_left), line(front, bottom_right),  # inner edges
+        line(front, bottom_left), line(front, bottom_right),                   # inner edges
     ]
     return lambda x, y: min(shape(x, y) for shape in shapes)
 
@@ -153,18 +153,16 @@ def cube_shape() -> Shape:
 # ---------------------------------------------------------------------------
 def build_icons() -> Dict[str, List[Shape]]:
     return {
-        "visionsim": [eye_shape(), circle((0.5, 0.5), 0.10),
-                      disc((0.5, 0.5), 0.035)],
+        "visionsim": [eye_shape(), disc((0.5, 0.5), 0.105)],
         "camera": [
-            rounded_rect(0.10, 0.30, 0.90, 0.84, 0.08),
-            rounded_rect(0.36, 0.20, 0.58, 0.30, 0.03),   # viewfinder
-            circle((0.50, 0.57), 0.16),
+            rounded_rect(0.08, 0.28, 0.92, 0.84, 0.09),
+            circle((0.50, 0.56), 0.17),
         ],
-        "fisheye": [circle((0.5, 0.5), 0.40), warped_grid(0.5, 0.5, 0.26, 3, 0.13)],
-        "brown_conrady": [rounded_rect(0.10, 0.10, 0.90, 0.90), warped_grid(0.5, 0.5, 0.26, 3, 0.11)],
-        "rational": [rounded_rect(0.10, 0.10, 0.90, 0.90), warped_grid(0.5, 0.5, 0.26, 3, 0.13),
-                     circle((0.5, 0.5), 0.085)],
-        "pinhole": [rounded_rect(0.10, 0.10, 0.90, 0.90), warped_grid(0.5, 0.5, 0.26, 3, 0.0)],
+        "fisheye": [circle((0.5, 0.5), 0.41), warped_grid(0.5, 0.5, 0.17, 2, 0.20)],
+        "brown_conrady": [rounded_rect(0.10, 0.10, 0.90, 0.90), warped_grid(0.5, 0.5, 0.19, 2, 0.17)],
+        "rational": [rounded_rect(0.10, 0.10, 0.90, 0.90), warped_grid(0.5, 0.5, 0.19, 2, 0.17),
+                     circle((0.5, 0.5), 0.065)],
+        "pinhole": [rounded_rect(0.10, 0.10, 0.90, 0.90), warped_grid(0.5, 0.5, 0.22, 2, 0.0)],
         "camera_scene": [cube_shape()],
     }
 

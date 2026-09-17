@@ -130,8 +130,15 @@ class OPENCV_CAM_PT_extrinsics(_CameraPanel, bpy.types.Panel):
         layout.use_property_split = True
         pose = context.camera.opencv_cam.pose
 
+        # three angles first: the friendly way to dial in an orientation
+        box = layout.box()
+        box.label(text="Euler (XYZ, Blender world)")
+        box.prop(pose, "euler")
+
+        # the OpenCV-native representation, visually separated from the angles
+        layout.separator()
+        layout.label(text="OpenCV Pose")
         column = layout.column()
-        column.prop(pose, "euler")
         column.prop(pose, "rotation")
         column.prop(pose, "translation")
 

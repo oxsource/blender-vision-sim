@@ -73,7 +73,8 @@ bpy 会在注册时用 `typing.get_type_hints` 重新求值注解字符串，任
 
 ### 2.2 自定义图标
 
-- 图标是 64×64 单色线条 PNG（`icons/<entry>.png`，由 `scripts/make_icon.py` 用 SDF 画线生成），用
+- 图标是 64×64 单色线条 PNG（`icons/<entry>.png`，由 `scripts/make_icon.py` 用 SDF 画线生成），
+  刻意用最少笔画（眼睛+瞳孔、机身+镜头、方/圆 + 十字/弓形十字、立方体轮廓），保证 16 px 菜单尺寸可辨，用
   `bpy.utils.previews.new()` / `pcoll.load(name, path, 'IMAGE')` 载入，`icon_value` 用在**算子按钮**上；
 - `bpy.utils.previews` 是惰性子模块，必须写 `import bpy.utils.previews`（直接 `bpy.utils.previews` 会 AttributeError）；
 - `UILayout.menu()` 在 4.5 **支持 `icon_value`**，所以 `Add ▸ VisionSim` 这一级也用自绘图标（拿不到 id 时回退内置 `TRACKING`，避免和相机图标混淆）；
