@@ -9,12 +9,12 @@ from __future__ import annotations
 import os
 
 import bpy
-from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty
+from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, StringProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
-from ..core import calibration_io
+from ..core import calibration_io, presets
 from . import apply as apply_mod
-from . import scene_builder, selftest, shader
+from . import camera_factory, preview, scene_builder, selftest, shader
 
 
 def _camera_object(context):
@@ -46,6 +46,22 @@ class _CameraOperator:
         if obj is None:
             raise RuntimeError("no camera in context")
         return obj, obj.data
+
+
+#: enum items for the Add Camera operator.  A *list* (not a callable) so the
+#: default can be a string identifier; with callable items bpy requires an index.
+MODEL_ITEMS = [(key, value[0], "") for key, value in camera_factory.MODELS.items()]
+
+
+def _preset_items(self, context):
+    """Enum items: bundled presets plus "copy the active camera"."""
+    items = [(presets.CURRENT, "Current Camera Settings",
+              "Copy the intrinsics/distortion of the active camera")]
+    for identifier, label in presets.list_presets():
+        items.append((identifier, label, f"presets/{identifier}"))
+    if len(items) == 1:
+        items.append(("", "-- no preset files --", ""))
+    return items
 
 
 def _report_messages(operator, messages, level="INFO"):
@@ -210,6 +226,197 @@ class OPENCV_CAM_OT_read_pose(_CameraOperator, bpy.types.Operator):
         return {"FINISHED"}
 
 
+class OPENCV_CAM_OT_add_camera(bpy.types.Operator):
+    """Create a camera that already uses the OpenCV lens model"""
+
+    bl_idname = "opencv_cam.add_camera"
+    bl_label = "OpenCV Camera"
+    bl_description = (
+        "Add a camera configured as Cycles Custom with an OpenCV lens model "
+        "(fisheye / Brown-Conrady / rational / pinhole)"
+    )
+    bl_options = {"REGISTER", "UNDO"}
+
+    model: EnumProperty(name="Model", items=MODEL_ITEMS, default="fisheye")
+    preset: EnumProperty(
+        name="Preset",
+        description="Start from a bundled calibration or copy the active camera",
+        items=_preset_items,
+    )
+    use_rig: BoolProperty(
+        name="Add Rig Empty",
+        description="Parent the camera to an empty, handy for extrinsics/multi-camera setups",
+        default=False,
+    )
+    at_cursor: BoolProperty(
+        name="At 3D Cursor",
+        description="Place the camera at the 3D cursor instead of the world origin",
+        default=True,
+    )
+
+    def execute(self, context):
+        scene = context.scene
+        location = tuple(scene.cursor.location) if self.at_cursor else (0.0, 0.0, 0.0)
+        preset = None if self.preset == presets.CURRENT else self.preset
+        try:
+            camera, messages = camera_factory.add_camera(
+                scene, model=self.model, preset=preset, use_rig=self.use_rig, location=location
+            )
+        except Exception as exc:
+            self.report({"ERROR"}, f"{type(exc).__name__}: {exc}")
+            return {"CANCELLED"}
+        _report_messages(self, messages)
+        self.report({"INFO"}, f"added {camera.name} ({camera_factory.MODELS[self.model][0]})")
+        return {"FINISHED"}
+
+
+class OPENCV_CAM_OT_load_preset(_CameraOperator, bpy.types.Operator):
+    bl_idname = "opencv_cam.load_preset"
+    bl_label = "Load Preset"
+    bl_description = "Load a bundled preset calibration into this camera"
+    bl_options = {"REGISTER", "UNDO"}
+
+    preset: EnumProperty(name="Preset", items=_preset_items)
+
+    def execute(self, context):
+        _, cam_data = self.camera(context)
+        settings = cam_data.opencv_cam
+        if self.preset == presets.CURRENT:
+            self.report({"WARNING"}, "pick a preset file")
+            return {"CANCELLED"}
+        try:
+            calibration = presets.load_preset(self.preset)
+        except Exception as exc:
+            self.report({"ERROR"}, f"{type(exc).__name__}: {exc}")
+            return {"CANCELLED"}
+        settings.set_from_core(calibration.intrinsics, calibration.distortion)
+        settings.calibration.last_import = self.preset
+        ok, messages = apply_mod.apply_settings(cam_data, settings, context.scene)
+        _report_messages(self, messages, "INFO" if ok else "ERROR")
+        if not ok:
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"preset {self.preset} loaded ({calibration.intrinsics.fx:.2f} px)")
+        return {"FINISHED"}
+
+
+class OPENCV_CAM_OT_reset_defaults(_CameraOperator, bpy.types.Operator):
+    bl_idname = "opencv_cam.reset_defaults"
+    bl_label = "Reset Defaults"
+    bl_description = "Restore the add-on default intrinsics and distortion coefficients"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        _, cam_data = self.camera(context)
+        settings = cam_data.opencv_cam
+        from . import properties as props
+        intrinsics = props.AVM_FRONT_INTRINSICS
+        coeffs = props.AVM_FRONT_DISTORTION
+        settings.intrinsics.auto_center = False
+        settings.intrinsics.fx = intrinsics["fx"]
+        settings.intrinsics.fy = intrinsics["fy"]
+        settings.intrinsics.cx = intrinsics["cx"]
+        settings.intrinsics.cy = intrinsics["cy"]
+        settings.intrinsics.image_width = intrinsics["image_width"]
+        settings.intrinsics.image_height = intrinsics["image_height"]
+        settings.intrinsics.scale_to_render = True
+        settings.distortion.model = "fisheye"
+        settings.distortion.enabled = True
+        settings.distortion.k1, settings.distortion.k2, settings.distortion.k3, settings.distortion.k4 = coeffs
+        settings.distortion.k5 = settings.distortion.k6 = 0.0
+        settings.distortion.p1 = settings.distortion.p2 = 0.0
+        ok, messages = apply_mod.apply_settings(cam_data, settings, context.scene)
+        _report_messages(self, messages, "INFO" if ok else "ERROR")
+        if not ok:
+            return {"CANCELLED"}
+        self.report({"INFO"}, "defaults restored (reference AVM front camera)")
+        return {"FINISHED"}
+
+
+class OPENCV_CAM_OT_recompile(_CameraOperator, bpy.types.Operator):
+    bl_idname = "opencv_cam.recompile"
+    bl_label = "Recompile Shader"
+    bl_description = "Refresh the bundled OSL shader text and recompile it"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        _, cam_data = self.camera(context)
+        settings = cam_data.opencv_cam
+        _, changed = shader.install_shader(settings, force=False)
+        cam_data.custom_bytecode = ""
+        ok, messages = apply_mod.apply_settings(cam_data, settings, context.scene)
+        _report_messages(self, messages, "INFO" if ok else "ERROR")
+        if not ok:
+            return {"CANCELLED"}
+        self.report(
+            {"INFO"},
+            f"{shader.shader_filename(settings.distortion.model)} recompiled "
+            f"({'text updated' if changed else 'text unchanged'}, "
+            f"{len(cam_data.custom_bytecode)} chars)",
+        )
+        return {"FINISHED"}
+
+
+class OPENCV_CAM_OT_preview(_CameraOperator, bpy.types.Operator):
+    bl_idname = "opencv_cam.preview"
+    bl_label = "Preview"
+    bl_description = (
+        "Render a quick preview with the current camera and show it in the Image Editor "
+        "(render settings are restored afterwards)"
+    )
+    bl_options = {"REGISTER"}
+
+    size: EnumProperty(
+        name="Size",
+        items=[("256", "256 px", ""), ("384", "384 px", ""), ("512", "512 px", ""), ("720", "720 px", "")],
+        default="384",
+    )
+    samples: IntProperty(name="Samples", default=16, min=1, max=512)
+
+    def execute(self, context):
+        _, cam_data = self.camera(context)
+        settings = cam_data.opencv_cam
+        settings.preview.size = self.size
+        settings.preview.samples = self.samples
+        result = preview.render_preview(
+            cam_data, settings, context.scene,
+            size_key=self.size, samples=self.samples, denoise=settings.preview.denoise,
+        )
+        _report_messages(self, result["messages"], "INFO" if result["ok"] else "ERROR")
+        if not result["ok"]:
+            return {"CANCELLED"}
+        self.report(
+            {"INFO"},
+            f"preview rendered at {result['resolution'][0]}x{result['resolution'][1]} "
+            f"({result['samples']} samples)",
+        )
+        return {"FINISHED"}
+
+
+class OPENCV_CAM_OT_save_preview(_CameraOperator, bpy.types.Operator, ExportHelper):
+    bl_idname = "opencv_cam.save_preview"
+    bl_label = "Save Preview Image"
+    bl_description = "Render a preview and write it to a PNG file"
+    bl_options = {"REGISTER"}
+
+    filename_ext = ".png"
+    filter_glob: StringProperty(default="*.png", options={"HIDDEN"})
+
+    def execute(self, context):
+        _, cam_data = self.camera(context)
+        settings = cam_data.opencv_cam
+        try:
+            path = preview.save_preview_image(
+                cam_data, settings, context.scene,
+                size_key=settings.preview.size, samples=max(settings.preview.samples, 16),
+                filepath=self.filepath,
+            )
+        except Exception as exc:
+            self.report({"ERROR"}, f"{type(exc).__name__}: {exc}")
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"written {path}")
+        return {"FINISHED"}
+
+
 class OPENCV_CAM_OT_add_test_scene(_CameraOperator, bpy.types.Operator):
     bl_idname = "opencv_cam.add_test_scene"
     bl_label = "Add Test Scene"
@@ -284,6 +491,12 @@ class OPENCV_CAM_OT_selftest(_CameraOperator, bpy.types.Operator):
 
 _CLASSES = (
     OPENCV_CAM_OT_apply,
+    OPENCV_CAM_OT_add_camera,
+    OPENCV_CAM_OT_load_preset,
+    OPENCV_CAM_OT_reset_defaults,
+    OPENCV_CAM_OT_recompile,
+    OPENCV_CAM_OT_preview,
+    OPENCV_CAM_OT_save_preview,
     OPENCV_CAM_OT_add_test_scene,
     OPENCV_CAM_OT_install_shader,
     OPENCV_CAM_OT_import_calibration,
@@ -295,11 +508,21 @@ _CLASSES = (
 )
 
 
+def _menu_add_camera(self, context):
+    """Entry in Add ▸ Camera (Blender does not allow extending Camera.type)."""
+    layout = self.layout
+    layout.separator()
+    for model, (label, _, _) in camera_factory.MODELS.items():
+        layout.operator("opencv_cam.add_camera", text=label, icon="CAMERA_DATA").model = model
+
+
 def register() -> None:
     for cls in _CLASSES:
         bpy.utils.register_class(cls)
+    bpy.types.VIEW3D_MT_camera_add.append(_menu_add_camera)
 
 
 def unregister() -> None:
+    bpy.types.VIEW3D_MT_camera_add.remove(_menu_add_camera)
     for cls in reversed(_CLASSES):
         bpy.utils.unregister_class(cls)

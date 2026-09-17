@@ -10,11 +10,16 @@ addons/opencv_camera/
 │   ├── transform.py       OpenCV ↔ Blender 坐标/矩阵/内参换算
 │   ├── calibration_io.py  标定文件读写（含无依赖 YAML 子集解析器）
 │   └── paths.py           包内文件定位（基于 __file__，兼容扩展/legacy 两种安装）
+├── core/
+│   └── presets.py          presets/ 目录的扫描与加载
 ├── bl/                  Blender 集成层
-│   ├── properties.py      PropertyGroup / PointerProperty 定义
+│   ├── properties.py      PropertyGroup / PointerProperty 定义 + Live Apply 回调
 │   ├── shader.py          OSL Text 数据块安装、编译校验、强制重编译
-│   ├── apply.py           参数下发、位姿设置、镜头反推、分辨率一致性检查
-│   ├── selftest.py        渲染自检（临时场景/隐藏其他对象，跑完还原）
+│   ├── apply.py           apply_values（快，供 Live Apply）/ apply_settings（含编译）
+│   ├── camera_factory.py  Add Camera 的相机创建（模型 + 预设 + 可选 rig 空物体）
+│   ├── preview.py         预览渲染（按标定宽高比、渲染设置用完即还原）+ 防抖定时器
+│   ├── scene_builder.py   验证场景（棋盘方块/地面/灯光）
+│   ├── selftest.py        渲染自检（隐藏其他对象，跑完还原）
 │   ├── ui.py              Object Data Properties ▸ Lens  OpenCV Camera 面板
 │   └── operators.py       算子：薄壳，只做 context 解析、调用 bl 逻辑、report
 └── shaders/opencv_camera.osl   权威着色器源文件
@@ -35,10 +40,22 @@ addons/opencv_camera/
 | 资源路径 | 用 `__file__` 定位（`core/paths.py`），不要依赖 `__package__` 或当前工作目录 |
 | 注册顺序 | `properties → operators → ui`，卸载时反序（UI 依赖算子/属性，属性依赖属性组） |
 | 面板挂载 | `bl_space_type='PROPERTIES'`、`bl_context='data'`、`bl_parent_id='DATA_PT_lens'`（与 Cycles 自带面板一致） |
+| 自定义相机入口 | **不能**扩展 `Camera.type`（C 侧 RNA 枚举）；用 `Add ▸ Camera` 菜单算子创建已配置好的 Custom 相机（`VIEW3D_MT_camera_add.append`） |
+| 属性即时生效 | 属性 `update=` 回调 → `bl/apply.apply_values()`（只写 `cycles_custom`，快）；切换模型时走完整的 `apply_settings()`（要换着色器并重编译） |
+| 预览 | Blender 4.x 无面板内嵌图片 API（`template_preview`/`Image.preview` 已移除）→ 预览渲染后用 `bpy.ops.render.view_show()` 显示在 Image Editor；渲染设置必须还原 |
 | 算子 | `bl_idname = "opencv_cam.<action>"`；需要撤销的加 `{'REGISTER','UNDO'}`；文件对话框用 `ImportHelper`/`ExportHelper` |
 | 不污染用户场景 | 自检/预览类操作要保存并还原 `scene.render.*`、`view_settings`、`scene.camera`、`view_layer.objects.active`、各对象 `hide_render` |
 | 持久化 | 安装的 OSL Text 数据块加 `use_fake_user = True`，随 `.blend` 保存 |
 | 版本管理 | `blender_manifest.toml` 的 `version`；行为/接口变化时提升并记入 `docs/roadmap.md` |
+
+### 2.0 属性注解的坑（会导致属性被静默丢弃）
+
+bpy 会在注册时用 `typing.get_type_hints` 重新求值注解字符串，任何 `NameError` 都会让 Blender
+**只打印一条警告并丢掉该属性**（表现为 `Convert py args to operator properties:: keyword ... unrecognized`）。因此：
+
+- 注解里引用的名字必须在**模块作用域**可解析（例如别忘了 `from bpy.props import EnumProperty`）；
+- 注解里避免复杂表达式（推导式等），把 items 提取成模块级常量；
+- `items=` 传**函数**时，`default` 必须给整数索引；要让 `default` 用字符串标识符，items 必须是**列表**。
 
 ### 2.1 两个必须记住的 Cycles 行为
 

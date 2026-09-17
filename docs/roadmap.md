@@ -10,13 +10,15 @@
 | M4 ✅ | 畸变模型扩展：OpenCV fisheye（equidistant，θ 多项式） | 自检通过（θ≈72° 误差 0.048 px、θ≈87° 误差 0.026 px）；导入导出保留模型标识 |
 | M4b | 其余模型：thin-prism/tilted sensor（s1..s4）、双鱼眼/超广角（EUCM/DS） | 每个模型都有自检用例 |
 | M5 | 端到端回归：渲染 → 角点/ArUco 检测 → `cv2.calibrateCamera` 反标定回环 | 反标定内参相对误差 < 1%，畸变系数趋势一致 |
+| M5b ✅ | 交互补齐：`Add ▸ Camera  OpenCV Camera`（含 rig 空物体）、预设加载、Live Apply、Preview（Image Editor）、Recompile | 一键建相机 / 改参数即时生效 / 预览可看 |
 | M6 | `camera_rig`：多相机刚体、同步渲染、多相机标定导出（含双目/HFOV 组合） | 双目极线几何验证通过；同步渲染输出可复现 |
 | M7 | `dataset_export`：渲染 + 真值（位姿/内参/深度/实例分割），KITTI / COLMAP / EuRoC 布局 | 导出的数据集能被参考工具链直接读取 |
 | M8 | `sensor_sim`：IMU/GNSS/LiDAR 轨迹与噪声（可选引入第三方仿真中间件） | 与视觉时间戳对齐；噪声参数可配置 |
 
 ## 已知待办
 
-- [ ] 视口预览（Viewport Render / `render_preview`）是否支持自定义相机：需要实测，若不支持要在 UI 明确提示「仅 F12 渲染生效」。
+- [ ] 视口预览（Viewport Render）是否支持自定义相机：本次尝试用 Rendered shading 对比 **标准相机与自定义相机**，两者在无头 MCP 会话里都没有渲染画面（视口需要交互刷新），**结论未定**；当前预览走 Image Editor，UI 已注明该限制。
+- [ ] `Add ▸ Camera` 菜单条目目前是四个模型各一条；后续可改成一条 + 弹窗选择模型/预设。
 - [ ] DoF 与自定义相机组合：需要着色器输出 `position` 并读取 `cam:aperture_position`（`advanced_camera.osl` 有参考实现）。
 - [ ] 运动模糊/滚动快门：按 `time` 采样，暂未实现。
 - [ ] Blender 5.x 复核：`custom_mode` / `custom_shader` / `custom_bytecode` 命名与行为是否变化。

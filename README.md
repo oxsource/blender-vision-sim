@@ -60,6 +60,31 @@ Blender 中使用：
 > 自定义相机只在 **Cycles** 下生效，且只能使用 **CPU 或 OptiX** 后端（macOS 无 OptiX ⇒ 只能 CPU）。
 > 默认参数取真实 AVM 前相机（1280×960 鱼眼），直接可用；换成自己的标定即可。
 
+### 三种使用方式
+
+| 方式 | 操作 |
+| --- | --- |
+| **新建相机**（推荐） | `Add  Camera ▸ OpenCV Camera` 的四个条目：`Fisheye (OpenCV equidistant)` / `Brown-Conrady (radtan)` / `Rational polynomial` / `Pinhole (no distortion)`，创建出来即为 Custom 相机、已挂载着色器与参数，可选 `At 3D Cursor` / `Add Rig Empty`（父级空物体，便于多相机/外参） |
+| **改造现有相机** | 选中相机 ▸ `Lens ▸ OpenCV Camera ▸ Apply to Camera` |
+| **批量/脚本** | `bpy.ops.opencv_cam.add_camera(model="fisheye", preset="avm_minibus_front", use_rig=True)` |
+
+> Blender 不允许插件扩展 `Camera.type` 枚举（该枚举定义在 C 侧 RNA），所以"添加自定义相机"以
+> `Add ▸ Camera` 菜单算子的形式提供，这是 Blender 插件生态里的标准做法；相机数据块本身仍是
+> `Lens Type = Custom` + 我们的 OSL 着色器。
+
+### 参数面板与预览
+
+- **Live Apply**（默认开）：面板上改任意内参/畸变/外参即时写入 Cycles，不需要再点 Apply；
+  外参面板改 `R`/`t` 会同步移动相机物体；`Model` 切换会自动换着色器并重编译。
+- **Preview**：按标定宽高比快速渲染（256/384/512/720 长边、1–512 采样）并显示在 Blender 的
+  Image Editor 里（与 F12 同一位置），**渲染设置用完即还原**，Preview 不会改动你的场景设置；
+  `Save Preview Image` 可落盘 PNG；`Preview On Change` 打开后停止拖动约 0.6 s 自动重渲染。
+- 面板同时显示：当前生效的着色器/字节码长度、分辨率与宽高比提示、自检结果。
+- 用 `Save Preview Image` 落盘的预览图示例：`docs/images/preview_example.png`（384×288，16 采样）。
+- 注意：Blender 4.x 已移除 `UILayout.template_preview` / `Image.preview`，插件无法在面板里内嵌图片，
+  因此预览走 Image Editor；3D 视口是否支持自定义相机**尚未实测确认**（视口渲染需要交互式刷新），
+  所以暂不作为预览方案（见 `docs/roadmap.md` 待办）。
+
 ### 可视化验证
 
 `Add Test Scene` 生成的场景（同一套 K，仅切换畸变开关）：

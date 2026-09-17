@@ -23,9 +23,9 @@ import numpy as np  # noqa: E402
 
 import opencv_camera  # noqa: E402
 from opencv_camera.bl import apply as apply_mod
-from opencv_camera.bl import scene_builder  # noqa: E402
+from opencv_camera.bl import camera_factory, preview, scene_builder  # noqa: E402
 from opencv_camera.bl import selftest, shader  # noqa: E402
-from opencv_camera.core import calibration_io, camera_model, transform  # noqa: E402
+from opencv_camera.core import calibration_io, camera_model, presets, transform  # noqa: E402
 
 FAILURES = []
 TMPDL = tempfile.mkdtemp(prefix="opencv_cam_blender_test_")
@@ -487,6 +487,118 @@ def test_operator_end_to_end():
     check("operator read_pose", bpy.ops.opencv_cam.read_pose() == {"FINISHED"})
 
 
+def test_add_camera_operator():
+    """Add  Camera entries create ready to use custom cameras."""
+    scene = setup_scene(resolution=128, samples=4)
+    clear_scene()
+    setup_scene(resolution=128, samples=4)
+    scene.camera = None
+    for model, expected_shader in (("fisheye", "opencv_fisheye.osl"),
+                                   ("brown_conrady", "opencv_camera.osl"),
+                                   ("pinhole", "opencv_camera.osl")):
+        result = bpy.ops.opencv_cam.add_camera(model=model, preset=presets.CURRENT,
+                                               use_rig=(model == "fisheye"))
+        check(f"add_camera({model})", result == {"FINISHED"})
+        camera = bpy.context.view_layer.objects.active
+        cam_data = camera.data
+        check(f"add_camera({model}) is Custom + compiled",
+              cam_data.type == "CUSTOM" and shader.is_compiled(cam_data)
+              and cam_data.custom_shader.name == expected_shader,
+              f"{cam_data.type} {cam_data.custom_shader.name if cam_data.custom_shader else None}")
+        if model == "pinhole":
+            check("pinhole adds distortion disabled",
+                  int(cam_data.cycles_custom["enable_distortion"]) == 0)
+        if model == "fisheye":
+            check("fisheye rig empty", camera.parent is not None and camera.parent.type == "EMPTY")
+    check("add_camera set the scene camera", scene.camera is not None)
+    check("Add Camera menu entry", hasattr(bpy.types, "VIEW3D_MT_camera_add"))
+
+
+def test_presets():
+    names = [identifier for identifier, _ in presets.list_presets()]
+    check("bundled presets listed", "avm_minibus_front" in names, str(names))
+    calibration = presets.load_preset("avm_minibus_front")
+    check("preset loads", approx(calibration.intrinsics.fx, 317.77563818112867, 1e-6)
+          and calibration.distortion.model == camera_model.MODEL_FISHEYE)
+    scene = setup_scene(resolution=128, samples=4)
+    clear_scene()
+    setup_scene(resolution=128, samples=4)
+    camera, cam_data = make_camera("PresetCam")
+    scene.camera = camera
+    bpy.context.view_layer.objects.active = camera
+    check("load_preset operator",
+          bpy.ops.opencv_cam.load_preset(preset="avm_minibus_front") == {"FINISHED"})
+    check("preset applied to the camera",
+          approx(cam_data.opencv_cam.intrinsics.fx, 317.77563818112867, 1e-3)
+          and approx(cam_data.cycles_custom["k1"], 0.08476733270570755, 1e-6))
+    check("reset defaults operator",
+          bpy.ops.opencv_cam.reset_defaults() == {"FINISHED"})
+    check("reset restores the reference values",
+          approx(cam_data.opencv_cam.intrinsics.image_width, 1280)
+          and cam_data.opencv_cam.distortion.model == "fisheye")
+
+
+def test_live_apply():
+    """auto_apply pushes edits without pressing Apply to Camera."""
+    scene = setup_scene(resolution=128, samples=4)
+    clear_scene()
+    setup_scene(resolution=128, samples=4)
+    camera, cam_data = make_camera("LiveCam")
+    settings = cam_data.opencv_cam
+    settings.intrinsics.image_width = 128
+    settings.intrinsics.image_height = 128
+    apply_mod.apply_settings(cam_data, settings, scene)
+    check("live apply enabled by default", settings.auto_apply)
+    settings.intrinsics.fx = 123.0
+    check("fx edit applied live",
+          approx(cam_data.cycles_custom["fx"], 123.0, 1e-4),
+          f"fx={cam_data.cycles_custom['fx']}")
+    settings.distortion.k1 = 0.25          # fisheye default model
+    check("k1 edit applied live", approx(cam_data.cycles_custom["k1"], 0.25, 1e-6))
+    settings.auto_apply = False
+    settings.intrinsics.fx = 999.0
+    check("live apply can be switched off",
+          approx(cam_data.cycles_custom["fx"], 123.0, 1e-4))
+    settings.auto_apply = True
+    # switching the model must swap the shader as well
+    settings.distortion.model = "brown_conrady"
+    check("model switch swaps the shader live",
+          cam_data.custom_shader.name == "opencv_camera.osl"
+          and approx(cam_data.cycles_custom["k1"], 0.25, 1e-6),
+          str(cam_data.custom_shader.name))
+
+
+def test_preview():
+    scene = setup_scene(resolution=128, samples=4)
+    clear_scene()
+    setup_scene(resolution=128, samples=4)
+    checker_plane(scene)
+    camera, cam_data = make_camera("PreviewCam")
+    scene.camera = camera
+    bpy.context.view_layer.objects.active = camera
+    settings = cam_data.opencv_cam
+    settings.intrinsics.image_width = 1280
+    settings.intrinsics.image_height = 960
+    before = (scene.render.resolution_x, scene.render.resolution_y, scene.cycles.samples)
+    result = preview.render_preview(cam_data, settings, scene, size_key="256", samples=2, show=False)
+    check("preview renders", result["ok"] and result["resolution"][1] > 0,
+          f"{result['resolution']} {result['messages']}")
+    check("preview keeps the calibration aspect",
+          abs(result["resolution"][0] / result["resolution"][1] - 1280 / 960) < 0.05,
+          str(result["resolution"]))
+    check("preview restores the render settings",
+          (scene.render.resolution_x, scene.render.resolution_y, scene.cycles.samples) == before,
+          f"{scene.render.resolution_x}x{scene.render.resolution_y}@{scene.cycles.samples}")
+    check("preview has a render result", bpy.data.images.get("Render Result") is not None)
+    expected_fx = apply_mod.effective_intrinsics(settings, before[0], before[1]).fx
+    check("preview re-applies the intrinsics for the restored resolution",
+          approx(cam_data.cycles_custom["fx"], expected_fx, 1e-3),
+          f"{cam_data.cycles_custom['fx']:.4f} vs {expected_fx:.4f}")
+    check("preview operator",
+          bpy.ops.opencv_cam.preview(size="256", samples=2) == {"FINISHED"})
+    check("schedule_preview is a no-op in background", preview.schedule_preview(cam_data, settings, scene) is None)
+
+
 def main():
     tests = (
         test_registration,
@@ -503,6 +615,10 @@ def main():
         test_calibration_roundtrip,
         test_sync_from_lens,
         test_operator_end_to_end,
+        test_add_camera_operator,
+        test_presets,
+        test_live_apply,
+        test_preview,
     )
     opencv_camera.register()
     try:

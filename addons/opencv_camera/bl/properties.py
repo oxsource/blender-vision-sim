@@ -24,6 +24,65 @@ from bpy.props import (
 
 from ..core import camera_model
 
+
+def _root_settings(group):
+    """The :class:`OpenCVCameraSettings` that owns a nested property group."""
+    cam_data = group.id_data
+    if not isinstance(cam_data, bpy.types.Camera):
+        return None
+    return getattr(cam_data, "opencv_cam", None)
+
+
+def _apply_live(group, context=None, full: bool = False):
+    """Push changes to Cycles while the user edits (see ``auto_apply``).
+
+    ``full`` also (re)attaches and compiles the shader - needed when the
+    distortion model changes, because that swaps the shader.
+    """
+    settings = _root_settings(group)
+    cam_data = group.id_data
+    if settings is None or not isinstance(cam_data, bpy.types.Camera):
+        return
+    if not settings.auto_apply or cam_data.type != "CUSTOM":
+        return
+    from . import apply as apply_mod
+    scene = context.scene if context is not None else bpy.context.scene
+    try:
+        fn = apply_mod.apply_settings if full else apply_mod.apply_values
+        ok, messages = fn(cam_data, settings, scene)
+        settings.status = "live" if ok else "live apply failed: " + "; ".join(messages)[:120]
+        if ok and settings.preview.on_change:
+            from . import preview
+            preview.schedule_preview(cam_data, settings, scene)
+    except Exception as exc:  # never let an update callback raise into the UI
+        settings.status = f"live apply error: {type(exc).__name__}: {exc}"
+
+
+def _update_values(self, context):
+    _apply_live(self, context)
+
+
+def _update_model(self, context):
+    _apply_live(self, context, full=True)
+
+
+def _update_pose(self, context):
+    """Live extrinsics: keep the camera object in sync with R/t."""
+    settings = _root_settings(self)
+    obj = getattr(self, "id_data", None)
+    if settings is None or obj is None:
+        return
+    if not settings.auto_apply:
+        return
+    owner = next((o for o in bpy.context.scene.objects if o.data is obj), None)
+    if owner is None:
+        return
+    from . import apply as apply_mod
+    try:
+        apply_mod.apply_opencv_pose(owner, settings)
+    except Exception as exc:
+        settings.status = f"pose error: {type(exc).__name__}: {exc}"
+
 #: defaults of the reference camera (AVM minibus, front, 1280x960)
 AVM_FRONT_INTRINSICS = {
     "fx": 317.77563818112867,
@@ -48,6 +107,7 @@ class IntrinsicsSettings(bpy.types.PropertyGroup):
         default=AVM_FRONT_INTRINSICS["fx"],
         min=1e-6,
         precision=4,
+        update=_update_values,
     )
     fy: FloatProperty(
         name="fy",
@@ -55,41 +115,48 @@ class IntrinsicsSettings(bpy.types.PropertyGroup):
         default=AVM_FRONT_INTRINSICS["fy"],
         min=1e-6,
         precision=4,
+        update=_update_values,
     )
     auto_center: BoolProperty(
         name="Auto Center",
         description="Keep the principal point at the image centre",
         default=False,
+        update=_update_values,
     )
     cx: FloatProperty(
         name="cx",
         description="Principal point u in pixels (origin top-left)",
         default=AVM_FRONT_INTRINSICS["cx"],
         precision=3,
+        update=_update_values,
     )
     cy: FloatProperty(
         name="cy",
         description="Principal point v in pixels (origin top-left)",
         default=AVM_FRONT_INTRINSICS["cy"],
         precision=3,
+        update=_update_values,
     )
     image_width: IntProperty(
         name="Width",
         description="Resolution the intrinsics were calibrated for",
         default=AVM_FRONT_INTRINSICS["image_width"],
         min=1,
+        update=_update_values,
     )
     image_height: IntProperty(
         name="Height",
         description="Resolution the intrinsics were calibrated for",
         default=AVM_FRONT_INTRINSICS["image_height"],
         min=1,
+        update=_update_values,
     )
     scale_to_render: BoolProperty(
         name="Scale To Render",
         description="Rescale the intrinsics when the render resolution differs "
         "from the calibrated one (keeps the same field of view)",
         default=True,
+        update=_update_values,
     )
 
 
@@ -106,47 +173,55 @@ class DistortionSettings(bpy.types.PropertyGroup):
              "OpenCV rational_polynomial: adds the numerator terms k4, k5, k6"),
         ],
         default="fisheye",
+        update=_update_model,
     )
     enabled: BoolProperty(
         name="Enable Distortion",
         description="Apply distortion. Disable for an ideal pinhole / rectified view",
         default=True,
+        update=_update_values,
     )
     k1: FloatProperty(
         name="k1",
         description="Fisheye: theta^2 term | Brown-Conrady: radial k1",
         default=AVM_FRONT_DISTORTION[0],
         precision=6,
+        update=_update_values,
     )
     k2: FloatProperty(
         name="k2",
         description="Fisheye: theta^4 term | Brown-Conrady: radial k2",
         default=AVM_FRONT_DISTORTION[1],
         precision=6,
+        update=_update_values,
     )
     p1: FloatProperty(
         name="p1",
         description="Brown-Conrady tangential p1 (unused by the fisheye model)",
         default=0.0,
         precision=6,
+        update=_update_values,
     )
     p2: FloatProperty(
         name="p2",
         description="Brown-Conrady tangential p2 (unused by the fisheye model)",
         default=0.0,
         precision=6,
+        update=_update_values,
     )
     k3: FloatProperty(
         name="k3",
         description="Fisheye: theta^6 term | Brown-Conrady: radial k3",
         default=AVM_FRONT_DISTORTION[2],
         precision=6,
+        update=_update_values,
     )
     k4: FloatProperty(
         name="k4",
         description="Fisheye: theta^8 term | Rational model: numerator k4",
         default=AVM_FRONT_DISTORTION[3],
         precision=6,
+        update=_update_values,
     )
     k5: FloatProperty(name="k5", description="Rational model numerator k5", default=0.0, precision=6)
     k6: FloatProperty(name="k6", description="Rational model numerator k6", default=0.0, precision=6)
@@ -157,6 +232,7 @@ class DistortionSettings(bpy.types.PropertyGroup):
         default=20,
         min=1,
         max=100,
+        update=_update_values,
     )
 
 
@@ -177,6 +253,7 @@ class PoseSettings(bpy.types.PropertyGroup):
         size=9,
         default=(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0),
         precision=6,
+        update=_update_pose,
     )
     translation: FloatVectorProperty(
         name="t",
@@ -184,6 +261,7 @@ class PoseSettings(bpy.types.PropertyGroup):
         size=3,
         default=(0.0, 0.0, 0.0),
         precision=6,
+        update=_update_pose,
     )
     use_world_transform: BoolProperty(
         name="Custom World Frame",
@@ -199,11 +277,46 @@ class PoseSettings(bpy.types.PropertyGroup):
     )
 
 
+class PreviewSettings(bpy.types.PropertyGroup):
+    size: EnumProperty(
+        name="Size",
+        description="Long side of the preview render (the aspect ratio follows the calibration)",
+        items=[
+            ("256", "256 px", "Fastest"),
+            ("384", "384 px", "Default"),
+            ("512", "512 px", ""),
+            ("720", "720 px", "Largest"),
+        ],
+        default="384",
+    )
+    samples: IntProperty(
+        name="Samples",
+        description="Cycles samples for the preview",
+        default=16,
+        min=1,
+        max=512,
+    )
+    denoise: BoolProperty(name="Denoise", default=True)
+    on_change: BoolProperty(
+        name="Preview On Change",
+        description="Re-render the preview shortly after a parameter changes "
+        "(about 0.6 s debounce); needs a UI and a Cycles GPU/CPU render per change",
+        default=False,
+    )
+
+
 class OpenCVCameraSettings(bpy.types.PropertyGroup):
     intrinsics: PointerProperty(type=IntrinsicsSettings)
     distortion: PointerProperty(type=DistortionSettings)
     calibration: PointerProperty(type=CalibrationSettings)
     pose: PointerProperty(type=PoseSettings)
+    preview: PointerProperty(type=PreviewSettings)
+    auto_apply: BoolProperty(
+        name="Live Apply",
+        description="Push parameter changes to the camera immediately. Only applies once the "
+        "camera uses Lens Type = Custom (press Apply to Camera once to set that up)",
+        default=True,
+    )
     status: StringProperty(name="Status", default="", options={"HIDDEN"})
 
     # -- helpers used by operators/UI ------------------------------------
@@ -258,6 +371,7 @@ _CLASSES = (
     DistortionSettings,
     CalibrationSettings,
     PoseSettings,
+    PreviewSettings,
     OpenCVCameraSettings,
 )
 

@@ -111,22 +111,15 @@ def custom_camera_values(settings, intr: camera_model.Intrinsics,
     return values
 
 
-def apply_settings(cam_data, settings, scene=None,
-                   resolution: Tuple[int, int] = (0, 0)) -> Tuple[bool, List[str]]:
-    """Attach the shader, compile it and push the parameters to Cycles.
+def apply_values(cam_data, settings, scene=None,
+                 resolution: Tuple[int, int] = (0, 0)) -> Tuple[bool, List[str]]:
+    """Push the current settings to ``camera.cycles_custom`` (no recompile).
 
-    Returns ``(ok, messages)``.  ``ok`` is ``False`` when the shader could not be
-    compiled or the Cycles parameter group is missing - in that case the camera
-    would render with a stale shader, which is worse than a hard failure.
+    Used by the live ("auto apply") path: the shader is assumed to be attached
+    and compiled already.  Returns ``(ok, messages)``.
     """
     messages: List[str] = []
     scene = scene or bpy.context.scene
-    shader.attach(cam_data, settings)
-    ok, compile_messages = shader.ensure_compiled(cam_data)
-    messages.extend(compile_messages)
-    if not ok:
-        return False, messages
-
     params = shader.cycles_custom_params(cam_data)
     if params is None:
         messages.append("Cycles is not enabled: camera.cycles_custom is unavailable")
@@ -156,6 +149,25 @@ def apply_settings(cam_data, settings, scene=None,
         )
         return False, messages
     return True, messages
+
+
+def apply_settings(cam_data, settings, scene=None,
+                   resolution: Tuple[int, int] = (0, 0)) -> Tuple[bool, List[str]]:
+    """Attach the matching shader, compile it and push the parameters to Cycles.
+
+    Returns ``(ok, messages)``.  ``ok`` is ``False`` when the shader could not be
+    compiled or the Cycles parameter group is missing - in that case the camera
+    would render with a stale shader, which is worse than a hard failure.
+    """
+    messages: List[str] = []
+    shader.attach(cam_data, settings)
+    ok, compile_messages = shader.ensure_compiled(cam_data)
+    messages.extend(compile_messages)
+    if not ok:
+        return False, messages
+    ok, value_messages = apply_values(cam_data, settings, scene, resolution)
+    messages.extend(value_messages)
+    return ok, messages
 
 
 def apply_opencv_pose(obj, settings) -> None:
