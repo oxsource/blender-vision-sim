@@ -38,6 +38,11 @@ BLOCK_SUFFIX = {
 }
 CAMERA_SUFFIX = {"front": "Front", "back": "Back", "left": "Left", "right": "Right"}
 
+#: The rendered ground sits this far below the nominal ``z = 0`` plane.  The
+#: blocks (and every calibration quantity: ``points_3d``, the coverage maths)
+#: stay at ``z ~ 0``, so the two never share a plane and cannot z-fight.
+GROUND_DROP = 0.002
+
 
 # ---------------------------------------------------------------------------
 # meshes (generated at real size; object scale stays 1)
@@ -245,7 +250,7 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
     if ground is None:
         ground = _new_mesh_object(GROUND_NAME, _quad_mesh("AVM_Ground", 1.0, 1.0), target)
     _replace_mesh(ground, _quad_mesh("AVM_Ground", settings.ground_w, settings.ground_d))
-    ground.location = (0.0, 0.0, 0.0)
+    ground.location = (0.0, 0.0, -GROUND_DROP)
     _assign(ground, ground_material)
     _parent(ground, root)
     ground.hide_render = not settings.show_ground
