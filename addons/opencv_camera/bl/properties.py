@@ -373,24 +373,31 @@ class PoseSettings(bpy.types.PropertyGroup):
 
 class PreviewSettings(bpy.types.PropertyGroup):
     size: EnumProperty(
-        name="Size",
-        description="Long side of the preview render (the aspect ratio follows the calibration)",
+        name="Preview Size",
+        description="Resolution of the PREVIEW render: the long side in pixels, the short side "
+        "follows the output aspect ratio. It only affects the preview and Save Preview Image - "
+        "the final F12 size is set in Output Image",
         items=[
-            ("256", "256 px", "Fastest"),
-            ("384", "384 px", "Default"),
-            ("512", "512 px", ""),
-            ("720", "720 px", "Largest"),
+            ("256", "256 px", "Fastest, enough to check the framing"),
+            ("384", "384 px", "Default: a good balance for checking distortion"),
+            ("512", "512 px", "More detail at the image edges"),
+            ("720", "720 px", "Closest to the final render, slowest"),
         ],
         default="384",
     )
     samples: IntProperty(
-        name="Samples",
-        description="Cycles samples for the preview",
+        name="Preview Samples",
+        description="Cycles samples for the preview: fewer is faster and noisier, more shows "
+        "detail in dark areas. The final render uses the scene's own sample count",
         default=16,
         min=1,
         max=512,
     )
-    denoise: BoolProperty(name="Denoise", default=True)
+    denoise: BoolProperty(
+        name="Denoise Preview",
+        description="Denoise the preview so a low sample count still reads well",
+        default=True,
+    )
     on_change: BoolProperty(
         name="Preview On Change",
         description="Re-render the preview shortly after a parameter changes "

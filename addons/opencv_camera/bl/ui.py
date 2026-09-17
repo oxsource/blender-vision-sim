@@ -16,7 +16,7 @@ from __future__ import annotations
 import bpy
 
 from . import apply as apply_mod
-from . import panels_patch, shader
+from . import panels_patch, preview as preview_mod, shader
 
 
 class _CameraPanel:
@@ -198,9 +198,17 @@ class OPENCV_CAM_PT_preview(_CameraPanel, bpy.types.Panel):
         settings = context.camera.opencv_cam
         preview = settings.preview
 
-        row = layout.row(align=True)
-        row.prop(preview, "size", text="")
-        row.prop(preview, "samples", text="")
+        column = layout.column(align=True)
+        column.prop(preview, "size")
+        column.prop(preview, "samples")
+
+        width, height = preview_mod.preview_resolution(settings, preview.size)
+        layout.label(
+            text=f"preview renders {width}x{height} "
+                 f"({preview.samples} samples) - F12 uses "
+                 f"{context.scene.render.resolution_x}x{context.scene.render.resolution_y}",
+            icon="INFO",
+        )
 
         column = layout.column(align=True)
         column.operator("opencv_cam.preview", icon="RENDER_STILL")

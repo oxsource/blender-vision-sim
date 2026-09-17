@@ -94,8 +94,11 @@ Blender 中使用：
 
 - **Live Apply**（默认开）：面板上改任意内参/畸变/外参即时写入 Cycles，不需要再点 Apply；
   外参面板改 `R`/`t` 会同步移动相机物体；`Model` 切换会自动换着色器并重编译。
-- **Preview**：按标定宽高比快速渲染（256/384/512/720 长边、1–512 采样）并显示在 Blender 的
-  Image Editor 里（与 F12 同一位置），**渲染设置用完即还原**，Preview 不会改动你的场景设置；
+- **Preview**：按**输出宽高比**快速渲染并显示在 Blender 的 Image Editor 里（与 F12 同一位置），
+  **渲染设置用完即还原**，Preview 不会改动你的场景设置；其中
+  `Preview Size`（256/384/512/720）是**预览图的分辨率长边**（短边按输出宽高比推导，面板会显示实际
+  预览尺寸），`Preview Samples`/`Denoise Preview` 控制预览的噪声与速度 —— 这三项只作用于
+  **预览与 Save Preview Image**，F12 的最终尺寸由 `Output Image` 决定、采样数用场景自己的设置；
   `Save Preview Image` 可落盘 PNG；`Preview On Change` 打开后停止拖动约 0.6 s 自动重渲染。
 - 面板同时显示：当前生效的着色器/字节码长度、分辨率与宽高比提示、自检结果。
 - 用 `Save Preview Image` 落盘的预览图示例：`docs/images/preview_example.png`（384×288，16 采样）。
