@@ -66,6 +66,53 @@ def _update_model(self, context):
     _apply_live(self, context, full=True)
 
 
+#: re-entrancy guard: R/t, Euler and the object transform sync both ways
+_SYNCING = {"active": False}
+
+
+class _SyncGuard:
+    def __enter__(self):
+        self._was = _SYNCING["active"]
+        _SYNCING["active"] = True
+        return self
+
+    def __exit__(self, *exc):
+        _SYNCING["active"] = self._was
+        return False
+
+
+def _owner_object(cam_data):
+    """The camera object that uses this camera data-block, if any."""
+    scene = getattr(bpy.context, "scene", None)
+    if scene is None:
+        return None
+    for obj in scene.objects:
+        if obj.type == "CAMERA" and obj.data is cam_data:
+            return obj
+    return None
+
+
+def _update_euler(self, context):
+    """Euler edit -> rotate the camera object -> refresh R/t."""
+    settings = _root_settings(self)
+    if settings is None or _SYNCING["active"]:
+        return
+    if not settings.auto_apply:
+        return
+    from . import apply as apply_mod
+    obj = _owner_object(self.id_data)
+    if obj is None:
+        return
+    try:
+        with _SyncGuard():
+            apply_mod.apply_euler_rotation(obj, settings)
+            rotation, translation = apply_mod.read_opencv_pose(obj, settings)
+            settings.pose.rotation = rotation
+            settings.pose.translation = translation
+    except Exception as exc:
+        settings.status = f"euler error: {type(exc).__name__}: {exc}"
+
+
 def _update_pose(self, context):
     """Live extrinsics: keep the camera object in sync with R/t."""
     settings = _root_settings(self)
@@ -74,12 +121,16 @@ def _update_pose(self, context):
         return
     if not settings.auto_apply:
         return
-    owner = next((o for o in bpy.context.scene.objects if o.data is obj), None)
+    owner = _owner_object(obj)
     if owner is None:
         return
     from . import apply as apply_mod
     try:
-        apply_mod.apply_opencv_pose(owner, settings)
+        with _SyncGuard():
+            apply_mod.apply_opencv_pose(owner, settings)
+            euler = apply_mod.read_euler_rotation(owner)
+            if euler is not None:
+                settings.pose.euler = euler
     except Exception as exc:
         settings.status = f"pose error: {type(exc).__name__}: {exc}"
 
@@ -356,6 +407,17 @@ class PoseSettings(bpy.types.PropertyGroup):
         default=(0.0, 0.0, 0.0),
         precision=6,
         update=_update_pose,
+    )
+    euler: FloatVectorProperty(
+        name="Euler",
+        description="Camera orientation in the Blender world (XYZ Euler, degrees). "
+        "Kept in sync with R and with the camera object, so the pose can be dialled in "
+        "with three angles instead of a matrix",
+        size=3,
+        subtype="EULER",
+        unit="ROTATION",
+        default=(0.0, 0.0, 0.0),
+        update=_update_euler,
     )
     use_world_transform: BoolProperty(
         name="Custom World Frame",

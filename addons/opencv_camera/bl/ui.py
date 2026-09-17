@@ -7,7 +7,7 @@ sorts *before* Blender's own panels (negative ``bl_order``):
 * ``CV Intrinsics``  - lens model, fx, fy, cx, cy, distortion coefficients,
                        calibration size, then Apply / Preview / Live Apply /
                        Recompile and the status box
-* ``CV Extrinsics``  - R/t, world frame
+* ``CV Extrinsics``  - Euler / R / t, plus a collapsible *World Frame* sub-block
 * ``CV Presets``     - calibration files, presets, defaults
 * ``CV Preview``     - preview render settings and tools
 * ``CV Output``      - the image size the render should produce
@@ -131,17 +131,32 @@ class OPENCV_CAM_PT_extrinsics(_CameraPanel, bpy.types.Panel):
         pose = context.camera.opencv_cam.pose
 
         column = layout.column()
+        column.prop(pose, "euler")
         column.prop(pose, "rotation")
         column.prop(pose, "translation")
-        layout.prop(pose, "use_world_transform")
-        row = layout.row()
-        row.enabled = pose.use_world_transform
-        row.prop(pose, "world_matrix")
 
         row = layout.row(align=True)
         row.operator("opencv_cam.apply_pose", icon="OBJECT_ORIGIN")
         row.operator("opencv_cam.read_pose", icon="TRACKER")
-        layout.label(text="Object transform is the primary pose source", icon="INFO")
+        layout.label(text="Euler and R describe the same rotation", icon="INFO")
+
+
+class OPENCV_CAM_PT_world_frame(_CameraPanel, bpy.types.Panel):
+    bl_idname = "OPENCV_CAM_PT_world_frame"
+    bl_label = "World Frame"
+    bl_parent_id = "OPENCV_CAM_PT_extrinsics"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        pose = context.camera.opencv_cam.pose
+
+        layout.prop(pose, "use_world_transform")
+        row = layout.row()
+        row.enabled = pose.use_world_transform
+        row.prop(pose, "world_matrix")
+        layout.label(text="Maps the calibration world frame to the Blender world", icon="INFO")
 
 
 class OPENCV_CAM_PT_output(_CameraPanel, bpy.types.Panel):
@@ -242,6 +257,7 @@ class OPENCV_CAM_PT_preview(_CameraPanel, bpy.types.Panel):
 _CLASSES = (
     OPENCV_CAM_PT_main,
     OPENCV_CAM_PT_extrinsics,
+    OPENCV_CAM_PT_world_frame,
     OPENCV_CAM_PT_io,
     OPENCV_CAM_PT_preview,
     OPENCV_CAM_PT_output,

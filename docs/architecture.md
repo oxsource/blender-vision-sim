@@ -47,6 +47,7 @@ addons/opencv_camera/
 | 面板挂载 | 每个模块都是**顶层**面板（`bl_space_type='PROPERTIES'`、`bl_context='data'`、**不设** `bl_parent_id`），统一 `CV ` 前缀命名（`CV Intrinsics` / `CV Extrinsics` / `CV Output` / `CV Presets` / `CV Preview`）；用**负** `bl_order`（-50..-46）排到 Blender 自带面板（默认 0 / 1000）**之前** |
 | 自定义相机入口 | **不能**扩展 `Camera.type`（C 侧 RNA 枚举）；用 `Add ▸ Camera` 菜单算子创建已配置好的 Custom 相机（`VIEW3D_MT_camera_add.append`） |
 | 属性即时生效 | 属性 `update=` 回调 → `bl/apply.apply_values()`（只写 `cycles_custom`，快）；切换模型时走完整的 `apply_settings()`（要换着色器并重编译） |
+| 双向同步要防递归 | `R/t` 与 Euler、相机物体三者互为镜像（`_update_pose` / `_update_euler`），用模块级 `_SYNCING` 重入守卫包住写回，避免 update 回调互相触发成环 |
 | 插件入口 | 所有入口集中在 `Add ▸ VisionSim`（`Camera` 四个模型 + `Camera Scene`）；不额外往 `Add ▸ Camera` 里塞条目（Blender 不允许扩展 `Camera.type`，塞进去也只能建 Custom 相机，容易误导）。相机骨架用 `add_camera(use_rig=True)` 的选项而不是单独的菜单项 |
 | 与别的插件共存 | 隐藏 Cycles 裸参数面板用的是**运行时替换 poll**（Python 面板的 poll 每次绘制都会重新查找），卸载时还原；Cycles 之后重新注册面板会导致补丁失效，此时面板会提示 "patch inactive"，功能不受影响 |
 | 预览 | Blender 4.x 无面板内嵌图片 API（`template_preview`/`Image.preview` 已移除）→ 预览渲染后用 `bpy.ops.render.view_show()` 显示在 Image Editor；渲染设置与内参都要还原 |

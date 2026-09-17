@@ -205,7 +205,11 @@ class OPENCV_CAM_OT_apply_pose(_CameraOperator, bpy.types.Operator):
 
     def execute(self, context):
         obj, cam_data = self.camera(context)
-        apply_mod.apply_opencv_pose(obj, cam_data.opencv_cam)
+        settings = cam_data.opencv_cam
+        apply_mod.apply_opencv_pose(obj, settings)
+        euler = apply_mod.read_euler_rotation(obj)
+        if euler is not None:
+            settings.pose.euler = euler
         self.report({"INFO"}, f"{obj.name}: transform set from OpenCV R/t")
         return {"FINISHED"}
 
@@ -222,6 +226,9 @@ class OPENCV_CAM_OT_read_pose(_CameraOperator, bpy.types.Operator):
         rotation, translation = apply_mod.read_opencv_pose(obj, settings)
         settings.pose.rotation = rotation
         settings.pose.translation = translation
+        euler = apply_mod.read_euler_rotation(obj)
+        if euler is not None:
+            settings.pose.euler = euler
         self.report({"INFO"}, "pose read from the camera object")
         return {"FINISHED"}
 

@@ -144,7 +144,11 @@ R_wc = R_bᵀ               # camera → world，即 object 旋转
 ```
 
 若标定世界系不是 Blender 世界系（ROS: x 前/y 左/z 上；OpenCV 视觉系: y 下），
-插件提供可选的 `world_matrix`（4×4）左乘，不靠猜。
+插件提供可选的 `world_matrix`（4×4）左乘，不靠猜（在 `CV Extrinsics ▸ World Frame` 折叠块里）。
+
+面板里除 `R`/`t` 外还提供 **Euler（XYZ，Blender 世界系）三轴角度输入**，与 `R` 双向同步、直接旋转
+相机物体；注意约定：**OpenCV 下的单位位姿（X 右 / Y 下 / Z 前）在 Blender 里是绕 X 轴 180°**，
+所以 R=单位矩阵时 Euler 显示为 (180°, 0, 0) 而不是全 0。
 
 ## 6. 两种工作模式
 

@@ -421,6 +421,63 @@ def test_resolution_scaling():
           f"cx={effective.cx:.3f} cy={effective.cy:.3f}")
 
 
+def test_euler_extrinsics():
+    """The Euler input rotates the camera and stays in sync with R."""
+    import math
+    scene = setup_scene(resolution=128, samples=4)
+    clear_scene()
+    setup_scene(resolution=128, samples=4)
+    camera, cam_data = make_camera("EulerCam")
+    scene.camera = camera
+    bpy.context.view_layer.objects.active = camera
+    camera.select_set(True)
+    settings = cam_data.opencv_cam
+
+    check("euler property is an EULER vector",
+          settings.pose.bl_rna.properties["euler"].subtype == "EULER"
+          and settings.pose.bl_rna.properties["euler"].array_length == 3)
+
+    # dial in 30 deg around Y and 45 deg around Z
+    settings.pose.euler = (0.0, math.radians(30.0), math.radians(45.0))
+    rotation = apply_mod.read_euler_rotation(camera)
+    check("euler rotates the camera object",
+          all(abs(a - b) < 1e-6 for a, b in zip(rotation, (0.0, math.radians(30.0), math.radians(45.0)))),
+          f"{tuple(round(math.degrees(v), 3) for v in rotation)}")
+
+    expected = apply_mod.read_opencv_pose(camera, settings)
+    check("R/t follow the euler input",
+          all(abs(a - b) < 1e-6 for a, b in zip(settings.pose.rotation, expected[0]))
+          and all(abs(a - b) < 1e-6 for a, b in zip(settings.pose.translation, expected[1])))
+
+    # editing R feeds the euler back.  Note the convention: an identity OpenCV pose
+    # (X right, Y down, Z forward) is the Blender camera local frame rotated by
+    # 180 degrees about X, so the Euler is (pi, 0, 0), not zero.
+    settings.pose.rotation = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
+    settings.pose.translation = (0.0, 0.0, 0.0)
+    rotation = apply_mod.read_euler_rotation(camera)
+    check("R edit updates the euler",
+          all(abs(a - b) < 1e-6 for a, b in zip(settings.pose.euler, rotation)),
+          str(tuple(round(math.degrees(v), 2) for v in settings.pose.euler)))
+    check("identity OpenCV pose is 180 deg about X in Blender",
+          abs(abs(rotation[0]) - math.pi) < 1e-6
+          and abs(rotation[1]) < 1e-6 and abs(rotation[2]) < 1e-6,
+          str(tuple(round(math.degrees(v), 2) for v in rotation)))
+
+    # the operators keep both in sync, and the loop is guarded
+    settings.pose.euler = (math.radians(10.0), 0.0, 0.0)
+    check("apply_pose keeps the euler", bpy.ops.opencv_cam.apply_pose() == {"FINISHED"}
+          and abs(settings.pose.euler[0] - math.radians(10.0)) < 1e-6)
+    camera.rotation_mode = "QUATERNION"     # matrix path must still work
+    settings.pose.euler = (0.0, math.radians(20.0), 0.0)
+    rotation = apply_mod.read_euler_rotation(camera)
+    check("euler works with a quaternion rotation mode",
+          abs(rotation[1] - math.radians(20.0)) < 1e-6,
+          f"{tuple(round(math.degrees(v), 3) for v in rotation)}")
+    check("read_pose keeps the euler",
+          bpy.ops.opencv_cam.read_pose() == {"FINISHED"}
+          and abs(settings.pose.euler[1] - math.radians(20.0)) < 1e-6)
+
+
 def test_pose_roundtrip():
     scene = setup_scene()
     camera, cam_data = make_camera("PoseCam")
@@ -530,6 +587,11 @@ def test_add_camera_operator():
             check("fisheye rig empty", camera.parent is not None and camera.parent.type == "EMPTY")
     check("add_camera set the scene camera", scene.camera is not None)
     check("Add Camera menu entry", hasattr(bpy.types, "VIEW3D_MT_camera_add"))
+
+
+def settings_pose_props():
+    from opencv_camera.bl import properties as props
+    return props.PoseSettings.bl_rna.properties
 
 
 def test_panel_layout():
@@ -863,6 +925,7 @@ def main():
         test_builtin_camera_equivalence,
         test_shift_equivalence,
         test_resolution_scaling,
+        test_euler_extrinsics,
         test_pose_roundtrip,
         test_calibration_roundtrip,
         test_sync_from_lens,

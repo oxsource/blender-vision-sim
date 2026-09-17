@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Dict, List, Tuple
 
 import bpy
-from mathutils import Matrix
+from mathutils import Euler, Matrix
 
 from ..core import camera_model, transform
 from . import shader
@@ -210,6 +210,29 @@ def apply_settings(cam_data, settings, scene=None,
     ok, value_messages = apply_values(cam_data, settings, scene, resolution)
     messages.extend(value_messages)
     return ok, messages
+
+
+def read_euler_rotation(obj) -> Tuple[float, float, float]:
+    """The object's world orientation as an XYZ Euler triple (radians)."""
+    euler = obj.matrix_world.decompose()[1].to_euler("XYZ")
+    return euler.x, euler.y, euler.z
+
+
+def apply_euler_rotation(obj, settings) -> None:
+    """Rotate ``obj`` to ``pose.euler`` (keeping location and scale).
+
+    Written through ``matrix_world`` so it works whatever the object's
+    ``rotation_mode`` is (euler, quaternion or axis-angle).
+    """
+    euler = settings.pose.euler
+    matrix = obj.matrix_world.copy()
+    location, _, scale = matrix.decompose()
+    rotation = Euler((euler[0], euler[1], euler[2]), "XYZ").to_matrix().to_4x4()
+    obj.matrix_world = (
+        Matrix.Translation(location)
+        @ rotation
+        @ Matrix.Diagonal((scale[0], scale[1], scale[2], 1.0))
+    )
 
 
 def apply_opencv_pose(obj, settings) -> None:

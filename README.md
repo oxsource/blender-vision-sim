@@ -140,7 +140,8 @@ Object Data Properties
 ├── CV Intrinsics   模型、fx fy cx cy、畸变（模型 + 系数 + 迭代 + Discard Invalid Rays）、
 │                   标定分辨率 + From Blender Lens、生效值只读框，
 │                   然后才是 [Apply] [Preview] [Live Apply] [Recompile] 与状态框
-├── CV Extrinsics   R/t、自定义世界系、Apply Pose / Read Pose
+├── CV Extrinsics   Euler（XYZ 三轴角度）/ R / t、Apply Pose / Read Pose
+│                   └── World Frame（可折叠）：自定义世界系开关 + 4×4 矩阵
 ├── CV Presets      标定文件 [Import] / [Export]、Load Preset、Reset Defaults（默认折叠）
 ├── CV Preview      预览尺寸/采样/去噪/自动预览、Save Preview、Self Test（默认折叠）
 ├── CV Output       输出尺寸（标定/自定义/跟随场景）、驱动场景分辨率、Set/From Scene
