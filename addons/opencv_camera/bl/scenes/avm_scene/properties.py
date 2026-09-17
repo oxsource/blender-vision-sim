@@ -150,6 +150,14 @@ class AVMSceneSettings(bpy.types.PropertyGroup):
     #: rebuild counter, handy in tests / the status line
     revision: IntProperty(name="Revision", default=0, options={"HIDDEN"})
 
+    # -- parameter import / export -----------------------------------------
+    io_text: StringProperty(
+        name="Parameters",
+        description="Full (avm_scene) or compact (plane_scene) parameter JSON",
+        default="",
+    )
+    io_status: StringProperty(name="Status", default="", options={"HIDDEN"})
+
     # -- helpers ------------------------------------------------------------
     def field_spec(self):
         """The layout as a pure-Python :class:`core.scenes.avm_layout.FieldSpec`."""

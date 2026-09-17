@@ -537,11 +537,12 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 
 ### 8.2 两个入口
 
-1. **面板内文本框**（对齐 HTML 的 `ioText` textarea）：`[生成 JSON]` `[复制]` `[应用]`，
-   适合快速复制/粘贴与调试，不落盘。
+1. **面板内文本框**（对齐 HTML 的 `ioText`）：`[生成 JSON]` `[应用 JSON]`，适合快速复制/粘贴与调试，不落盘。
+   Blender 面板没有多行文本控件（`StringProperty` 只能画单行），所以完整参数主要走文件对话框；
+   文本框更适合精简格式与快速查看。
 2. **文件对话框**（`ImportHelper` / `ExportHelper`，与 `CV Presets` 的 Import / Export 风格一致）：
-   - 导出算子带 `format` 枚举 {完整 `avm_scene` / 精简 `plane_scene`}，扩展名 `.json` / `.yaml`；
-   - 导入算子按 `format` 自动识别完整/精简，支持 `.json` / `.yaml` / `.yml`。
+   - 导出算子带 `format` 枚举 {完整 `avm_scene` / 精简 `plane_scene`}，**写 JSON**（精确往返）；
+   - 导入算子自动识别完整/精简，支持 `.json` / `.yaml` / `.yml`（YAML 走内置的无依赖子集解析器）。
 
 ### 8.3 语义
 
@@ -623,7 +624,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | **P1b ✅** | **场景框架收编**（§17）：`bl/scenes/{base,debounce}.py` + 注册表 + `menus.py` 改遍历；**迁移 `scene_builder.py` → `bl/scenes/camera_scene.py`**（含兼容转发） | ✅ 注册表列出 `Camera Scene`；菜单遍历注册表；`test_scene_registry` 覆盖注册表/shim/debounce；旧测试全绿 |
 | **P2 ✅** | `avm_scene/{properties,controller,builder,operators}.py` + 图标：一键建静态场景 | ✅ `Add ▸ VisionSim ▸ AVM Scene` 出 10 个对象（地面/车/4 块/4 相机 + `AVM_Root`）；相机是已编译的 `opencv_fisheye.osl`，K/D/位姿取自预设；改参数 + `[重建]` 幂等更新；`test_avm_scene_builder` 覆盖 |
 | **P3 ✅** | 控制器面板：Scene 面板 + 3D 视口 N 面板（`root` 存在才显示） | ✅ 两个面板均已注册且 `poll` 随建/删切换；N 面板**只放布局**（尺寸/位姿/图层），内参留在 `CV Intrinsics`；`[选中该相机]` 引导到内参面板；`test_avm_panels` 覆盖 |
-| P4 | 预设 / 图层 / **参数导入导出（完整 + 精简、文件 + 文本框）** / **导出 4 路渲染图** | 与 HTML JSON 互认；导出→导入往返稳定；PNG 落盘 |
+| **P4 ✅** | 预设 / 图层 / **参数导入导出（完整 + 精简、文件 + 文本框）** / **导出 4 路渲染图** | ✅ `io.py` 完整+精简格式、JSON 精确往返、校验失败**不半套用**；`avm_apply_preset` 5 个预设；`avm_render_cameras` 按各相机输出尺寸落盘 4 张 PNG；`test_avm_io` 覆盖 |
 | P5 | **覆盖评估与素材导出**（§16）：覆盖曲线 + 可见性矩阵 + `avm_export_materials` | 改尺寸后覆盖/盲区实时更新；一键产出图 + 参数 + 报告 |
 | P6 | 文档（含 `docs/architecture.md` 目录树）、README、roadmap、版本号 | `scripts/run_tests.sh` 全绿 |
 | P7（后续，可选） | 真实 GLB 车模、BEV 拼图、外部标定回环对接、**DMS Scene**（走 §17 的框架） | — |

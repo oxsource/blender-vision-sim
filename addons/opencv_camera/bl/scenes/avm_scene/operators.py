@@ -6,12 +6,15 @@ own modules (``io.py`` / ``coverage.py``) so this file stays a thin action layer
 
 from __future__ import annotations
 
+import os
+
 import bpy
-from bpy.props import BoolProperty, EnumProperty
+from bpy.props import BoolProperty, EnumProperty, StringProperty
+from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from ....core.scenes import avm_layout
 from ..base import has_scene
-from . import DEFINITION, builder, controller, properties
+from . import DEFINITION, builder, controller, io as io_mod, properties
 
 
 def _scene(context):
@@ -151,12 +154,161 @@ class OPENCV_CAM_OT_avm_select_camera(_AVMSceneOperator, bpy.types.Operator):
         return {"FINISHED"}
 
 
+class OPENCV_CAM_OT_avm_apply_preset(_AVMSceneOperator, bpy.types.Operator):
+    """Apply one of the quick field presets (sizes only, like the HTML tool)"""
+
+    bl_idname = "opencv_cam.avm_apply_preset"
+    bl_label = "Quick Preset"
+    bl_options = {"REGISTER", "UNDO"}
+
+    preset: EnumProperty(
+        name="Preset",
+        items=[(key, value[0], "") for key, value in avm_layout.PRESETS.items()],
+        default="default",
+    )
+
+    def execute(self, context):
+        settings = _settings(context)
+        _, field = avm_layout.PRESETS[self.preset]
+        controller.set_field(settings, field)
+        controller.rebuild_now(context)
+        self.report({"INFO"}, f"preset applied: {avm_layout.PRESETS[self.preset][0]}")
+        return {"FINISHED"}
+
+
+class OPENCV_CAM_OT_avm_export_json(_AVMSceneOperator, bpy.types.Operator):
+    """Write the current parameters into the panel's text box (full format)"""
+
+    bl_idname = "opencv_cam.avm_export_json"
+    bl_label = "Generate JSON"
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        settings = _settings(context)
+        settings.io_text = io_mod.dumps(io_mod.to_full(settings))
+        settings.io_status = "generated the full avm_scene JSON"
+        return {"FINISHED"}
+
+
+class OPENCV_CAM_OT_avm_apply_json(_AVMSceneOperator, bpy.types.Operator):
+    """Apply the parameters from the panel's text box"""
+
+    bl_idname = "opencv_cam.avm_apply_json"
+    bl_label = "Apply JSON"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        settings = _settings(context)
+        try:
+            data = io_mod.loads(settings.io_text)
+            fmt = io_mod.apply(settings, data)
+        except Exception as exc:
+            settings.io_status = f"error: {exc}"
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        controller.rebuild_now(context)
+        settings.io_status = f"applied the {fmt} parameters"
+        self.report({"INFO"}, settings.io_status)
+        return {"FINISHED"}
+
+
+class OPENCV_CAM_OT_avm_export_params(_AVMSceneOperator, bpy.types.Operator, ExportHelper):
+    """Export the parameters to a JSON file (full or compact)"""
+
+    bl_idname = "opencv_cam.avm_export_params"
+    bl_label = "Export Parameters"
+    bl_options = {"REGISTER"}
+
+    filename_ext = ".json"
+    filter_glob: StringProperty(default="*.json", options={"HIDDEN"})
+    format: EnumProperty(
+        name="Format",
+        items=[("full", "Full (avm_scene)", "Field, car, ground and the four cameras"),
+               ("plane", "Compact (plane_scene)", "The four HTML/App Store keys only")],
+        default="full",
+    )
+
+    def execute(self, context):
+        settings = _settings(context)
+        data = (io_mod.to_full(settings) if self.format == "full"
+                else io_mod.to_plane(settings))
+        try:
+            path = io_mod.write(self.filepath, data)
+        except Exception as exc:
+            self.report({"ERROR"}, f"{type(exc).__name__}: {exc}")
+            return {"CANCELLED"}
+        settings.io_status = f"exported {self.format} parameters"
+        self.report({"INFO"}, f"written {path}")
+        return {"FINISHED"}
+
+
+class OPENCV_CAM_OT_avm_import_params(_AVMSceneOperator, bpy.types.Operator, ImportHelper):
+    """Import parameters from a JSON/YAML file and rebuild"""
+
+    bl_idname = "opencv_cam.avm_import_params"
+    bl_label = "Import Parameters"
+    bl_options = {"REGISTER", "UNDO"}
+
+    filename_ext = ".json"
+    filter_glob: StringProperty(default="*.json;*.yaml;*.yml", options={"HIDDEN"})
+
+    def execute(self, context):
+        settings = _settings(context)
+        try:
+            data = io_mod.read(self.filepath)
+            fmt = io_mod.apply(settings, data)
+        except Exception as exc:
+            settings.io_status = f"error: {exc}"
+            self.report({"ERROR"}, f"{type(exc).__name__}: {exc}")
+            return {"CANCELLED"}
+        controller.rebuild_now(context)
+        settings.io_status = f"imported {fmt} parameters"
+        self.report({"INFO"}, settings.io_status)
+        return {"FINISHED"}
+
+
+class OPENCV_CAM_OT_avm_render_cameras(_AVMSceneOperator, bpy.types.Operator, ExportHelper):
+    """Render every enabled camera to a PNG in the chosen folder"""
+
+    bl_idname = "opencv_cam.avm_render_cameras"
+    bl_label = "Export 4 Camera Views"
+    bl_options = {"REGISTER"}
+
+    filename_ext = ".png"
+    filter_glob: StringProperty(default="*.png", options={"HIDDEN"})
+    samples: bpy.props.IntProperty(name="Samples", default=64, min=1, max=4096)
+
+    def invoke(self, context, event):
+        if not self.filepath:
+            self.filepath = "avm.png"
+        return super().invoke(context, event)
+
+    def execute(self, context):
+        settings = _settings(context)
+        directory = os.path.dirname(os.path.abspath(self.filepath))
+        try:
+            written = io_mod.render_cameras(context, settings, directory,
+                                            samples=self.samples)
+        except Exception as exc:
+            self.report({"ERROR"}, f"{type(exc).__name__}: {exc}")
+            return {"CANCELLED"}
+        settings.io_status = f"rendered {len(written)} cameras"
+        self.report({"INFO"}, f"{len(written)} images written to {directory}")
+        return {"FINISHED"}
+
+
 _CLASSES = (
     OPENCV_CAM_OT_avm_add_scene,
     OPENCV_CAM_OT_avm_rebuild,
     OPENCV_CAM_OT_avm_reset_defaults,
     OPENCV_CAM_OT_avm_remove_scene,
     OPENCV_CAM_OT_avm_select_camera,
+    OPENCV_CAM_OT_avm_apply_preset,
+    OPENCV_CAM_OT_avm_export_json,
+    OPENCV_CAM_OT_avm_apply_json,
+    OPENCV_CAM_OT_avm_export_params,
+    OPENCV_CAM_OT_avm_import_params,
+    OPENCV_CAM_OT_avm_render_cameras,
 )
 
 

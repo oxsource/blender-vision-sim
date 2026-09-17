@@ -94,7 +94,24 @@ def _actions(layout, context) -> None:
     row = layout.row(align=True)
     row.operator("opencv_cam.avm_rebuild", icon="FILE_REFRESH")
     row.operator("opencv_cam.avm_reset_defaults", icon="LOOP_BACK")
+    layout.operator_menu_enum("opencv_cam.avm_apply_preset", "preset",
+                              text="Quick Preset", icon="PRESET")
     layout.operator("opencv_cam.avm_remove_scene", icon="TRASH")
+
+
+def _io_section(layout, settings) -> None:
+    box = layout.box()
+    box.label(text="Export / Import", icon="FILE_TEXT")
+    box.prop(settings, "io_text", text="")
+    row = box.row(align=True)
+    row.operator("opencv_cam.avm_export_json", icon="EXPORT")
+    row.operator("opencv_cam.avm_apply_json", icon="IMPORT")
+    row = box.row(align=True)
+    row.operator("opencv_cam.avm_export_params", icon="FILE_TICK")
+    row.operator("opencv_cam.avm_import_params", icon="FILEBROWSER")
+    box.operator("opencv_cam.avm_render_cameras", icon="RENDER_STILL")
+    if settings.io_status:
+        box.label(text=settings.io_status)
 
 
 class _AVMPanel(ScenePanel):
@@ -119,6 +136,7 @@ class OPENCV_CAM_PT_avm_scene(_AVMPanel, bpy.types.Panel):
         layout = self.layout
         self.draw_layout(layout, context)
         _actions(layout, context)
+        _io_section(layout, context.scene.avm_scene)
 
 
 class OPENCV_CAM_PT_avm_scene_view3d(_AVMPanel, bpy.types.Panel):

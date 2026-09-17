@@ -55,9 +55,8 @@ def apply_active_camera(context=None) -> None:
     builder._apply_active_resolution(scene, settings)
 
 
-def load_preset_into(settings, preset) -> None:
-    """Copy a preset's field and camera records into the scene settings."""
-    field = avm_layout.field_from_preset(preset)
+def set_field(settings, field) -> None:
+    """Copy a :class:`FieldSpec` into the scene settings."""
     settings.border_w = field.border_w
     settings.border_h = field.border_h
     settings.corner = field.corner
@@ -65,6 +64,11 @@ def load_preset_into(settings, preset) -> None:
     settings.inner_h = field.inner_h
     settings.core_w = field.core_w
     settings.core_h = field.core_h
+
+
+def load_preset_into(settings, preset) -> None:
+    """Copy a preset's field and camera records into the scene settings."""
+    set_field(settings, avm_layout.field_from_preset(preset))
     settings.car_follow_core = True
 
     settings.cameras.clear()

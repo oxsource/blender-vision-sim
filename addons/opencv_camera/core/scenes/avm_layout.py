@@ -37,7 +37,7 @@ __all__ = [
     "CM_TO_M",
     "FRONT", "BACK", "LEFT", "RIGHT", "CAMERAS",
     "BLOCK_FRONT_LEFT", "BLOCK_FRONT_RIGHT", "BLOCK_BACK_LEFT", "BLOCK_BACK_RIGHT",
-    "BLOCKS",
+    "BLOCKS", "PRESETS",
     "FieldSpec", "FieldGeometry",
     "geometry", "block_rects", "scene_size", "points", "point_names",
     "load_preset", "preset_path", "field_from_preset", "cameras_from_preset",
@@ -307,3 +307,24 @@ def _size_text(width: float, height: float) -> str:
 def _num(value: float) -> str:
     rounded = int(round(value))
     return str(rounded) if abs(value - rounded) < 1e-9 else f"{value:g}"
+
+
+#: quick presets of the HTML tool (field sizes only, in cm); the "minibus" entry
+#: mirrors the bundled preset
+PRESETS = {
+    "default": ("Default (cross car)", FieldSpec(
+        border_w=10.0, border_h=10.0, corner=50.0,
+        inner_w=0.0, inner_h=0.0, core_w=262.0, core_h=474.0)),
+    "no_border": ("No outer border", FieldSpec(
+        border_w=0.0, border_h=0.0, corner=50.0,
+        inner_w=0.0, inner_h=0.0, core_w=262.0, core_h=474.0)),
+    "large_corner": ("Large corner + gap", FieldSpec(
+        border_w=10.0, border_h=10.0, corner=100.0,
+        inner_w=20.0, inner_h=20.0, core_w=262.0, core_h=474.0)),
+    "suv": ("SUV wide body", FieldSpec(
+        border_w=20.0, border_h=20.0, corner=60.0,
+        inner_w=10.0, inner_h=10.0, core_w=300.0, core_h=520.0)),
+    "minibus": ("Minibus (bundled)", FieldSpec(
+        border_w=0.0, border_h=0.0, corner=100.0,
+        inner_w=20.0, inner_h=80.0, core_w=240.0, core_h=480.0)),
+}

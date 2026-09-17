@@ -950,6 +950,97 @@ def test_avm_panels():
           bpy.types.OPENCV_CAM_PT_avm_scene_view3d.poll(bpy.context) is False)
 
 
+def test_avm_io():
+    """Parameter import/export, presets and the four-camera render export."""
+    from opencv_camera.bl.scenes.avm_scene import io as io_mod
+
+    scene = setup_scene(resolution=64, samples=1)
+    clear_scene()
+    scene = setup_scene(resolution=64, samples=1)
+    check("add AVM scene", bpy.ops.opencv_cam.avm_add_scene() == {"FINISHED"})
+    settings = scene.avm_scene
+
+    full = io_mod.to_full(settings)
+    check("full format shape",
+          full["format"] == "avm_scene" and full["border"] == "0x0"
+          and full["corner"] == 100 and full["car"] == "240x480",
+          str({k: full[k] for k in ("format", "border", "corner", "car")}))
+    check("avm block in metres",
+          full["avm"]["units"] == "m" and full["avm"]["ground"] == "30x30")
+    check("cameras exported",
+          len(full["avm"]["cameras"]) == 4
+          and len(full["avm"]["cameras"][0]["K"]) == 4
+          and len(full["avm"]["cameras"][0]["D"]) == 4)
+
+    compact = io_mod.to_plane(settings)
+    check("compact format shape",
+          compact["format"] == "plane_scene"
+          and {"border", "corner", "inner", "car"} <= set(compact))
+
+    settings.io_text = io_mod.dumps(full)
+    check("apply JSON operator", bpy.ops.opencv_cam.avm_apply_json() == {"FINISHED"})
+    check("full round trip is stable", io_mod.to_full(settings) == full)
+
+    settings.core_w = 999.0
+    bpy.ops.opencv_cam.avm_rebuild()
+    settings.io_text = io_mod.dumps(full)
+    bpy.ops.opencv_cam.avm_apply_json()
+    check("import restored the field", approx(settings.core_w, 240.0, 1e-6))
+
+    settings.io_text = io_mod.dumps({"border": "10x10", "corner": 50,
+                                     "inner": "0x0", "car": "262x474"})
+    check("apply compact JSON", bpy.ops.opencv_cam.avm_apply_json() == {"FINISHED"})
+    check("compact changed the field",
+          approx(settings.corner, 50.0, 1e-6) and approx(settings.core_w, 262.0, 1e-6))
+    check("compact left the car alone", approx(settings.car_height, 1.6, 1e-6))
+
+    before = io_mod.to_full(settings)
+    settings.io_text = '{"car": "not-a-size"}'
+    rejected = False
+    try:  # an ERROR report surfaces as a RuntimeError from bpy.ops
+        rejected = bpy.ops.opencv_cam.avm_apply_json() == {"CANCELLED"}
+    except RuntimeError:
+        rejected = True
+    check("malformed input is rejected", rejected)
+    check("malformed input changes nothing", io_mod.to_full(settings) == before)
+
+    check("apply quick preset",
+          bpy.ops.opencv_cam.avm_apply_preset(preset="suv") == {"FINISHED"})
+    check("preset applied",
+          approx(settings.core_w, 300.0, 1e-6) and approx(settings.corner, 60.0, 1e-6))
+
+    tmp = tempfile.mkdtemp(prefix="avm_io_")
+    path = os.path.join(tmp, "params.json")
+    check("export to file",
+          bpy.ops.opencv_cam.avm_export_params(filepath=path) == {"FINISHED"}
+          and os.path.exists(path))
+    settings.core_w = 111.0
+    bpy.ops.opencv_cam.avm_rebuild()
+    check("import from file",
+          bpy.ops.opencv_cam.avm_import_params(filepath=path) == {"FINISHED"})
+    check("file import restored the field", approx(settings.core_w, 300.0, 1e-6))
+
+    # the four-camera export at a small size, so the test stays quick
+    for name in ("front", "back", "left", "right"):
+        cam_settings = bpy.data.objects[f"AVM_Cam_{name.capitalize()}"].data.opencv_cam
+        cam_settings.output.mode = "custom"
+        cam_settings.output.width, cam_settings.output.height = 64, 48
+    out = os.path.join(tmp, "views")
+    before_render = (scene.render.resolution_x, scene.render.resolution_y,
+                     scene.render.image_settings.file_format)
+    check("render the four cameras",
+          bpy.ops.opencv_cam.avm_render_cameras(
+              filepath=os.path.join(out, "avm.png"), samples=1) == {"FINISHED"})
+    check("four PNGs written",
+          all(os.path.exists(os.path.join(out, f"{name}.png"))
+              for name in ("front", "back", "left", "right")),
+          str(sorted(os.listdir(out)) if os.path.isdir(out) else out))
+    check("render settings restored",
+          (scene.render.resolution_x, scene.render.resolution_y,
+           scene.render.image_settings.file_format) == before_render,
+          f"{scene.render.resolution_x}x{scene.render.resolution_y}")
+
+
 def test_add_camera_default_preset():
     """The Add menu path (no preset argument) must use the add-on defaults.
 
@@ -1222,6 +1313,7 @@ def main():
         test_scene_registry,
         test_avm_scene_builder,
         test_avm_panels,
+        test_avm_io,
         test_presets,
         test_shader_text_upgrade_recompiles,
         test_live_apply,
