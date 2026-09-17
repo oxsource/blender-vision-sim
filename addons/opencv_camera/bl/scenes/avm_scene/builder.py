@@ -95,30 +95,6 @@ def _principled(name: str, color, roughness: float = 0.7) -> bpy.types.Material:
     return material
 
 
-def _grid_material(name: str, base, line, square: float = 1.0) -> bpy.types.Material:
-    """Ground material: a faint checker so 1 m squares read at a glance."""
-    material = bpy.data.materials.get(name)
-    if material is None:
-        material = bpy.data.materials.new(name)
-    material.use_nodes = True
-    material.diffuse_color = base  # viewport solid shading
-    nodes = material.node_tree.nodes
-    for node in list(nodes):
-        nodes.remove(node)
-    output = nodes.new("ShaderNodeOutputMaterial")
-    principled = nodes.new("ShaderNodeBsdfPrincipled")
-    checker = nodes.new("ShaderNodeTexChecker")
-    coords = nodes.new("ShaderNodeTexCoord")
-    checker.inputs["Scale"].default_value = 1.0 / max(1e-3, square)
-    checker.inputs["Color1"].default_value = base
-    checker.inputs["Color2"].default_value = line
-    principled.inputs["Roughness"].default_value = 0.85
-    material.node_tree.links.new(coords.outputs["Object"], checker.inputs["Vector"])
-    material.node_tree.links.new(checker.outputs["Color"], principled.inputs["Base Color"])
-    material.node_tree.links.new(principled.outputs["BSDF"], output.inputs["Surface"])
-    return material
-
-
 def _assign(obj: bpy.types.Object, material: bpy.types.Material) -> None:
     obj.data.materials.clear()
     obj.data.materials.append(material)
@@ -248,8 +224,9 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
 
     field = settings.field_spec()
     geo = avm_layout.geometry(field)
-    ground_material = _grid_material("AVM_Ground_Mat", (0.20, 0.21, 0.22, 1.0),
-                                     (0.26, 0.27, 0.28, 1.0), square=1.0)
+    # the ground is a plain light grey: any printed grid would be picked up by
+    # the black-region corner detector, and black blocks need contrast
+    ground_material = _principled("AVM_Ground_Mat", (0.62, 0.62, 0.60, 1.0), 0.9)
     car_material = _principled("AVM_Car_Mat", (0.78, 0.79, 0.80, 1.0), 0.5)
     block_material = _principled("AVM_Block_Mat", (0.02, 0.02, 0.02, 1.0), 0.9)
 
