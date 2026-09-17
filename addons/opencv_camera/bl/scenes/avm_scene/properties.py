@@ -126,6 +126,11 @@ class AVMSceneSettings(bpy.types.PropertyGroup):
                               unit="LENGTH", precision=4,
                               description="Blocks hover this far above the ground (z-fighting)",
                               update=_schedule)
+    sun_shadow: BoolProperty(
+        name="Sun Shadow", default=False,
+        description="Let the sun cast shadows. Off by default: cast shadows are dark "
+        "ground patches that a black-region corner detector can mistake for blocks",
+        update=_schedule)
 
     # -- layers -------------------------------------------------------------
     show_ground: BoolProperty(name="Ground", default=True, update=_schedule)

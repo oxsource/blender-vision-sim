@@ -56,10 +56,11 @@ def _car(layout, settings) -> None:
 def _ground_and_blocks(layout, settings) -> None:
     column = layout.column(align=True)
     column.use_property_split = True
-    column.label(text="Ground / Blocks")
+    column.label(text="Ground / Blocks / Sun")
     column.prop(settings, "ground_w")
     column.prop(settings, "ground_d")
     column.prop(settings, "block_lift")
+    column.prop(settings, "sun_shadow")
 
 
 def _cameras(layout, settings) -> None:

@@ -192,6 +192,7 @@ hy     = cOutY  + borderH/100 # 场地半长
 | | `car_clearance` | 0.00 m | 0–0.5 | — |
 | 地面 | `ground_w` / `ground_d` | 30 / 30 m | 2–200 | — |
 | 标定块 | `block_lift` | 0.001 m | 0–0.05 | —（离地抬升） |
+| | `sun_shadow` | **关** | on/off | —（太阳是否投影，默认关，避免阴影被当成黑块） |
 | 显示 | `show_ground/car/blocks/cameras/coverage` | 全 on | | 图层开关 |
 | 只读 | `scene_w` / `scene_h` / `block_area` | 派生 | | 顶部 chip / stats |
 
@@ -477,7 +478,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | 地面 | 大 plane（1 面） | **纯色浅灰**（无网格/贴图：任何印刷网格都会干扰黑块检测，且浅灰与黑块对比度高） |
 | 车模 | cube | 浅灰车身 |
 | 标定块 ×4 | **几何面片**（独立四边形，抬高 `block_lift`） | 纯黑（对照 `--cloth-ink`） |
-| 太阳 `AVM_Sun` | — | 随场景创建的 SUN 灯，`F12` 开箱可见（随场景一起删除） |
+| 太阳 `AVM_Sun` | — | 随场景创建的 SUN 灯，**默认不投影阴影**（`sun_shadow` 开关）：投影会被黑色区域检测器误判为标定块 |
 
 标定块按决策 D 用**真实四边形面片**（非程序化贴图）：位置/尺寸精确、可导出 GLB/FBX、便于后续检测。
 每个块是独立对象 `AVM_Block_FL/FR/RL/RR`（**独立对象**，便于单独选中/替换/导出），
