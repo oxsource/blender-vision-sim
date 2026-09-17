@@ -14,7 +14,7 @@
 | C | 3D 视口 | **提供 N 面板侧栏** |
 | D | 黑块实现 | **几何面片**（真实四边形 + 独立材质，非程序化贴图） |
 | E | 车模 | **立方体**，长宽 = `core`（可独立覆盖） |
-| F | 相机内外参 | **用 `points_3d` 推场地尺寸 + PnP 解外参**，内外参取自 minibus 配置 |
+| F | 相机内外参 | 从 minibus 配置导入 `K`/`D`，并用 `points_3d` + PnP **反算一套默认的相机位置/姿态**（只用于默认值，§6.6） |
 | G | 相机参数 | **每台独立** |
 | H | `core` / 车长来源 | **面板滑杆设置**（不从 GLB 反推） |
 
@@ -173,15 +173,20 @@ hy     = cOutY  + borderH/100 # 场地半长
 ### 4.2 相机（每台独立，G）
 
 每台相机的**内参/畸变**保存在各自的 `camera.data.opencv_cam`（沿用现有唯一真源，可在 `CV Intrinsics` 面板独立编辑）；
-AVM PropertyGroup 只保存**安装位姿**与调度信息，用 `CollectionProperty` 存 4 条固定记录：
+AVM PropertyGroup 保存**安装位置与姿态**（Blender 原生表达）与调度信息，用 `CollectionProperty` 存 4 条固定记录：
 
 | 字段 | 说明 |
 | --- | --- |
 | `name` | front / back / left / right |
 | `enable` | 是否参与渲染 |
-| `rotation` (9) / `translation` (3) | OpenCV world→camera，PnP 解出（与 `PoseSettings` 同语义） |
-| `euler` (3) | 由 R 派生，便于手调 |
-| `use_solved` | 用 PnP 解 vs 手动调整 |
+| `location` (3) | 相机在车辆系（= Blender 世界系）中的安装位置 [m] |
+| `rotation` (3) | 安装姿态，XYZ 欧拉角 [度]（Blender 原生，UI 可直接拖） |
+| `use_solved` | 位姿来自「PnP 默认值」还是「用户手动调整」（§6.6） |
+
+> **参数只存位置 + 姿态，不存 OpenCV 的 R / t**。R/t 只是 `opencv_cam.pose` 内部用于
+> 「射线 ↔ 像素」换算的中间量，由既有插件的 `euler ↔ R/t` 同步机制自动维护（§5.1），
+> 不进入本场景的参数模型、也不进导入导出文件（§8）。
+> PnP 反算（§6）只是**生成一套默认的 `location` / `rotation`**，不是运行时依赖。
 
 另有一个 `active_camera` 枚举（默认 front）：指定**哪台驱动渲染分辨率**（因为四台的 `output` 会互相争抢
 `scene.render.resolution_*`），其余相机只应用自身内参。
@@ -204,7 +209,7 @@ avm_builder.rebuild(scene, settings)        ← 幂等：只改 mesh/transform�
         ├── 地面：改 plane 尺寸
         ├── 车模：改 cube 尺寸与高度
         ├── 标定块 ×4：重算 mesh（单个四边形面片）
-        └── 相机 ×4：写 matrix_world，并回填 pose（R/t/euler）
+        └── 相机 ×4：按 `location` / `rotation` 写物体变换（R/t 由插件自动同步）
 ```
 
 - **去抖**复用 `bl/preview.py` 已验证的 `bpy.app.timers` 模式（`schedule_preview` / `_preview_timer`），
@@ -212,8 +217,12 @@ avm_builder.rebuild(scene, settings)        ← 幂等：只改 mesh/transform�
 - **幂等重建**：对象只创建一次（`AVM_Ground` / `AVM_Car` / `AVM_Block_FL…` / `AVM_Cam_Front…`），
   改参数只改尺寸与变换；只有标定块因 `corner` 变化而重算 mesh（4 个小 mesh，开销可忽略）。
   不破坏用户的选中状态、材质与父子关系。
-- **单一真源**：相机位姿只由 `avm_scene.cameras[i]` 推导；写完 `matrix_world` 后用
-  `bl/apply.read_opencv_pose()` 回填 `opencv_cam.pose`，并套用既有 `_SYNCING` 重入守卫，避免 update 回调成环。
+- **单一真源**：相机位姿只由 `avm_scene.cameras[i].location / .rotation` 推导；
+  写完 `camera.location` / `camera.rotation_euler` 后，R/t 由既有插件的
+  `_update_euler` 回调自动同步进 `opencv_cam.pose`（无需本模块自己维护 R/t），
+  并套用既有 `_SYNCING` 重入守卫，避免 update 回调成环。
+- **用户手拖相机**（在 3D 视口里移动/旋转）时反向回填 `location` / `rotation`，
+  并把该相机的 `use_solved` 置为关（§6.6）。
 
 ### 5.2 面板
 
@@ -294,7 +303,7 @@ N ▸ VisionSim ▸ AVM Scene            （仅在 AVM Scene 存在时出现）
 
 ---
 
-## 6. 相机内外参：从 filament_avm minibus 配置求解（F）
+## 6. 相机参数：从 filament_avm minibus 配置反算默认值（F）
 
 ### 6.1 复刻的求解流水线（已逐行对照 C++ 源码）
 
@@ -318,9 +327,9 @@ N ▸ VisionSim ▸ AVM Scene            （仅在 AVM Scene 存在时出现）
      R = Rodrigues(rvec),  t = tvec
      —— 与 camera_pose.cc:117 一致
 
-输出：
-     相机「渲染」内参 = 原始 K（未经 cy 精化），畸变 D
-     相机「外参」     = 用 K' 解出的 (R, t)
+输出（**只用于生成默认参数**，见 §6.6）：
+     相机内参 = 原始 K（未经 cy 精化）+ 畸变 D
+     相机位姿 = 由 (R, t) 转成 Blender 的 location + rotation（XYZ 欧拉）
      坐标系：world = Blender 车辆系（X 右, Y 前, Z 上），
              camera = OpenCV 相机系（X 右, Y 下, Z 前）
 ```
@@ -329,7 +338,7 @@ N ▸ VisionSim ▸ AVM Scene            （仅在 AVM Scene 存在时出现）
 > *"must be original K values before any optimization"*），随后才把 K 以**引用**传给 `SolvePnP`，
 > 由 `ba_optimization.cc` 就地修改 `K[1,2] += cy`。因此：
 > - **Blender 相机内参 = 原始 K**（minibus 四台 `cy=477.820` 相同）；
-> - `ba_opt` 的 `cy` 偏移（left +45.71 / right +44.78）**只用于 PnP 求外参**，绝不能写进相机内参。
+> - `ba_opt` 的 `cy` 偏移（left +45.71 / right +44.78）**只用于 PnP 求位姿**，绝不能写进相机内参。
 
 
 ### 6.2 校验：与 C++ 源码中记录的相机中心逐位吻合
@@ -360,7 +369,7 @@ N ▸ VisionSim ▸ AVM Scene            （仅在 AVM Scene 存在时出现）
 
 > **不可分离性（重要）**：`points_3d` 只依赖 `core/2 + inner`（即 `cInX` / `cInY`）与 `corner`，
 > **`core` 与 `inner` 的拆分对 `points_3d` 没有任何影响**。也就是说：
-> - **标定相关几何**（标定块位置、PnP 外参）只由 `(core/2+inner, corner)` 决定；
+> - **标定相关几何**（标定块位置、PnP 默认位姿）只由 `(core/2+inner, corner)` 决定；
 > - `core` 与 `inner` 如何拆分，只影响**车模尺寸**（与 `border` 一起决定场地范围），纯视觉；
 > - 因此 `core` 必须由外部给定（车体尺寸），而不是从 `points_3d` 反推。
 
@@ -392,8 +401,23 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 这是**源数据本身的残差**（2D 点为实拍检测值，8 点共面无法同时约束 6 自由度外参 + cy），
 `filament_avm` 生产路径同样如此。结论：
 - 相机**位置/朝向**与 filament_avm 一致（§6.2 已验证），可用于渲染与算法回归；
-- 黑块在图像中的落点会有**数十像素**偏差，不能直接当作角点真值；
-- 若将来需要像素级回环，需引入多视图/多位置 bundle adjustment（列为 P6，不在本期）。
+- 标定块在图像中的落点会有**数十像素**偏差，不能直接当作角点真值；
+- 若将来需要像素级回环，需引入多视图/多位置 bundle adjustment（列为 P7，不在本期）。
+
+### 6.6 PnP 的定位：只用来生成默认参数
+
+**反算只发生一次、且只为了给出一套可用的默认值**，之后场景里相机就是普通的
+「位置 + 姿态」：
+
+| 时机 | 行为 |
+| --- | --- |
+| `Add ▸ VisionSim ▸ AVM Scene` | 读内置的 minibus 默认参数（已含 PnP 解出的 `location`/`rotation`），**不现场 PnP** |
+| `[从 filament 配置导入…]` | 现场跑 §6.1 流水线 → 得到 `location` / `rotation` / `K` / `D` 作为默认值 |
+| 之后用户拖动相机 / 改角度 | 直接改 `location` / `rotation`，`use_solved` 置关，**不再回算 PnP** |
+| 用户改内参且 `use_solved` 开（决议 #10） | 用当前场地重新 PnP，刷新该相机的默认位姿 |
+| 导入/导出参数文件（§8） | 只有 `location` / `rotation` / `K` / `D`，**没有 R / t** |
+
+> 也就是说：R/t 是求解过程的中间量，`location` + `rotation` 才是场景的参数真源。
 
 ---
 
@@ -421,7 +445,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 
 | 格式 | `"format"` | 内容 | 用途 |
 | --- | --- | --- | --- |
-| 完整格式 | `"avm_scene"` | 场地/车辆/地面/标定块 + 4 台相机 K/D/R/t + active_camera | Blender 端保存 / 恢复 / 回归 / CI |
+| 完整格式 | `"avm_scene"` | 场地/车辆/地面/标定块 + 4 台相机的 `location`/`rotation`/`K`/`D` + active_camera | Blender 端保存 / 恢复 / 回归 / CI |
 | 精简格式 | `"plane_scene"` | 仅 `border` / `corner` / `inner` / `car` | 与 HTML `plane_scene_calib.html` 双向互通 |
 
 完整格式把精简键**原样保留在顶层**，HTML 侧 `fromStore()` 直接可读；AVM 额外参数放 `avm` 段：
@@ -442,11 +466,11 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
     "block_lift": 0.001,
     "active_camera": "front",
     "cameras": [
-      { "name": "front", "enable": true,
+      { "name": "front", "enable": true, "use_solved": true,
+        "location": [-0.031, 2.467, 2.691],
+        "rotation": [20.4, -1.1, 1.7],
         "K": [317.77563818112867, 318.0250964604786, 636.2327868307656, 477.8201435641188],
-        "D": [0.08476733270570755, 0.043184113434448945, -0.037989564107367736, 0.009428162434166068],
-        "R": [1, 0, 0, 0, 1, 0, 0, 0, 1],
-        "t": [0, 0, 0] }
+        "D": [0.08476733270570755, 0.043184113434448945, -0.037989564107367736, 0.009428162434166068] }
     ]
   },
   "meta": { "source": "vehicle_avm_minibus.json",
@@ -454,8 +478,9 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 }
 ```
 
+- **相机只有 `location` + `rotation`（XYZ 欧拉，度），没有 R / t**（§4.2、§6.6）；
 - 单位：顶层 HTML 键一律 **cm**（与 HTML 一致）；`avm` 段一律 **m**（与 Blender 内部一致），
-  由 `units` 显式声明，导入时按声明换算；
+  由 `units` 显式声明，导入时按声明换算；`rotation` 单位固定为**度**；
 - `version` 用于向后兼容（未来字段增删按版本迁移）；
 - `meta` **只写不读**，便于追溯求解来源；
 - 精简格式可省略 `format`（缺省按 `plane_scene` 处理）。
@@ -475,8 +500,8 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
   成功后回填全部面板控件并触发一次重建；
 - **解析容错**：沿用 HTML 的 `sizeFrom()`（`"wxh"` / 数字 / `[w,h]` / `{width,height}`）；
 - **往返稳定**：`导出 → 导入 → 再导出` 结果逐字节稳定（单测覆盖）；
-- **相机**：完整格式的 `K/D` 写入各相机 `opencv_cam`，`R/t` 写入 `avm_scene.cameras[i]`，
-  并同步 `matrix_world` 与 `pose`（§5.1）；
+- **相机**：完整格式的 `K/D` 写入各相机 `opencv_cam`，`location` / `rotation` 写入
+  `avm_scene.cameras[i]` 并驱动物体变换（R/t 由插件自动同步，不进文件，§5.1）；
 - **默认值**：一键建场景时默认套用 minibus 的完整参数（即内置一份默认 `avm_scene` 参数）。
 
 ### 8.4 算子
@@ -503,7 +528,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | 文件 | 状态 | 职责 |
 | --- | --- | --- |
 | `core/avm_layout.py` | 新增 | 纯 Python 场地方程、**`points(camera)` 生成契约（§15.2，逐字复刻 `PlaneScenePerfs.Model`）**、4 个标定块矩形、预设、Store JSON 编解码。**禁止 import bpy** |
-| `core/avm_calibration.py` | 新增 | 纯 Python 解析 filament 配置 + fisheye 去畸变 + cy 精化 + 平面 PnP |
+| `core/avm_calibration.py` | 新增 | 纯 Python 解析 filament 配置 + fisheye 去畸变 + cy 精化 + 平面 PnP → **默认 `location`/`rotation`**（§6.6） |
 | `core/avm_coverage.py` | 新增 | 纯 Python **地面覆盖足迹**（`ray_from_pixel` + 与 z=0 求交）、并集/重叠/盲区、标定块可见性矩阵（§16） |
 | `bl/avm_properties.py` | 新增 | PropertyGroup（场地/车辆/地面/标定块/相机集合 + `root` 指针）+ update 回调 |
 | `bl/avm_builder.py` | 新增 | 建/重建对象、材质、mesh；创建 `AVM_Root` 并回写 `settings.root`；4 台相机创建、内参与位姿写入；覆盖曲线对象 `AVM_Coverage_*` |
@@ -525,7 +550,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | 层 | 用例 |
 | --- | --- |
 | `test_core.py` | 场地方程与 HTML 一致；**`points(camera)` 四组输出与 minibus 配置的 `points_3d` 逐点一致（§15.2）**；Store JSON 与 App `Size` 格式互认（`"WxH"`、int cm）；**4 个标定块矩形与 `points(camera)` 的 8 点一致、边长均为 `corner`**；`border` 不影响块位；**参数往返**（完整/精简 × JSON/YAML，导出→导入→再导出逐字节稳定）；`sizeFrom` 容错；精简导入只改场地；版本迁移；minibus 配置解析（4 台相机、K/D、8 点）；**PnP 解与 cv2 对照**（R<0.5°、C<5 mm，无 cv2 则 SKIP）；相机中心与 C++ 注释一致（<1 mm）；**渲染内参用原始 K、PnP 用 K'（§6.1 修正）**；**覆盖足迹**（射线与 z=0 求交、边界闭合、无解时的退化处理）与**可见性矩阵**（标定块是否被各相机覆盖） |
-| `run_blender_tests.py` | `avm_add_scene` 建出 1 地面 + 1 车 + 4 标定块 + 4 相机且都在 `AVM Scene` 集合、`settings.root` 指向 `AVM_Root`；**面板可见性**：建前 `poll=False`、建后 `poll=True`、删除 `AVM_Root` 后 `poll=False`；改 `core_w` / `corner` 后标定块/相机随之更新；4 台相机是 `CUSTOM` + `opencv_fisheye.osl` 且已编译、内外参各自独立；`pose` 面板与物体变换一致；**文件导入导出算子**（`avm_export_params` → 改参数 → `avm_import_params` 还原，含相机 K/D/R/t）；**`avm_render_cameras` 按各相机输出尺寸落盘 4 张 PNG**；**`avm_analyze_coverage` 生成 4 条贴地覆盖曲线**、**`avm_export_materials` 产出 5 类文件**；导入失败时不改场景；卸载无残留 |
+| `run_blender_tests.py` | `avm_add_scene` 建出 1 地面 + 1 车 + 4 标定块 + 4 相机且都在 `AVM Scene` 集合、`settings.root` 指向 `AVM_Root`；**面板可见性**：建前 `poll=False`、建后 `poll=True`、删除 `AVM_Root` 后 `poll=False`；改 `core_w` / `corner` 后标定块/相机随之更新；4 台相机是 `CUSTOM` + `opencv_fisheye.osl` 且已编译、内外参各自独立；**参数文件只有 `location`/`rotation`/`K`/`D`（无 R/t）**；**文件导入导出算子**（`avm_export_params` → 改参数 → `avm_import_params` 还原）；**`avm_render_cameras` 按各相机输出尺寸落盘 4 张 PNG**；**`avm_analyze_coverage` 生成 4 条贴地覆盖曲线**、**`avm_export_materials` 产出 5 类文件**；导入失败时不改场景；卸载无残留 |
 | 手测 | 拖滑块实时重建、N 面板显隐、F12 看 4 路鱼眼畸变、图层开关、标定块是否落在预期位置 |
 
 ---
@@ -553,7 +578,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 5. **Z-fighting**：标定块与地面要有毫米级抬升（`block_lift`）。
 6. **单位**：内部 m，JSON/面板 cm，边界处统一换算。
 7. **CI 依赖**：`core` 不得引入 numpy/cv2；cv2 只出现在「可选对照测试」里。
-8. **保真度**：外参与 filament_avm 一致，但图像落点有 6–33 px 残差（§6.5），文档需明确。
+8. **保真度**：相机位置/姿态与 filament_avm 一致，但图像落点有 6–33 px 残差（§6.5），文档需明确。
 9. **扩展模式回归**：`sys.path` 与 `bl_ext.*` 两种加载路径都要跑（历史问题）。
 10. **覆盖计算的退化**：鱼眼有效域外（θ>90°）与地平线以上（`d_z ≥ 0`）的方向无地面交点，
     足迹多边形可能开口；报告里必须标注，不能当成正常闭合区域算面积。
@@ -575,7 +600,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | 7 | 完整格式是否内嵌源配置路径 | `meta.source` 记录，便于「重新求解」按钮复用 |
 | 8 | 标定布形态 | **布 = 块**：4 个规格相同的纯黑方块放在车四周四对角（决策 A），无单独布面 |
 | 9 | `core` 与车模的关系 | 车模长宽默认 = `core`（对齐 HTML 的 `car ≡ core`），可独立覆盖；`core` 不影响标定几何 |
-| 10 | 改内参后是否自动重解外参 | **`use_solved` 开关，默认开**：内参变更即自动重解；关则用当前 R/t |
+| 10 | 改内参后是否自动重解默认位姿 | **`use_solved` 开关，默认开**：开 = 内参变更时按 §6.1 重算该相机的默认 `location`/`rotation`；关 = 保留用户当前的 `location`/`rotation` |
 | 11 | 纯黑块的可检测性（只有外轮廓） | **本期只渲染**，不做检测；地面浅色、黑块无阴影，P2 目视验证轮廓可辨 |
 | 12 | 纯 Python PnP 精度未实测 | **P1 先与 cv2 对照**；R 差 > 0.5° 或 C 差 > 5 mm 则退化为「离线 cv2 求解 + 内嵌预设」 |
 | 13 | 2D 检测回环 | **本场景不需要 2D 点**：只做 `points_3d` 生成；PnP 用配置里已有的 `points_2d`；仿真**导出 4 路图像**后由**外部程序检测对角点**。Blender 内不做检测、不存 `points_2d` |
@@ -599,24 +624,28 @@ filament_avm:  solvePnP(points_3d, points_2d, K)  →  (R, t)
     world = Blender 车辆系（X 右, Y 前, Z 上）
     camera = OpenCV 相机系（X 右, Y 下, Z 前）
     ⇒ Blender 相机物体矩阵 = core/transform.object_matrix_from_opencv(R, t)   （无需额外 world_matrix）
+    ⇒ 仅在「从 filament 配置导入」时用一次，转成 location + rotation 后 R/t 即丢弃（§6.6）
 ```
 
-minibus 求解结果（车辆系，单位 m）：
+minibus 默认参数（车辆系，单位 m / 度；这就是内置默认值，不是运行时输出）：
 
-| 相机 | 安装位置 C | 朝向（前下） |
-| --- | --- | --- |
-| front | (-0.031, +2.467, +2.691) | +Y |
-| back | (-0.071, -2.437, +2.834) | −Y |
-| left | (-1.280, -0.025, +2.340) | −X |
-| right | (+1.185, +0.044, +2.321) | +X |
+| 相机 | `location` (m) | `rotation` XYZ 欧拉 (°) | 俯角 |
+| --- | --- | --- | --- |
+| front | (-0.031, +2.467, +2.691) | (+20.4, −1.1, +1.7) | 69.6° |
+| back | (-0.071, −2.437, +2.834) | (+23.9, +1.2, −179.6) | 66.1° |
+| left | (−1.280, −0.025, +2.340) | (+48.0, +0.4, +89.6) | 42.0° |
+| right | (+1.185, +0.044, +2.321) | (+42.2, +0.9, −91.0) | 47.8° |
+
+（`rotation` 由 §6.1 解出的 R 经 `transform.object_matrix_from_opencv` 转成 Blender 相机物体矩阵后取欧拉角，
+俯角 = 90° − `rotation.x`。）
 
 **渲染内参**（四台相同，来自配置的原始 K，`cy` 不含 ba_opt 偏移）：
 `fx=317.776, fy=318.025, cx=636.233, cy=477.820`；`D=[0.0848, 0.0432, -0.0380, 0.0094]`，1280×960。
 
-**PnP 用的 K'**（仅求解外参时使用，不写进相机）：`cy` left=523.526 / right=522.603（+ba_opt 偏移），
+**PnP 用的 K'**（仅求解默认位姿时使用，不写进相机）：`cy` left=523.526 / right=522.603（+ba_opt 偏移），
 front/back 与原始 K 相同。
 
-> 由此产生一个**固有现象**：left/right 用「原始 K 渲染 + K' 解出的外参」，黑块在图像里会偏离
+> 由此产生一个**固有现象**：left/right 用「原始 K 渲染 + K' 解出的位姿」，标定块在图像里会偏离
 > `points_2d` 数十像素（§6.5）。这是复刻 filament_avm 生产路径的必然结果，不是 Blender 的错。
 
 ---
@@ -678,13 +707,13 @@ left  / right: (-x2,-y2) (-x2,-y1) (-x2, y1) (-x2, y2)
 | ② `points_3d` | `core/avm_layout.py` 的 `points(camera)` 生成（**唯一的生成物**） |
 | ③ `points_2d` | **本场景不需要**：直接用 minibus 配置里已有的 `points_2d` 做 PnP；**不检测、不存储** |
 | ④ K/D | 从 minibus 配置导入（每台独立） |
-| ⑤ 外参 | 纯 Python PnP（决议 #12） |
+| ⑤ 默认位姿 | 纯 Python PnP（决议 #12）→ 转成 `location`/`rotation` 存进场景（§6.6） |
 | ⑥ 渲染 | Cycles 渲染 4 路鱼眼图，`avm_render_cameras` 导出 PNG |
 
 **回环在外部**：导出的 4 路 PNG 交给 `mediapipe_avm_calib` / `filament_avm` 侧做角点检测与反标定，
 Blender 侧不承担检测职责。因此本方案的两个导入方向是：
 
-1. **从 filament config 导入** → 反推 `corner`、`cInX/cInY`（=`core/2+inner`），并用其 `points_2d` 求外参；
+1. **从 filament config 导入** → 反推 `corner`、`cInX/cInY`（=`core/2+inner`），并用其 `points_2d` 反算默认位姿；
 2. **从 `plane_scene` Store 导入**（HTML/App 导出）→ 直接设场地尺寸 → 生成 `points_3d`。
 
 ### 15.4 导入时需要忽略的字段
