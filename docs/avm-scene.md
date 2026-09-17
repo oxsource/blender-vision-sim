@@ -619,7 +619,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | 阶段 | 内容 | 验收 |
 | --- | --- | --- |
 | **P0 ✅** | **离线反算一次**：`scripts/solve_avm_defaults.py` + `presets/avm_scene/default.json` | ✅ 预设与 `camera_pose.cc` 注释一致（<1 mm）；`tests/test_release_scripts.py` 新增用例（无 cv2 则 SKIP） |
-| P1 | `core/scenes/avm_layout.py` + `core/scenes/avm_coverage.py` + 单测 | `python3 tests/test_core.py` 全绿（零依赖） |
+| **P1 ✅** | `core/scenes/avm_layout.py` + `core/scenes/avm_coverage.py` + 单测 | ✅ `python3 tests/test_core.py` 全绿（零依赖）；`points(camera)` 与 minibus 配置逐点一致、可见性矩阵符合预期 |
 | **P1b** | **场景框架收编**（§17）：`bl/scenes/{base,debounce}.py` + 注册表 + `menus.py` 改遍历；**迁移 `scene_builder.py` → `bl/scenes/camera_scene.py`**（含兼容转发） | 注册表列出 `Camera Scene`；菜单条目 = 场景数 + 1；旧测试在新路径下全绿 |
 | P2 | `avm_scene/{properties,builder,operators,ui}.py` + 图标：一键建静态场景 | Blender 里 `Add ▸ VisionSim ▸ AVM Scene` 出全部对象，F12 可见；**渲染一张对照标定块落点**（决议 #14） |
 | P3 | 控制器：update 回调 + 去抖重建 + Scene 面板 + N 面板（`root` 存在才显示） | 拖滑块几何实时更新；删 root 后面板隐藏 |
@@ -797,34 +797,53 @@ Blender 侧**不做解算、不做检测**（§1.1）。因此本方案只保留
 
 ### 16.1 地面覆盖足迹（coverage footprint）
 
-对每台相机，沿图像边界采样 N 个像素（默认 256），逐个转成**贴地射线**并与 `z = 0` 求交：
+**精确覆盖判定**（面积/可见性都用它）：把地面点反投回图像，判断像素是否落在图像内。
+对鱼眼相机，地平线以下的地面点都满足 θ<90°，落在有效域内，所以这一步是精确的：
 
 ```text
-d_cam  = camera_model.ray_from_pixel(u, v, intr, dist)     # 相机系单位射线（复用现有 core）
-d_world = Rᵀ · d_cam                                        # R 为 PnP 的 world→camera
-t = -C_z / d_world_z          (C 为相机中心，需 d_world_z < 0，即朝下)
-P = C + t · d_world                                          # 地面交点
+d_world = P - C                                # 相机中心 -> 地面点
+d_local = R_objectᵀ · d_world                  # 世界 -> Blender 相机局部
+d_cam   = M · d_local                          # M = diag(1,-1,-1) -> OpenCV 相机系
+(u, v)  = camera_model.project_point(d_cam, intr, dist)
+covered = 0 <= u <= width and 0 <= v <= height
 ```
 
-- 采样边界取两条：**图像矩形边界**（完整视场）与**鱼眼有效域圆**
-  （`camera_model.fisheye_valid_radius_px`，θ<90° 的部分）；
+**可视化足迹**：沿图像矩形边界采样 N 个像素（默认 256），逐个转成贴地射线并与 `z = 0` 求交：
+
+```text
+d_cam   = camera_model.ray_from_pixel(u, v, intr, dist)
+d_world = R_object · (M · d_cam)
+t = -C_z / d_world_z          (需 d_world_z < 0，即朝下)
+P = C + t · d_world
+```
+
+- 采样边界可取 **图像矩形边界**（`domain="image"`）或 **鱼眼有效域圆**
+  （`domain="valid"`，`fisheye_valid_radius_px` 与图像矩形求交）；
 - 退化处理：`d_world_z ≥ 0`（指向地平线以上）或 `t ≤ 0` 的方向**无地面交点**，
-  该段在近地平线处截断，多边形记为「开口」并在报告里标注；
-- 输出：每台相机 1~2 条贴地多边形（世界系，单位 m）。
+  该段被丢弃并把足迹标记为 **open**（前/后相机因为俯角不够大，图像上缘越过地平线，
+  足迹天然是「开口扇形」）；报告里列出 `open_polygons`；
+- 输出：每台相机 1 条贴地折线（世界系，单位 m），用于 3D 视口画覆盖曲线。
+
+> 因此：**面积与可见性走 16.1 的精确反投影**，**曲线只用足迹折线做可视化**——
+> 开口扇形不做多边形面积统计（`Footprint.area` 为 `nan`）。
 
 ### 16.2 评估量
 
 | 量 | 说明 |
 | --- | --- |
-| 每相机覆盖面积 | 各自足迹面积（m²） |
+| 每相机覆盖面积 | 各自覆盖的地面面积（m²） |
 | 并集 / 重叠 | 4 台覆盖的并集面积、≥2 台的重叠面积 |
-| 车周盲区 | 车辆（`core`）周边未被任何相机覆盖的地面区域 |
-| 场地覆盖率 | `并集 ∩ 场地 / 场地面积` |
-| **标定块可见性矩阵** | 块 × 相机：块的 4 个角是否都落在该相机的有效覆盖内（✓/✗） |
-| **场地够用判据** | 4 个标定块是否各自至少被 1（可配置为 2）台相机完整看到 |
+| 盲区 | 场地内未被任何相机覆盖的地面面积 |
+| 场地覆盖率 | `1 - 盲区 / 场地面积` |
+| **标定块可见性矩阵** | 块 × 相机：块的 4 个角是否都落在该相机的图像内（✓/✗） |
+| **场地够用判据** | 4 个标定块是否各自至少被 1 台相机完整看到（`CoverageReport.field_ok`） |
 
-> 面积统计用**栅格化**实现（把场地按固定网格，如 2 cm，逐格判定被哪些相机覆盖）：
+> 面积统计用**栅格化**：把场地按固定网格（默认 5 cm，可调）逐格调用精确覆盖判定，
 > 简单、稳健、无需多边形布尔运算；精度由网格步长控制。
+
+**已验证（minibus 默认参数）**：4 台相机的可见性矩阵为
+`front_left{front,left}`、`front_right{front,right}`、`back_left{back,left}`、
+`back_right{back,right}`，覆盖率 100%、`field_ok = true`。
 
 ### 16.3 展示
 

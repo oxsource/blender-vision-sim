@@ -16,6 +16,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "addons", "opencv_camera"))
 
 from core import calibration_io, camera_model, transform  # noqa: E402
+from core.scenes import avm_coverage, avm_layout  # noqa: E402
 
 FAILURES = []
 
@@ -174,9 +175,7 @@ def test_bundled_preset():
 
 def test_filament_avm_config():
     """A multi-camera app config (K/D/input_size, nested K) must be importable."""
-    path = os.path.join(ROOT, "..", "..", "..", "codes", "filament_avm", "configs",
-                        "vehicle_avm_minibus.json")
-    path = os.path.normpath(path)
+    path = _avm_config_path()
     if not os.path.exists(path):
         print("[SKIP] filament_avm config not present")
         return
@@ -192,6 +191,124 @@ def test_filament_avm_config():
           and calib.model_name == "")
     other = calibration_io.load_calibration(path, camera_name="left")
     check("avm config camera selection", other.source.endswith("vehicle_avm_minibus.json"))
+
+
+def _avm_config_path() -> str:
+    return os.path.normpath(os.path.join(
+        ROOT, "..", "..", "..", "codes", "filament_avm", "configs",
+        "vehicle_avm_minibus.json"))
+
+
+def test_avm_layout():
+    """Field equation, block geometry, the points(camera) contract and Store IO."""
+    field = avm_layout.FieldSpec()
+    check("field equation matches the HTML tool",
+          (field.scene_w, field.scene_h) == (480.0, 840.0),
+          f"{field.scene_w}x{field.scene_h}")
+
+    preset = avm_layout.load_preset()
+    field = avm_layout.field_from_preset(preset)
+    cameras = avm_layout.cameras_from_preset(preset)
+    check("preset field", (field.core_w, field.core_h, field.corner,
+                           field.inner_w, field.inner_h) == (240.0, 480.0, 100.0, 20.0, 80.0))
+    check("preset has the four cameras",
+          [camera["name"] for camera in cameras] == ["front", "back", "left", "right"])
+
+    geo = avm_layout.geometry(field)
+    check("geometry half extents",
+          approx(geo.core_hx, 1.2) and approx(geo.core_hy, 2.4)
+          and approx(geo.c_in_x, 1.4) and approx(geo.c_out_x, 2.4)
+          and approx(geo.c_in_y, 3.2) and approx(geo.c_out_y, 4.2)
+          and approx(geo.half_x, 2.4) and approx(geo.half_y, 4.2))
+
+    blocks = avm_layout.block_rects(field)
+    check("four identical blocks",
+          all(abs((x1 - x0) - 1.0) < 1e-9 and abs((y1 - y0) - 1.0) < 1e-9
+              for x0, y0, x1, y1 in blocks.values()))
+    check("block positions",
+          blocks[avm_layout.BLOCK_FRONT_LEFT] == (-2.4, 3.2, -1.4, 4.2)
+          and blocks[avm_layout.BLOCK_BACK_RIGHT] == (1.4, -4.2, 2.4, -3.2))
+
+    # border only changes the field extent, never the blocks
+    wider = field.replaced(border_w=50.0, border_h=50.0)
+    check("border does not move the blocks",
+          avm_layout.block_rects(wider) == blocks
+          and avm_layout.geometry(wider).half_x == geo.half_x + 0.5)
+
+    # the points(camera) contract: byte-for-byte the config's points_3d
+    path = _avm_config_path()
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as handle:
+            config = json.load(handle)
+        worst = 0.0
+        for camera in config["cameras"]:
+            expected = camera["points_3d"]
+            got = avm_layout.points(camera["name"], field)
+            check(f"points({camera['name']}) count", len(got) == 8)
+            worst = max(worst, max(abs(a - b) for g, e in zip(got, expected)
+                                   for a, b in zip(g, e)))
+        check("points(camera) matches the minibus config", worst < 1e-9, f"max err {worst:.1e}")
+    else:
+        print("[SKIP] filament_avm config not present: points(camera) not compared")
+
+    # Store JSON (HTML / App interchange)
+    store = avm_layout.to_store(field)
+    check("Store JSON layout",
+          store == {"border": "0x0", "corner": 100, "inner": "20x80", "car": "240x480"},
+          str(store))
+    check("Store round trip", avm_layout.from_store(store) == field)
+    check("size_from is tolerant",
+          avm_layout.size_from("10x20") == (10.0, 20.0)
+          and avm_layout.size_from(50) == (50.0, 50.0)
+          and avm_layout.size_from([1, 2]) == (1.0, 2.0)
+          and avm_layout.size_from({"width": 3, "height": 4}) == (3.0, 4.0)
+          and avm_layout.size_from("nonsense") is None)
+    check("Store import keeps defaults for missing keys",
+          avm_layout.from_store({"corner": 50}).corner == 50.0)
+
+
+def test_avm_coverage():
+    """Footprints, point coverage and the block visibility matrix."""
+    preset = avm_layout.load_preset()
+    field = avm_layout.field_from_preset(preset)
+    cameras = avm_layout.cameras_from_preset(preset)
+    models = {camera["name"]: avm_coverage._camera_models(camera) for camera in cameras}
+
+    # a forward-facing camera sees in front of the car, not behind it
+    intr, dist, matrix = models["front"]
+    check("front camera covers the front blocks",
+          avm_coverage.covers_ground_point((0.0, 3.7), intr, dist, matrix))
+    check("front camera does not cover behind the car",
+          not avm_coverage.covers_ground_point((0.0, -3.7), intr, dist, matrix))
+    check("camera centre round trip",
+          all(abs(a - b) < 1e-9 for a, b in
+              zip(avm_coverage.camera_centre(matrix), cameras[0]["location"])))
+
+    fp = avm_coverage.footprint(cameras[0], samples=64)
+    check("footprint has ground points", len(fp.points) > 16, str(len(fp.points)))
+    check("footprint points are finite",
+          all(abs(x) < 1e4 and abs(y) < 1e4 for x, y in fp.points))
+    check("footprint closed flag is a bool", isinstance(fp.closed, bool))
+
+    report = avm_coverage.coverage_report(cameras, field, samples=64, step=0.05)
+    check("coverage report is consistent",
+          report.union_area <= report.field_area + 1e-9
+          and report.overlap_area <= report.union_area + 1e-9
+          and 0.0 <= report.coverage_ratio <= 1.0,
+          f"union {report.union_area:.2f} overlap {report.overlap_area:.2f} "
+          f"ratio {report.coverage_ratio:.3f}")
+
+    visibility = report.visibility
+    check("front_left seen by front and left",
+          visibility["front_left"]["front"] and visibility["front_left"]["left"]
+          and not visibility["front_left"]["back"])
+    check("back_right seen by back and right",
+          visibility["back_right"]["back"] and visibility["back_right"]["right"]
+          and not visibility["back_right"]["front"])
+    check("every block is seen by two cameras",
+          all(sum(seen.values()) == 2 for seen in visibility.values()),
+          str(visibility))
+    check("field_ok is true for the minibus field", report.field_ok)
 
 
 def test_calibration_io():
@@ -269,7 +386,8 @@ cam0:
 def main():
     for test in (test_intrinsics, test_distortion_roundtrip, test_fisheye, test_projection,
                  test_transform, test_lens_conversion, test_bundled_preset,
-                 test_filament_avm_config, test_calibration_io):
+                 test_filament_avm_config, test_avm_layout, test_avm_coverage,
+                 test_calibration_io):
         test()
     print()
     if FAILURES:
