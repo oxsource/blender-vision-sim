@@ -65,13 +65,21 @@ def install_shader(settings, force: bool = False) -> Tuple[bpy.types.Text, bool]
 
 
 def attach(cam_data, settings) -> bpy.types.Text:
-    """Point ``cam_data`` at the shader matching the selected model."""
-    text, _ = install_shader(settings)
+    """Point ``cam_data`` at the shader matching the selected model.
+
+    When the *bundled* shader text was updated (add-on upgrade) the camera is
+    recompiled as well: the compiled bytecode carries the old parameter names,
+    and Cycles only refreshes ``cycles_custom`` on a compile.
+    """
+    text, changed = install_shader(settings)
     cam_data.type = "CUSTOM"
     if cam_data.custom_mode != "INTERNAL":
         cam_data.custom_mode = "INTERNAL"
     if cam_data.custom_shader != text:
         cam_data.custom_shader = text
+    elif changed:
+        cam_data.custom_bytecode = ""
+        force_compile(cam_data)
     return text
 
 

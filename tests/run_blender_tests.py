@@ -591,6 +591,46 @@ def test_presets():
           and cam_data.opencv_cam.distortion.model == "fisheye")
 
 
+def test_shader_text_upgrade_recompiles():
+    """Upgrading the add-on replaces the shader text and must recompile.
+
+    Simulated by making the *bundle* look old (parameter renamed), applying, then
+    restoring the real bundle - exactly the state after an add-on update, where the
+    .blend still holds the old Text while ``shaders/*.osl`` moved on.
+    """
+    scene = setup_scene(resolution=128, samples=4)
+    clear_scene()
+    setup_scene(resolution=128, samples=4)
+    camera, cam_data = make_camera("UpgradeCam")
+    settings = cam_data.opencv_cam
+    ok, _ = apply_mod.apply_settings(cam_data, settings, scene)
+    check("upgrade: initial apply", ok and "discard_invalid_rays" in cam_data.cycles_custom)
+
+    # simulate a .blend written by an older add-on version: the Text holds the old
+    # shader and the camera carries its bytecode, while the bundle moved on
+    old_source = shader.shader_source(shader.shader_filename("fisheye")).replace(
+        "discard_invalid_rays", "allow_off_sensor"
+    )
+    text = cam_data.custom_shader
+    text.clear()
+    text.write(old_source)
+    cam_data.custom_bytecode = ""
+    shader.force_compile(cam_data)
+    check("upgrade: simulated old add-on state",
+          "allow_off_sensor" in cam_data.cycles_custom
+          and "discard_invalid_rays" not in cam_data.cycles_custom,
+          f"{sorted(cam_data.cycles_custom.keys())}")
+
+    ok, messages = apply_mod.apply_settings(cam_data, settings, scene)
+    check("upgrade: new bundle recompiles the camera",
+          ok and "discard_invalid_rays" in cam_data.cycles_custom
+          and "allow_off_sensor" not in cam_data.cycles_custom,
+          "; ".join(messages)[:120])
+    check("upgrade: text matches the new bundle",
+          cam_data.custom_shader.as_string()
+          == shader.shader_source(shader.shader_filename("fisheye")))
+
+
 def test_live_apply():
     """auto_apply pushes edits without pressing Apply to Camera."""
     scene = setup_scene(resolution=128, samples=4)
@@ -752,6 +792,7 @@ def main():
         test_add_camera_operator,
         test_menus_and_raw_params,
         test_presets,
+        test_shader_text_upgrade_recompiles,
         test_live_apply,
         test_output_resolution,
         test_preview,
