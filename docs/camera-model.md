@@ -1,7 +1,8 @@
 # 相机模型：OpenCV 内参与畸变
 
 本文记录 `opencv_camera` 插件的模型推导、坐标约定与实测验证数据。数学实现在
-`addons/opencv_camera/core/camera_model.py`，着色器在 `addons/opencv_camera/shaders/opencv_camera.osl`。
+`addons/opencv_camera/core/camera_model.py`，着色器在 `addons/opencv_camera/shaders/`
+（`opencv_camera.osl` = 多项式模型，`opencv_fisheye.osl` = 鱼眼模型）。
 
 ## 1. Blender 侧能力（4.5.3 实测）
 
@@ -21,6 +22,14 @@
 
 ## 2. 投影模型
 
+插件支持三种 OpenCV 畸变模型，按 `distortion.model` 选择对应的着色器与参数集：
+
+| 模型 | 系数 | 着色器 | 反解方式 |
+| --- | --- | --- | --- |
+| `brown_conrady` | k1,k2,p1,p2,k3 | `opencv_camera.osl` | 固定点迭代（同 `cv2.undistortPoints`） |
+| `rational` | 追加 k4,k5,k6（分母项） | `opencv_camera.osl` | 同上 |
+| `fisheye` | k1,k2,k3,k4（θ 多项式） | `opencv_fisheye.osl` | 牛顿迭代（同 `cv2.fisheye.undistortPoints`） |
+
 ### 2.1 前向（OpenCV）
 
 相机系 X 右、Y 下、Z 前；`x = X/Z, y = Y/Z`：
@@ -37,6 +46,20 @@ u = fx·x_d + cx ,  v = fy·y_d + cy
 `k4=k5=k6=0` 即经典 5 参（`plumb_bob`/`radtan`）模型；非零即 rational 模型。
 系数顺序统一为 `(k1, k2, p1, p2, k3, k4, k5, k6)`。
 
+### 2.1b 前向（OpenCV fisheye / Kannala-Brandt）
+
+```
+r = |(X/Z, Y/Z)| ,  theta = atan(r)
+theta_d = theta (1 + k1 t^2 + k2 t^4 + k3 t^6 + k4 t^8)
+x_d = theta_d / r * (X/Z) ,  y_d = theta_d / r * (Y/Z)
+u = fx x_d + cx ,  v = fy y_d + cy
+```
+
+注意该模型的**有效域**：`theta = atan(r)` 只能表示 `theta < 90°`，因此正向模型只在
+`r_px <= fisheye_valid_radius_px()`（`theta = 90°` 对应的像素半径）内有定义。广角 AVM
+镜头（本文档实测的参考相机）在画面角落处 `theta ≈ 101°`，已经超出正向模型的定义域——
+**渲染（像素→射线）不受限制**，但用正向模型做"点投影预测"时只能取有效域内的像素。
+
 ### 2.2 反向（着色器所需）
 
 着色器拿到像素，需要还原射线方向，即求畸变逆（等价 `cv2.undistortPoints`）：
@@ -49,8 +72,20 @@ repeat N:
     x = (x_d - dx)·icdist;    y = (y_d - dy)·icdist
 ```
 
-实现要点：固定点迭代（默认 10 次）、`den` 过小或坐标发散时跳出、
+实现要点：固定点迭代（默认 20 次）、`den` 过小或坐标发散时跳出、
 `allow_off_sensor=0` 时把发散射线 `throughput = color(0)` 丢弃。
+
+鱼眼模型的反解是**牛顿迭代**：
+
+```
+solve  theta_d = theta (1 + k1 t^2 + k2 t^4 + k3 t^6 + k4 t^8)  for theta
+f'(theta) = 1 + 3 k1 t^2 + 5 k2 t^4 + 7 k3 t^6 + 9 k4 t^8
+direction = (sin(theta) * x_d / r_d, -sin(theta) * y_d / r_d, cos(theta))
+```
+
+用 `sin/cos` 而不是斜率 `tan(theta)`：广角鱼眼在画面角落 `theta > 90°`（射线略向后），
+`tan` 会翻号而 `sin/cos` 保持正确；返回的方向本身即单位向量。`Distortion.enabled = False`
+时两种模型都退化为理想针孔（同一套 fx/fy/cx/cy）。
 
 ## 3. 坐标与像素约定
 
@@ -120,10 +155,17 @@ R_wc = R_bᵀ               # camera → world，即 object 旋转
 
 ## 7. 分辨率行为
 
-内参是像素量纲：插件把标定分辨率 `image_width/height` 与当前渲染分辨率一起保存，
-`scale_to_render=True`（默认）时按比例缩放 fx/fy 与显式主点，保证 **FOV 不变**；关闭则原样使用
-（适合已经按目标分辨率标定的场景）。自动主点（`cx=cy=-1`）始终跟随图像中心，与分辨率无关。
+内参是像素量纲：插件把标定分辨率 `image_width/height` 与当前渲染分辨率一起保存，并区分两种情况：
+
+| 情况 | 行为 |
+| --- | --- |
+| 宽高比一致（如 1280×960 → 640×480） | 按比例缩放 fx/fy 与主点偏移，**FOV 不变**（`scale_to_render=False` 时原样使用） |
+| 宽高比不一致（如 1280×960 → 256×256） | 无法同时匹配几何：改为**保持像素尺度**（fx/fy 不变）+ 主点相对图像中心的像素偏移不变，即"原始像素尺度的中心裁剪"，面板给出 aspect mismatch 提示 |
+
+自动主点（`cx=cy=-1`）始终跟随图像中心；显式主点在缩放/裁剪时按上表处理。
 非方形像素（`pixel_aspect_x != pixel_aspect_y`）会破坏 OpenCV 的像素模型，插件在面板上给出提示。
+
+自检（`Run Self Test`）会自动按标定宽高比选择测试分辨率（长边 256，短边按比例），避免裁剪/拉伸。
 
 ## 8. 实测验证数据（Blender 4.5.3 LTS / Cycles CPU）
 
@@ -133,10 +175,24 @@ R_wc = R_bᵀ               # camera → world，即 object 旋转
 | --- | --- | --- |
 | 零畸变自定义相机 vs 自带透视相机（50mm/36mm/128px） | 完全一致 | `max\|Δ\| = 0`，16384/16384 像素相同（图像 std 0.203） |
 | 主点偏移（shift 0.1 / 0.15，cx=51.2 cy=83.2） | 完全一致 | `max\|Δ\| = 0` |
-| 畸变 k1=-0.25, k2=0.06, p1=2e-4 目标点成像位置 | 与 OpenCV 前向模型一致 | 误差 0.058 px（自检算子） |
-| 畸变（k1=-0.2）目标点成像位置（另一组 fx/fy） | 同上 | 误差 0.094 px |
-| 分辨率换算 1920×1080 → 128×128 | fx 按 1/15 缩放 | 1500 → 100.0 |
+| 多项式畸变（k1=-0.2, k2=0.03, p1=2e-4，fx=64/128px，θ≤45°） | 与 OpenCV 前向模型一致 | 误差 0.018 px（自检算子） |
+| 鱼眼（参考 AVM 前相机 1280×960，θ≈72°） | 同上 | 误差 0.048 px |
+| 鱼眼贴近 90° 边界（θ≈87°，射线需用 sin/cos 表示） | 同上 | 误差 0.026 px |
+| 分辨率换算 1920×1080 → 960×540（同比） | fx 按 1/2 缩放 | 1500 → 750.0 |
+| 分辨率宽高比不一致 1920×1080 → 128×128 | 保持像素尺度（裁剪） | fx 1500 不变，主点回到图像中心 |
 | 坏着色器（故意语法错误）后 `ensure_compiled` | 必须失败 | 检出并中止（旧字节码被静默保留） |
+
+### 8.1 可视化验证（`Add Test Scene`）
+
+一键生成棋盘方块 + 棋盘地面 + 灯光，并把相机内参（默认 = AVM 前相机）应用到 Cycles：
+
+| 鱼眼模型（`fisheye`，k1..k4） | 关闭畸变（理想针孔） |
+| --- | --- |
+| ![鱼眼](images/fisheye_on.png) | ![针孔](images/pinhole_off.png) |
+| 地面网格弯曲、边缘压缩、物体向中心收缩 | 网格线为直线、边缘拉伸 |
+
+两张图使用同一套 K（fx=317.78, cx=636.23, cy=477.82，1280×960）与同一场景，仅切换
+`enable_distortion`。
 
 ## 9. 参考
 

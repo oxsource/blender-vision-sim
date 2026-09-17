@@ -31,14 +31,16 @@ class OPENCV_CAM_PT_main(_CameraPanel, bpy.types.Panel):
 
         column = layout.column(align=True)
         column.operator("opencv_cam.apply_settings", icon="CHECKMARK")
+        column.operator("opencv_cam.add_test_scene", icon="MESH_CUBE")
         column.operator("opencv_cam.install_shader")
 
         box = layout.box()
+        compiled = shader.is_compiled(cam_data) and cam_data.type == "CUSTOM"
         box.label(
-            text=f"bytecode: {len(cam_data.custom_bytecode)} chars"
-            if cam_data.type == "CUSTOM"
-            else "camera is not in Custom mode yet",
-            icon="INFO" if shader.is_compiled(cam_data) else "ERROR",
+            text=(f"{shader.shader_filename(settings.distortion.model)} "
+                  f"({len(cam_data.custom_bytecode)} chars bytecode)") if compiled
+            else "shader not compiled yet - press Apply to Camera",
+            icon="CHECKMARK" if compiled else "ERROR",
         )
         if settings.status:
             box.label(text=f"status: {settings.status}")
@@ -46,7 +48,6 @@ class OPENCV_CAM_PT_main(_CameraPanel, bpy.types.Panel):
             box.label(text=note, icon="INFO")
 
         layout.operator("opencv_cam.self_test", icon="RESTRICT_RENDER_OFF")
-        layout.prop(settings, "shader_text_name")
 
 
 class OPENCV_CAM_PT_intrinsics(_CameraPanel, bpy.types.Panel):
@@ -94,20 +95,28 @@ class OPENCV_CAM_PT_distortion(_CameraPanel, bpy.types.Panel):
         layout = self.layout
         layout.use_property_split = True
         distortion = context.camera.opencv_cam.distortion
+        model = distortion.model
 
         layout.prop(distortion, "model")
         layout.prop(distortion, "enabled")
         column = layout.column()
         column.enabled = distortion.enabled
-        column.prop(distortion, "k1")
-        column.prop(distortion, "k2")
-        column.prop(distortion, "p1")
-        column.prop(distortion, "p2")
-        column.prop(distortion, "k3")
-        if distortion.model == "rational" or distortion.k4 or distortion.k5 or distortion.k6:
+        if model == "fisheye":
+            layout.label(text="theta_d = t (1 + k1 t² + k2 t⁴ + k3 t⁶ + k4 t⁸)")
+            column.prop(distortion, "k1")
+            column.prop(distortion, "k2")
+            column.prop(distortion, "k3")
             column.prop(distortion, "k4")
-            column.prop(distortion, "k5")
-            column.prop(distortion, "k6")
+        else:
+            column.prop(distortion, "k1")
+            column.prop(distortion, "k2")
+            column.prop(distortion, "p1")
+            column.prop(distortion, "p2")
+            column.prop(distortion, "k3")
+            if model == "rational" or distortion.k4 or distortion.k5 or distortion.k6:
+                column.prop(distortion, "k4")
+                column.prop(distortion, "k5")
+                column.prop(distortion, "k6")
         column.prop(distortion, "iterations")
 
 

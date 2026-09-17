@@ -22,8 +22,14 @@ import numpy as np
 from ..core import camera_model
 from . import apply as apply_mod
 
-#: test target as a fraction of the image, top-left origin, y down
-TARGET_UV = (0.85, 0.70)
+#: test target: azimuth around the principal point and how far out it sits,
+#: expressed as a fraction of the model's usable image radius
+TARGET_AZIMUTH_DEG = 35.0
+TARGET_RADIUS_FRACTION = 0.85
+#: largest undistorted slope (tan of the angle off axis) the target may reach.
+#: The Brown-Conrady inversion has several roots beyond that, where the shader and
+#: the reference model may pick different ones; 1.0 means 45 degrees.
+MAX_TARGET_SLOPE = 1.0
 #: distance of the test sphere in metres
 DISTANCE = 3.0
 #: sphere radius relative to the distance (about 4 px at fx=800)
@@ -34,6 +40,21 @@ LUMA_THRESHOLD = 0.2
 
 class SelfTestError(RuntimeError):
     """Raised when the self test cannot be run at all."""
+
+
+def test_resolution(settings, long_side: int = 256) -> tuple:
+    """Render size for the self test: the calibration aspect ratio is preserved.
+
+    Testing a 1280x960 camera with a square render would stretch (or crop) it, so
+    the short side follows the calibrated aspect ratio.
+    """
+    intrinsics = settings.intrinsics
+    width, height = int(intrinsics.image_width), int(intrinsics.image_height)
+    if width <= 0 or height <= 0:
+        return int(long_side), int(long_side)
+    if width >= height:
+        return int(long_side), max(8, int(round(long_side * height / width)))
+    return max(8, int(round(long_side * width / height))), int(long_side)
 
 
 def _centroid(image_path: str) -> tuple:
@@ -56,23 +77,68 @@ def _centroid(image_path: str) -> tuple:
     return column, row_topdown
 
 
+def target_pixel(intrinsics: camera_model.Intrinsics,
+                 distortion: camera_model.Distortion,
+                 sphere_radius_px: float = 0.0) -> tuple:
+    """A pixel that keeps the test target inside the image *and* inside the
+    model's valid domain.
+
+    The usable radius is where theta reaches ~90 degrees for fisheye, otherwise
+    the image corner; it is additionally capped so the measured blob (plus a
+    margin) cannot be clipped by the image border, which would bias the centroid.
+    """
+    res = intrinsics.resolved()
+    azimuth = math.radians(TARGET_AZIMUTH_DEG)
+    direction = (math.cos(azimuth), math.sin(azimuth))
+
+    radius = 0.5 * math.hypot(res.width, res.height)
+    if distortion.enabled and distortion.model == camera_model.MODEL_FISHEYE:
+        radius = min(radius, camera_model.fisheye_valid_radius_px(res, distortion))
+
+    margin = sphere_radius_px + 2.0
+    limits = (min(res.cx, res.width - res.cx) - margin,
+              min(res.cy, res.height - res.cy) - margin)
+    for limit, component in zip(limits, direction):
+        if abs(component) > 1e-6:
+            radius = min(radius, max(4.0, limit) / abs(component))
+
+    radius *= TARGET_RADIUS_FRACTION
+    # the polynomial inversion becomes multi-valued far off axis, so cap the
+    # slope there; the fisheye Newton inversion is monotonic and needs no cap
+    polynomial = not (distortion.enabled and distortion.model == camera_model.MODEL_FISHEYE)
+    for _ in range(12 if polynomial else 0):
+        u = res.cx + radius * direction[0]
+        v = res.cy + radius * direction[1]
+        ray = camera_model.ray_from_pixel(u, v, intrinsics, distortion)
+        slope = math.hypot(ray[0], ray[1]) / abs(ray[2]) if ray[2] else float("inf")
+        if slope <= MAX_TARGET_SLOPE or radius <= 4.0:
+            break
+        radius = max(4.0, radius * MAX_TARGET_SLOPE / slope)
+    return res.cx + radius * direction[0], res.cy + radius * direction[1]
+
+
 def target_position(
     intrinsics: camera_model.Intrinsics,
     distortion: camera_model.Distortion,
     distance: float = DISTANCE,
+    pixel: Optional[tuple] = None,
 ):
     """Camera-local position of the test target for the given intrinsics.
 
-    The target pixel is chosen first (always inside the frame), the ray for that
-    pixel is computed with :mod:`core.camera_model` and the target is placed along
-    it.  The *predicted* image position is then obtained by forward projecting the
-    target position again, so a wrong distortion inversion shows up as an offset.
+    The target pixel is chosen first (inside the frame and inside the model's
+    valid domain), the ray for that pixel is computed with
+    :mod:`core.camera_model` and the target is placed along it.  The *predicted*
+    image position is then obtained by forward projecting the target position
+    again, so a wrong distortion inversion shows up as an offset.
     """
-    u = TARGET_UV[0] * intrinsics.width
-    v = TARGET_UV[1] * intrinsics.height
-    x, y, _ = camera_model.ray_from_pixel(u, v, intrinsics, distortion)
-    length = math.sqrt(x * x + y * y + 1.0)
-    x, y, z = x / length, y / length, 1.0 / length
+    if pixel is None:
+        u, v = target_pixel(intrinsics, distortion,
+                            sphere_radius_px=RADIUS_RATIO * 0.5 * (intrinsics.fx + intrinsics.fy))
+    else:
+        u, v = float(pixel[0]), float(pixel[1])
+    x, y, z = camera_model.ray_from_pixel(u, v, intrinsics, distortion)
+    length = math.sqrt(x * x + y * y + z * z)
+    x, y, z = x / length, y / length, z / length
     # OpenCV camera frame (x right, y down, z forward) -> Blender camera local
     # (x right, y up, z backward)
     location = (x * distance, -y * distance, -z * distance)
@@ -82,10 +148,21 @@ def target_position(
 
 
 def _mask_object(location) -> bpy.types.Object:
-    """Build the emissive test sphere at the camera-local target position."""
-    bpy.ops.mesh.primitive_uv_sphere_add(radius=RADIUS_RATIO * DISTANCE, location=location)
+    """Build the emissive test target at the camera-local target position.
+
+    A flat quad facing the camera is used instead of a sphere: a sphere seen far
+    off axis projects to an asymmetric blob whose centroid is biased away from
+    the ray (several pixels at 50+ degrees), while a small patch perpendicular to
+    the ray projects symmetrically about it.
+    """
+    bpy.ops.mesh.primitive_plane_add(size=2.0 * RADIUS_RATIO * DISTANCE, location=location)
     sphere = bpy.context.active_object
     sphere.name = "__opencv_cam_selftest_target"
+    from mathutils import Matrix, Vector
+    to_camera = -Vector(location)
+    if to_camera.length > 0.0:
+        rotation = to_camera.to_track_quat("Z", "Y").to_matrix().to_4x4()
+        sphere.matrix_world = Matrix.Translation(Vector(location)) @ rotation
 
     material = bpy.data.materials.new("__opencv_cam_selftest_emit")
     material.use_nodes = True
@@ -108,16 +185,22 @@ def run(
     resolution: int = 256,
     samples: int = 4,
     tolerance_px: float = 1.0,
+    target_pixel_override: Optional[tuple] = None,
 ) -> Dict:
-    """Run the self test, returning a result dict (``passed`` included)."""
+    """Run the self test, returning a result dict (``passed`` included).
+
+    ``target_pixel_override`` tests one specific pixel instead of the automatic
+    target (used to probe large off-axis angles).
+    """
     scene = scene or bpy.context.scene
     if scene.render.engine != "CYCLES":
         raise SelfTestError("switch the render engine to Cycles first (custom cameras are Cycles only)")
 
-    width = height = int(resolution)
+    width, height = test_resolution(settings, resolution)
     intrinsics = apply_mod.effective_intrinsics(settings, width, height)
     distortion = settings.core_distortion()
-    location, predicted_px = target_position(intrinsics, distortion)
+    location, predicted_px = target_position(intrinsics, distortion,
+                                             pixel=target_pixel_override)
 
     view_layer = bpy.context.view_layer
     render = scene.render
@@ -186,7 +269,7 @@ def run(
             "error": error,
             "error_px": distance,
             "tolerance_px": float(tolerance_px),
-            "resolution": width,
+            "resolution": (width, height),
             "samples": int(samples),
             "intrinsics": intrinsics,
             "distortion": distortion,

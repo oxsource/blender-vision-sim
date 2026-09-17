@@ -1,0 +1,87 @@
+/* OpenCV fisheye (Kannala-Brandt / equidistant) camera shader for Cycles
+ * "Lens Type = Custom".
+ *
+ *   theta   = atan(r)                          r = |(X/Z, Y/Z)|
+ *   theta_d = theta (1 + k1 t^2 + k2 t^4 + k3 t^6 + k4 t^8)
+ *   u = fx * theta_d/r * x + cx ,  v = fy * theta_d/r * y + cy
+ *
+ * The inverse is obtained with the same Newton iteration as
+ * cv2.fisheye.undistortPoints; because this model supports fields of view above
+ * 180 degrees the ray is built as (sin t * u, sin t * v, cos t) instead of a
+ * slope, which stays valid when theta exceeds 90 degrees (cos t < 0).
+ *
+ * Keep the parameter list in sync with bl/apply.py.
+ */
+shader opencv_fisheye(
+    float fx = 800.0 [[ string help = "Focal length in pixels (x)" ]],
+    float fy = 800.0 [[ string help = "Focal length in pixels (y)" ]],
+    float cx = -1.0 [[ string help = "Principal point u [px], -1 = image center" ]],
+    float cy = -1.0 [[ string help = "Principal point v [px], -1 = image center" ]],
+    int enable_distortion = 1 [[ string widget = "checkbox",
+                                 string help = "Off = ideal pinhole with the same intrinsics" ]],
+    float k1 = 0.0,
+    float k2 = 0.0,
+    float k3 = 0.0,
+    float k4 = 0.0,
+    int undistort_iterations = 20 [[ int min = 1, int max = 100,
+                                     string help = "Newton iterations inverting theta_d" ]],
+    int allow_off_sensor = 1 [[ string widget = "checkbox" ]],
+    output point position = 0.0,
+    output vector direction = 0.0,
+    output color throughput = 1.0)
+{
+    vector res;
+    getattribute("cam:image_resolution", res);
+    float W = res.x;
+    float H = res.y;
+
+    /* Raster position: 0..1 across the image, y up (Blender convention).
+     * "u" and "v" are reserved OSL globals, do not shadow them. */
+    point raster = camera_shader_raster_position();
+    float px = raster.x * W;
+    float py = (1.0 - raster.y) * H;
+
+    float u0 = (cx < 0.0) ? 0.5 * W : cx;
+    float v0 = (cy < 0.0) ? 0.5 * H : cy;
+
+    float xd = (px - u0) / fx;
+    float yd = (py - v0) / fy;
+
+    if (enable_distortion) {
+        float r_d = sqrt(xd * xd + yd * yd);
+        if (r_d < 1.0e-12) {
+            direction = vector(0.0, 0.0, 1.0);
+            return;
+        }
+        /* Newton: f(t) = t (1 + k1 t^2 + k2 t^4 + k3 t^6 + k4 t^8) - r_d */
+        float t = r_d;
+        for (int i = 0; i < undistort_iterations; i++) {
+            float t2 = t * t;
+            float poly = 1.0 + t2 * (k1 + t2 * (k2 + t2 * (k3 + t2 * k4)));
+            float deriv = 1.0 + t2 * (3.0 * k1 + t2 * (5.0 * k2
+                                                       + t2 * (7.0 * k3 + t2 * 9.0 * k4)));
+            if (fabs(deriv) < 1.0e-12) {
+                break;
+            }
+            float step = (t * poly - r_d) / deriv;
+            t -= step;
+            if (fabs(t) > 1.0e3) {
+                if (!allow_off_sensor) {
+                    throughput = color(0.0);
+                    return;
+                }
+                break;
+            }
+            if (fabs(step) < 1.0e-12) {
+                break;
+            }
+        }
+        float sin_t = sin(t);
+        float cos_t = cos(t);
+        direction = vector(sin_t * xd / r_d, -sin_t * yd / r_d, cos_t);
+        return;
+    }
+
+    /* Distortion disabled: ideal pinhole with the same intrinsics. */
+    direction = normalize(vector(xd, -yd, 1.0));
+}

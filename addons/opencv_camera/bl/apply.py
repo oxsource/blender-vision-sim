@@ -10,22 +10,46 @@ from mathutils import Matrix
 from ..core import camera_model, transform
 from . import shader
 
-#: OSL shader parameters written to ``camera.cycles_custom``.  Keep in sync
-#: with ``shaders/opencv_camera.osl``.
-SHADER_PARAMS = (
-    "fx", "fy", "cx", "cy",
-    "enable_distortion",
-    "k1", "k2", "k3", "k4", "k5", "k6", "p1", "p2",
-    "undistort_iterations", "allow_off_sensor",
-)
+#: OSL shader parameters per model family, written to ``camera.cycles_custom``.
+#: Keep in sync with ``shaders/opencv_camera.osl`` and ``shaders/opencv_fisheye.osl``.
+SHADER_PARAMS: Dict[str, Tuple[str, ...]] = {
+    "poly": (
+        "fx", "fy", "cx", "cy",
+        "enable_distortion",
+        "k1", "k2", "k3", "k4", "k5", "k6", "p1", "p2",
+        "undistort_iterations", "allow_off_sensor",
+    ),
+    "fisheye": (
+        "fx", "fy", "cx", "cy",
+        "enable_distortion",
+        "k1", "k2", "k3", "k4",
+        "undistort_iterations", "allow_off_sensor",
+    ),
+}
+
+
+def param_group(model: str) -> str:
+    """Which parameter family a distortion model uses."""
+    return "fisheye" if model == camera_model.MODEL_FISHEYE else "poly"
+
+
+def shader_params(model: str) -> Tuple[str, ...]:
+    return SHADER_PARAMS[param_group(model)]
 
 
 def effective_intrinsics(settings, width: int = 0, height: int = 0) -> camera_model.Intrinsics:
     """Intrinsics for a given render resolution.
 
-    The stored intrinsics belong to ``settings.intrinsics.image_width/height``.
-    When ``scale_to_render`` is enabled (default) they are rescaled so the FOV is
-    preserved; otherwise they are used verbatim.
+    The stored intrinsics belong to ``settings.intrinsics.image_width/height``:
+
+    * same aspect ratio -> rescaled per axis, so the field of view is preserved
+      (``scale_to_render`` off keeps the numbers verbatim);
+    * different aspect ratio -> the render cannot match the calibration geometry,
+      so the *pixel pitch* is kept (``fx``/``fy`` unchanged) and the principal
+      point offset from the centre is preserved: the render is a centre crop of
+      the calibrated image at the original pitch.
+
+    The returned intrinsics always have a resolved (explicit) principal point.
     """
     intr = settings.intrinsics
     width = int(width or settings.intrinsics.image_width)
@@ -36,20 +60,35 @@ def effective_intrinsics(settings, width: int = 0, height: int = 0) -> camera_mo
         cy=-1.0 if intr.auto_center else intr.cy,
         width=int(intr.image_width), height=int(intr.image_height),
     )
-    if intr.scale_to_render and stored.width and stored.height and (
-        (stored.width, stored.height) != (width, height)
-    ):
-        return stored.scaled(width, height)
-    return camera_model.Intrinsics(
-        fx=stored.fx, fy=stored.fy, cx=stored.cx, cy=stored.cy,
-        width=width, height=height,
+    resolved = stored.resolved()
+    same_size = (stored.width, stored.height) == (width, height)
+    same_aspect = (
+        stored.width > 0 and stored.height > 0 and height > 0
+        and abs(stored.width / stored.height - width / height) < 1e-3
     )
+    if same_size or not intr.scale_to_render:
+        scaled = camera_model.Intrinsics(
+            fx=resolved.fx, fy=resolved.fy, cx=resolved.cx, cy=resolved.cy,
+            width=width, height=height,
+        )
+    elif same_aspect:
+        scaled = stored.scaled(width, height)
+    else:  # crop at the original pixel pitch
+        scaled = camera_model.Intrinsics(
+            fx=resolved.fx,
+            fy=resolved.fy,
+            cx=0.5 * width + (resolved.cx - 0.5 * stored.width),
+            cy=0.5 * height + (resolved.cy - 0.5 * stored.height),
+            width=width,
+            height=height,
+        )
+    return scaled.resolved()
 
 
 def custom_camera_values(settings, intr: camera_model.Intrinsics,
                          dist: camera_model.Distortion) -> Dict[str, float]:
     """Values for ``camera.cycles_custom[...]`` for the given intrinsics."""
-    return {
+    values = {
         "fx": float(intr.fx),
         "fy": float(intr.fy),
         "cx": float(intr.cx),
@@ -59,16 +98,21 @@ def custom_camera_values(settings, intr: camera_model.Intrinsics,
         "k2": float(dist.k2),
         "k3": float(dist.k3),
         "k4": float(dist.k4),
-        "k5": float(dist.k5),
-        "k6": float(dist.k6),
-        "p1": float(dist.p1),
-        "p2": float(dist.p2),
         "undistort_iterations": int(settings.distortion.iterations),
         "allow_off_sensor": 1,
     }
+    if param_group(dist.model) == "poly":
+        values.update({
+            "k5": float(dist.k5),
+            "k6": float(dist.k6),
+            "p1": float(dist.p1),
+            "p2": float(dist.p2),
+        })
+    return values
 
 
-def apply_settings(cam_data, settings, scene=None, resolution: Tuple[int, int] = (0, 0)) -> Tuple[bool, List[str]]:
+def apply_settings(cam_data, settings, scene=None,
+                   resolution: Tuple[int, int] = (0, 0)) -> Tuple[bool, List[str]]:
     """Attach the shader, compile it and push the parameters to Cycles.
 
     Returns ``(ok, messages)``.  ``ok`` is ``False`` when the shader could not be
@@ -100,7 +144,7 @@ def apply_settings(cam_data, settings, scene=None, resolution: Tuple[int, int] =
         return False, messages
 
     missing = []
-    for name in SHADER_PARAMS:
+    for name in shader_params(dist.model):
         if name in params:
             params[name] = values[name]
         else:
@@ -177,13 +221,31 @@ def resolution_notes(settings, scene) -> List[str]:
     width, height = scene.render.resolution_x, scene.render.resolution_y
     notes: List[str] = []
     if (intr.image_width, intr.image_height) != (width, height):
-        notes.append(
-            f"calibrated at {intr.image_width}x{intr.image_height}, "
-            f"rendering at {width}x{height}"
-            + (" (intrinsics are rescaled)" if intr.scale_to_render else " (intrinsics used as-is)")
-        )
+        if intr.scale_to_render and intr.image_height and height:
+            same_aspect = abs(intr.image_width / intr.image_height - width / height) < 1e-3
+        else:
+            same_aspect = True
+        if same_aspect:
+            notes.append(
+                f"calibrated at {intr.image_width}x{intr.image_height}, "
+                f"rendering at {width}x{height}"
+                + (" (intrinsics are rescaled)" if intr.scale_to_render else " (intrinsics used as-is)")
+            )
+        else:
+            notes.append(
+                f"aspect mismatch: {intr.image_width}x{intr.image_height} calibration "
+                f"vs {width}x{height} render -> centre crop at the original pixel pitch "
+                "(use the calibration aspect ratio to compare with real images)"
+            )
     if abs(scene.render.pixel_aspect_x - scene.render.pixel_aspect_y) > 1e-6:
         notes.append("non-square pixel aspect breaks the OpenCV pixel model")
     if scene.render.engine != "CYCLES":
         notes.append("custom cameras only render in Cycles")
+    distortion = settings.distortion
+    if distortion.model == camera_model.MODEL_FISHEYE:
+        notes.append("fisheye model: fx/fy are pinhole focal lengths, k1..k4 are theta terms")
+    elif distortion.model == camera_model.MODEL_BROWN_CONRADY and (
+        distortion.k4 or distortion.k5 or distortion.k6
+    ):
+        notes.append("k4/k5/k6 are non-zero: the rational model is used")
     return notes

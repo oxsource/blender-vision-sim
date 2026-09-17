@@ -8,7 +8,7 @@ Blender 视觉算法仿真插件集合：用 Blender/Cycles 生成**与真实相
 
 | 插件 | 状态 | 说明 |
 | --- | --- | --- |
-| [`opencv_camera`](addons/opencv_camera) | 0.1.0 可用 | Cycles 自定义相机，支持 OpenCV 内参（fx/fy/cx/cy）与畸变（Brown-Conrady / rational），可导入导出标定文件、设置 OpenCV 外参、渲染自检 |
+| [`opencv_camera`](addons/opencv_camera) | 0.1.0 可用 | Cycles 自定义相机，支持 OpenCV 内参（fx/fy/cx/cy）与畸变（**fisheye / Brown-Conrady / rational**），可导入导出标定文件、设置 OpenCV 外参、一键生成验证场景、渲染自检 |
 | `camera_rig` | 规划中 | 多相机刚体（外参）、同步渲染、标定数据集导出 |
 | `sensor_sim` | 规划中 | IMU / GNSS / LiDAR 轨迹与噪声仿真 |
 | `dataset_export` | 规划中 | 渲染 + 真值导出（位姿/内参/深度/分割），KITTI / COLMAP / EuRoC 布局 |
@@ -51,11 +51,24 @@ scripts/run_tests.sh
 Blender 中使用：
 
 1. 选中相机对象 ▸ `Object Data Properties ▸ Lens ▸ OpenCV Camera`；
-2. 填 fx/fy（可 `From Blender Lens` 反推）、畸变系数（或 `Import Calibration` 导入标定文件）；
-3. 点 `Apply to Camera` —— 插件会写入 OSL 着色器、编译、把参数送进 Cycles；
-4. 点 `Run Self Test` —— 在临时场景里渲染目标并与 OpenCV 模型比对，报出像素误差。
+2. 选畸变模型（默认 `Fisheye (equidistant)`）、填 fx/fy 与系数（或 `Import Calibration` 导入标定文件，
+   仓库自带参考标定 `addons/opencv_camera/presets/avm_minibus_front.yaml`）；
+3. 点 `Apply to Camera` —— 插件会写入对应 OSL 着色器、编译、把参数送进 Cycles；
+4. 点 `Add Test Scene` —— 生成棋盘方块 + 棋盘地面 + 灯光并设好 Cycles，直接 F12 看畸变效果；
+5. 点 `Run Self Test` —— 渲染目标并与 OpenCV 模型比对，报出像素误差（参考相机实测 0.03–0.08 px）。
 
 > 自定义相机只在 **Cycles** 下生效，且只能使用 **CPU 或 OptiX** 后端（macOS 无 OptiX ⇒ 只能 CPU）。
+> 默认参数取真实 AVM 前相机（1280×960 鱼眼），直接可用；换成自己的标定即可。
+
+### 可视化验证
+
+`Add Test Scene` 生成的场景（同一套 K，仅切换畸变开关）：
+
+| 鱼眼（`fisheye`, k1..k4） | 理想针孔（`enable_distortion = 0`） |
+| --- | --- |
+| ![鱼眼](docs/images/fisheye_on.png) | ![针孔](docs/images/pinhole_off.png) |
+
+地面网格的弯曲程度就是鱼眼畸变的直接体现；两图均可用 `docs/camera-model.md` 中的公式复算。
 
 ## 开发约定
 
@@ -74,8 +87,10 @@ Blender 中使用：
 | --- | --- |
 | 零畸变自定义相机 vs 自带透视相机（128×128，50mm/36mm） | 16384/16384 像素完全一致（max\|Δ\| = 0） |
 | 主点偏移等价性（shift_x=0.1, shift_y=0.15） | 完全一致（cx=51.2, cy=83.2 px） |
-| 畸变下目标成像位置 vs OpenCV 前向模型（k1=-0.25 等） | 误差 0.055–0.094 px |
-| 分辨率换算（1920×1080 标定 → 128×128 渲染） | fx 按比例缩放，FOV 保持 |
+| 多项式畸变目标成像位置 vs OpenCV 前向模型 | 误差 0.018 px |
+| 鱼眼（AVM 前相机，θ≈72°） | 误差 0.048 px |
+| 鱼眼贴近 90° 边界（θ≈87°，射线用 sin/cos） | 误差 0.026 px |
+| 分辨率换算（同比 1920×1080 → 960×540） | fx 按比例缩放，FOV 保持；宽高比不一致时自动改为原始像素尺度的中心裁剪 |
 
 ## 许可
 

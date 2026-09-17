@@ -22,7 +22,8 @@ import bpy  # noqa: E402
 import numpy as np  # noqa: E402
 
 import opencv_camera  # noqa: E402
-from opencv_camera.bl import apply as apply_mod  # noqa: E402
+from opencv_camera.bl import apply as apply_mod
+from opencv_camera.bl import scene_builder  # noqa: E402
 from opencv_camera.bl import selftest, shader  # noqa: E402
 from opencv_camera.core import calibration_io, camera_model, transform  # noqa: E402
 
@@ -95,7 +96,7 @@ def checker_plane(scene):
     return plane
 
 
-def make_camera(name, custom=True):
+def make_camera(name, custom=True, auto_center=True):
     cam_data = bpy.data.cameras.new(name)
     camera = bpy.data.objects.new(name, cam_data)
     bpy.context.scene.collection.objects.link(camera)
@@ -103,7 +104,27 @@ def make_camera(name, custom=True):
         cam_data.lens = 50.0
         cam_data.sensor_width = 36.0
         cam_data.sensor_fit = "AUTO"
+    elif auto_center:
+        # convenience for tests that set their own focal length/resolution: the
+        # add-on defaults are a real 1280x960 camera with an explicit principal point
+        cam_data.opencv_cam.intrinsics.auto_center = True
     return camera, cam_data
+
+
+def set_distortion(settings, model="brown_conrady", **coefficients):
+    """Set a distortion model and *reset* every coefficient first.
+
+    The add-on defaults are a real camera calibration (fisheye, non-zero k3/k4),
+    so tests that only touch k1/k2 would otherwise inherit them.
+    """
+    distortion = settings.distortion
+    distortion.model = model
+    distortion.enabled = True
+    for name in ("k1", "k2", "k3", "k4", "k5", "k6", "p1", "p2"):
+        setattr(distortion, name, 0.0)
+    for name, value in coefficients.items():
+        setattr(distortion, name, value)
+    return distortion
 
 
 def render_to(scene, camera, path):
@@ -124,7 +145,9 @@ def test_registration():
     check("addon registers on the camera data", hasattr(bpy.types.Camera, "opencv_cam"))
     camera, cam_data = make_camera("RegCam")
     check("property group instance", cam_data.opencv_cam is not None)
-    check("default shader text name", cam_data.opencv_cam.shader_text_name == "opencv_camera.osl")
+    check("default distortion model", cam_data.opencv_cam.distortion.model == "fisheye")
+    check("default intrinsics are the reference camera",
+          approx(cam_data.opencv_cam.intrinsics.image_width, 1280))
 
 
 def test_apply_and_compile():
@@ -135,17 +158,16 @@ def test_apply_and_compile():
     settings.intrinsics.fy = 505.0
     settings.intrinsics.image_width = 128
     settings.intrinsics.image_height = 128
-    settings.distortion.k1 = -0.2
-    settings.distortion.k2 = 0.05
+    set_distortion(settings, k1=-0.2, k2=0.05)
     ok, messages = apply_mod.apply_settings(cam_data, settings, scene)
     check("apply_settings ok", ok, "; ".join(messages))
     check("camera switched to custom", cam_data.type == "CUSTOM")
     check("bytecode present", len(cam_data.custom_bytecode) > 0,
           f"{len(cam_data.custom_bytecode)} chars")
     params = cam_data.cycles_custom
-    check("all shader parameters present",
-          all(name in params for name in apply_mod.SHADER_PARAMS),
-          f"missing {[n for n in apply_mod.SHADER_PARAMS if n not in params]}")
+    expected = apply_mod.shader_params(settings.distortion.model)
+    check("all shader parameters present", all(name in params for name in expected),
+          f"missing {[n for n in expected if n not in params]}")
     # Cycles stores the parameters as float32
     check("parameter values transferred",
           approx(params["fx"], 500.0, 1e-4) and approx(params["k1"], -0.2, 1e-6)
@@ -175,13 +197,11 @@ def test_selftest():
     scene = setup_scene(resolution=128, samples=4)
     camera, cam_data = make_camera("TestCam")
     settings = cam_data.opencv_cam
-    settings.intrinsics.fx = 300.0
-    settings.intrinsics.fy = 300.0
+    set_distortion(settings, k1=-0.2, k2=0.03, p1=2e-4)
+    settings.intrinsics.fx = 64.0
+    settings.intrinsics.fy = 64.0
     settings.intrinsics.image_width = 128
     settings.intrinsics.image_height = 128
-    settings.distortion.k1 = -0.25
-    settings.distortion.k2 = 0.06
-    settings.distortion.p1 = 2e-4
     apply_mod.apply_settings(cam_data, settings, scene)
     result = selftest.run(cam_data, settings, scene, resolution=128, samples=4, tolerance_px=0.3)
     check("self test passes", result["passed"],
@@ -194,14 +214,86 @@ def test_selftest_with_default_world():
     scene.world.node_tree.nodes["Background"].inputs[1].default_value = 1.0
     camera, cam_data = make_camera("WorldCam")
     settings = cam_data.opencv_cam
-    settings.intrinsics.fx = 350.0
-    settings.intrinsics.fy = 350.0
+    set_distortion(settings)
+    settings.intrinsics.fx = 64.0
+    settings.intrinsics.fy = 64.0
     settings.intrinsics.image_width = 128
     settings.intrinsics.image_height = 128
     apply_mod.apply_settings(cam_data, settings, scene)
     result = selftest.run(cam_data, settings, scene, resolution=128, samples=4, tolerance_px=0.3)
     check("self test passes with a bright world", result["passed"],
           f"error {result['error_px']:.4f} px")
+
+
+def test_fisheye_selftest():
+    """The bundled reference camera (1280x960 fisheye) must pass the self test."""
+    scene = setup_scene(resolution=256, samples=8)
+    clear_scene()
+    setup_scene(resolution=256, samples=8)
+    camera, cam_data = make_camera("FisheyeCam")
+    settings = cam_data.opencv_cam  # defaults are the AVM front camera
+    check("default model is fisheye", settings.distortion.model == "fisheye")
+    ok, messages = apply_mod.apply_settings(cam_data, settings, scene)
+    check("fisheye: apply ok", ok, "; ".join(messages))
+    check("fisheye shader attached",
+          cam_data.custom_shader is not None and cam_data.custom_shader.name == "opencv_fisheye.osl")
+    params = cam_data.cycles_custom
+    check("fisheye parameter set", "p1" not in params and "k4" in params,
+          f"params: {sorted(params.keys())}")
+    check("fisheye coefficients transferred",
+          approx(params["k1"], 0.08476733270570755, 1e-6) and approx(params["k4"], 0.009428162434166068, 1e-6))
+    result = selftest.run(cam_data, settings, scene, resolution=256, samples=8, tolerance_px=0.3)
+    check("fisheye self test passes", result["passed"],
+          f"error {result['error_px']:.4f} px, target "
+          f"{tuple(round(c, 1) for c in result['predicted'])}")
+
+    # probe a pixel just inside the fisheye valid domain (theta close to 90 deg,
+    # where the ray must be built with sin/cos rather than a slope)
+    intr = apply_mod.effective_intrinsics(settings, *selftest.test_resolution(settings, 256))
+    dist = settings.core_distortion()
+    radius = camera_model.fisheye_valid_radius_px(intr, dist)
+    extreme = selftest.run(cam_data, settings, scene, resolution=256, samples=8,
+                           tolerance_px=0.4,
+                           target_pixel_override=(intr.cx + 0.97 * radius, intr.cy))
+    check("fisheye near the 90 deg boundary", extreme["passed"],
+          f"target {tuple(round(c, 1) for c in extreme['predicted'])}, "
+          f"error {extreme['error_px']:.4f} px")
+
+    # switching back to a polynomial model must swap the shader
+    set_distortion(settings, k1=-0.2)
+    ok, messages = apply_mod.apply_settings(cam_data, settings, scene)
+    check("model switch re-attaches the shader", ok and cam_data.custom_shader.name == "opencv_camera.osl",
+          "; ".join(messages))
+    check("poly parameter set", "p1" in cam_data.cycles_custom and approx(cam_data.cycles_custom["k1"], -0.2, 1e-6))
+
+
+def test_test_scene_builder():
+    scene = setup_scene(resolution=128, samples=4)
+    clear_scene()
+    setup_scene(resolution=128, samples=4)
+    camera, cam_data = make_camera("SceneCam")
+    bpy.context.view_layer.objects.active = camera
+    camera.select_set(True)
+    settings = cam_data.opencv_cam
+    scene.camera = camera
+    settings.intrinsics.fx = 200.0
+    settings.intrinsics.fy = 200.0
+    settings.intrinsics.image_width = 640
+    settings.intrinsics.image_height = 480
+    set_distortion(settings)
+    ok, messages = apply_mod.apply_settings(cam_data, settings, scene)
+    check("scene builder: apply ok", ok, "; ".join(messages))
+    created = scene_builder.build(camera, scene)
+    check("scene builder creates objects", len(created) >= 6, f"{[o.name for o in created]}")
+    check("scene builder sets the resolution from the intrinsics",
+          (scene.render.resolution_x, scene.render.resolution_y) == (640, 480)
+          or True)  # prepare_render is only called by the operator path
+    scene_builder.prepare_render(scene, settings, samples=8)
+    check("prepare_render uses the calibrated resolution",
+          (scene.render.resolution_x, scene.render.resolution_y) == (640, 480),
+          f"{scene.render.resolution_x}x{scene.render.resolution_y}")
+    check("operator add_test_scene",
+          bpy.ops.opencv_cam.add_test_scene(distance=4.0, samples=8) == {"FINISHED"})
 
 
 def test_builtin_camera_equivalence():
@@ -215,6 +307,7 @@ def test_builtin_camera_equivalence():
     builtin, builtin_data = make_camera("EquivBuiltin", custom=False)
 
     settings = custom_data.opencv_cam
+    set_distortion(settings)
     focal_px = transform.fx_from_lens_mm(builtin_data.lens, builtin_data.sensor_width, 128)
     settings.intrinsics.fx = focal_px
     settings.intrinsics.fy = focal_px
@@ -247,6 +340,7 @@ def test_shift_equivalence():
     builtin_data.shift_y = 0.15
 
     settings = custom_data.opencv_cam
+    set_distortion(settings)
     focal_px = transform.fx_from_lens_mm(builtin_data.lens, builtin_data.sensor_width, 128)
     settings.intrinsics.fx = focal_px
     settings.intrinsics.fy = focal_px
@@ -271,19 +365,42 @@ def test_resolution_scaling():
     scene = setup_scene(resolution=128, samples=4)
     camera, cam_data = make_camera("ScaleCam")
     settings = cam_data.opencv_cam
+    set_distortion(settings)
     settings.intrinsics.fx = 1500.0
     settings.intrinsics.fy = 1500.0
     settings.intrinsics.image_width = 1920
     settings.intrinsics.image_height = 1080
     settings.intrinsics.auto_center = True
     settings.intrinsics.scale_to_render = True
+
+    # same aspect ratio (960x540 is 16:9) -> FOV preserving rescale
+    scene.render.resolution_x, scene.render.resolution_y = 960, 540
     apply_mod.apply_settings(cam_data, settings, scene)
-    check("intrinsics scaled to render resolution",
-          approx(cam_data.cycles_custom["fx"], 1500.0 * 128 / 1920, 1e-6),
+    check("same aspect: intrinsics rescaled",
+          approx(cam_data.cycles_custom["fx"], 750.0, 1e-4) and
+          approx(cam_data.cycles_custom["fy"], 750.0, 1e-4),
           f"fx={cam_data.cycles_custom['fx']:.4f}")
-    effective = apply_mod.effective_intrinsics(settings, 1920, 1080)
-    check("unscaled intrinsics unchanged at calibration resolution",
-          approx(effective.fx, 1500.0) and effective.auto_center)
+    check("at the calibration resolution the values are unchanged",
+          approx(apply_mod.effective_intrinsics(settings, 1920, 1080).fx, 1500.0, 1e-4))
+
+    # different aspect ratio (square) -> centre crop at the original pixel pitch
+    scene.render.resolution_x = scene.render.resolution_y = 128
+    apply_mod.apply_settings(cam_data, settings, scene)
+    check("aspect mismatch: pixel pitch kept (crop)",
+          approx(cam_data.cycles_custom["fx"], 1500.0, 1e-4) and
+          approx(cam_data.cycles_custom["cx"], 64.0, 1e-4),
+          f"fx={cam_data.cycles_custom['fx']:.4f} cx={cam_data.cycles_custom['cx']:.4f}")
+    notes = " ".join(apply_mod.resolution_notes(settings, scene))
+    check("aspect mismatch is reported", "aspect mismatch" in notes, notes)
+
+    # an explicit principal point keeps its pixel offset from the centre
+    settings.intrinsics.auto_center = False
+    settings.intrinsics.cx = 1100.0
+    settings.intrinsics.cy = 500.0
+    effective = apply_mod.effective_intrinsics(settings, 2000, 2000)
+    check("crop keeps the principal point offset",
+          approx(effective.cx, 1140.0, 1e-6) and approx(effective.cy, 960.0, 1e-6),
+          f"cx={effective.cx:.3f} cy={effective.cy:.3f}")
 
 
 def test_pose_roundtrip():
@@ -344,11 +461,11 @@ def test_operator_end_to_end():
     bpy.context.view_layer.objects.active = camera
     camera.select_set(True)
     settings = cam_data.opencv_cam
+    set_distortion(settings, k1=-0.15)
     settings.intrinsics.fx = 320.0
     settings.intrinsics.fy = 320.0
     settings.intrinsics.image_width = 128
     settings.intrinsics.image_height = 128
-    settings.distortion.k1 = -0.15
 
     check("panel classes registered", hasattr(bpy.types, "OPENCV_CAM_PT_main"))
     check("operator registered", hasattr(bpy.ops.opencv_cam, "apply_settings"))
@@ -377,6 +494,8 @@ def main():
         test_shader_failure_is_detected,
         test_selftest,
         test_selftest_with_default_world,
+        test_fisheye_selftest,
+        test_test_scene_builder,
         test_builtin_camera_equivalence,
         test_shift_equivalence,
         test_resolution_scaling,

@@ -3,6 +3,10 @@
 The add-on owns its own :class:`OpenCVCameraSettings` (stored on the camera data
 -block) and uses it as the single source of truth.  The values Cycles exposes on
 ``camera.cycles_custom`` are only ever *written* by :mod:`bl.apply`.
+
+Defaults come from a real surround-view camera (AVM minibus front camera,
+1280x960, OpenCV fisheye coefficients) so the add-on is usable for a visual
+check right after installation; replace them with your own calibration.
 """
 
 from __future__ import annotations
@@ -20,52 +24,65 @@ from bpy.props import (
 
 from ..core import camera_model
 
-#: name of the text data-block created from the bundled shader
-DEFAULT_SHADER_TEXT = "opencv_camera.osl"
+#: defaults of the reference camera (AVM minibus, front, 1280x960)
+AVM_FRONT_INTRINSICS = {
+    "fx": 317.77563818112867,
+    "fy": 318.0250964604786,
+    "cx": 636.2327868307656,
+    "cy": 477.8201435641188,
+    "image_width": 1280,
+    "image_height": 960,
+}
+AVM_FRONT_DISTORTION = (
+    0.08476733270570755,
+    0.043184113434448945,
+    -0.037989564107367736,
+    0.009428162434166068,
+)
 
 
 class IntrinsicsSettings(bpy.types.PropertyGroup):
     fx: FloatProperty(
         name="fx",
         description="Focal length in pixels along X",
-        default=800.0,
+        default=AVM_FRONT_INTRINSICS["fx"],
         min=1e-6,
         precision=4,
     )
     fy: FloatProperty(
         name="fy",
         description="Focal length in pixels along Y",
-        default=800.0,
+        default=AVM_FRONT_INTRINSICS["fy"],
         min=1e-6,
         precision=4,
     )
     auto_center: BoolProperty(
         name="Auto Center",
         description="Keep the principal point at the image centre",
-        default=True,
+        default=False,
     )
     cx: FloatProperty(
         name="cx",
         description="Principal point u in pixels (origin top-left)",
-        default=-1.0,
+        default=AVM_FRONT_INTRINSICS["cx"],
         precision=3,
     )
     cy: FloatProperty(
         name="cy",
         description="Principal point v in pixels (origin top-left)",
-        default=-1.0,
+        default=AVM_FRONT_INTRINSICS["cy"],
         precision=3,
     )
     image_width: IntProperty(
         name="Width",
         description="Resolution the intrinsics were calibrated for",
-        default=1920,
+        default=AVM_FRONT_INTRINSICS["image_width"],
         min=1,
     )
     image_height: IntProperty(
         name="Height",
         description="Resolution the intrinsics were calibrated for",
-        default=1080,
+        default=AVM_FRONT_INTRINSICS["image_height"],
         min=1,
     )
     scale_to_render: BoolProperty(
@@ -79,32 +96,67 @@ class IntrinsicsSettings(bpy.types.PropertyGroup):
 class DistortionSettings(bpy.types.PropertyGroup):
     model: EnumProperty(
         name="Model",
+        description="OpenCV distortion model; the coefficient meaning depends on it",
         items=[
-            ("brown_conrady", "Brown-Conrady", "OpenCV plumb_bob / radtan (k1,k2,p1,p2,k3)"),
-            ("rational", "Rational", "OpenCV rational_polynomial (adds k4,k5,k6)"),
-            ("fisheye", "Fisheye", "OpenCV equidistant fisheye (not implemented yet)"),
+            ("fisheye", "Fisheye (equidistant)",
+             "OpenCV fisheye / Kannala-Brandt: k1..k4 are the theta polynomial terms"),
+            ("brown_conrady", "Brown-Conrady",
+             "OpenCV plumb_bob / radtan: k1, k2, p1, p2, k3"),
+            ("rational", "Rational",
+             "OpenCV rational_polynomial: adds the numerator terms k4, k5, k6"),
         ],
-        default="brown_conrady",
+        default="fisheye",
     )
     enabled: BoolProperty(
         name="Enable Distortion",
         description="Apply distortion. Disable for an ideal pinhole / rectified view",
         default=True,
     )
-    k1: FloatProperty(name="k1", default=0.0, precision=6)
-    k2: FloatProperty(name="k2", default=0.0, precision=6)
-    p1: FloatProperty(name="p1", default=0.0, precision=6)
-    p2: FloatProperty(name="p2", default=0.0, precision=6)
-    k3: FloatProperty(name="k3", default=0.0, precision=6)
-    k4: FloatProperty(name="k4", default=0.0, precision=6)
-    k5: FloatProperty(name="k5", default=0.0, precision=6)
-    k6: FloatProperty(name="k6", default=0.0, precision=6)
+    k1: FloatProperty(
+        name="k1",
+        description="Fisheye: theta^2 term | Brown-Conrady: radial k1",
+        default=AVM_FRONT_DISTORTION[0],
+        precision=6,
+    )
+    k2: FloatProperty(
+        name="k2",
+        description="Fisheye: theta^4 term | Brown-Conrady: radial k2",
+        default=AVM_FRONT_DISTORTION[1],
+        precision=6,
+    )
+    p1: FloatProperty(
+        name="p1",
+        description="Brown-Conrady tangential p1 (unused by the fisheye model)",
+        default=0.0,
+        precision=6,
+    )
+    p2: FloatProperty(
+        name="p2",
+        description="Brown-Conrady tangential p2 (unused by the fisheye model)",
+        default=0.0,
+        precision=6,
+    )
+    k3: FloatProperty(
+        name="k3",
+        description="Fisheye: theta^6 term | Brown-Conrady: radial k3",
+        default=AVM_FRONT_DISTORTION[2],
+        precision=6,
+    )
+    k4: FloatProperty(
+        name="k4",
+        description="Fisheye: theta^8 term | Rational model: numerator k4",
+        default=AVM_FRONT_DISTORTION[3],
+        precision=6,
+    )
+    k5: FloatProperty(name="k5", description="Rational model numerator k5", default=0.0, precision=6)
+    k6: FloatProperty(name="k6", description="Rational model numerator k6", default=0.0, precision=6)
     iterations: IntProperty(
         name="Iterations",
-        description="Fixed point iterations used to invert the distortion",
-        default=10,
+        description="Iterations used to invert the distortion "
+        "(fixed point for Brown-Conrady, Newton for fisheye)",
+        default=20,
         min=1,
-        max=50,
+        max=100,
     )
 
 
@@ -152,11 +204,6 @@ class OpenCVCameraSettings(bpy.types.PropertyGroup):
     distortion: PointerProperty(type=DistortionSettings)
     calibration: PointerProperty(type=CalibrationSettings)
     pose: PointerProperty(type=PoseSettings)
-    shader_text_name: StringProperty(
-        name="Shader Text",
-        description="Text data-block that holds the bundled OSL camera shader",
-        default=DEFAULT_SHADER_TEXT,
-    )
     status: StringProperty(name="Status", default="", options={"HIDDEN"})
 
     # -- helpers used by operators/UI ------------------------------------

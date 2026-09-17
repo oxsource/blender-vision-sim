@@ -2,8 +2,9 @@
 
 Responsibilities:
 
-* keep a Text data-block in sync with the bundled ``.osl`` file;
-* attach it to a camera (Lens Type = Custom / Internal);
+* keep Text data-blocks in sync with the bundled ``.osl`` files (one per model);
+* attach the one matching the selected distortion model to a camera
+  (Lens Type = Custom / Internal);
 * make sure the shader got compiled, because **Cycles silently keeps the old
   bytecode when a recompile fails** and renders with a stale shader otherwise.
 """
@@ -12,39 +13,47 @@ from __future__ import annotations
 
 import importlib
 import sys
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import bpy
 
-from ..core import paths
-from .properties import DEFAULT_SHADER_TEXT
+from ..core import camera_model, paths
 
-#: name of the bundled shader, see ``shaders/``
-SHADER_FILENAME = "opencv_camera.osl"
+#: distortion model -> bundled shader file
+MODEL_SHADERS: Dict[str, str] = {
+    camera_model.MODEL_BROWN_CONRADY: "opencv_camera.osl",
+    camera_model.MODEL_RATIONAL: "opencv_camera.osl",
+    camera_model.MODEL_FISHEYE: "opencv_fisheye.osl",
+}
 
 
-def shader_source(filename: str = SHADER_FILENAME) -> str:
+def shader_filename(model: str) -> str:
+    """Bundled shader that implements ``model``."""
+    return MODEL_SHADERS.get(model, MODEL_SHADERS[camera_model.MODEL_BROWN_CONRADY])
+
+
+def shader_source(filename: str) -> str:
     """Read a bundled shader from disk (kept as the authoritative copy)."""
     return paths.read_text(paths.shader_file(filename))
 
 
-def installed_text(settings) -> Optional[bpy.types.Text]:
-    name = settings.shader_text_name or DEFAULT_SHADER_TEXT
-    return bpy.data.texts.get(name)
+def installed_text(model: str) -> Optional[bpy.types.Text]:
+    """Text data-block for a model, if it was installed before."""
+    return bpy.data.texts.get(shader_filename(model))
 
 
 def install_shader(settings, force: bool = False) -> Tuple[bpy.types.Text, bool]:
-    """Create or refresh the Text data-block holding the bundled shader.
+    """Create or refresh the Text data-block for the selected distortion model.
 
     Returns ``(text, changed)``.  The text is pinned with a fake user so it is
     saved with the ``.blend`` (the compiled bytecode lives on the camera).
     """
-    name = settings.shader_text_name or DEFAULT_SHADER_TEXT
-    source = shader_source()
-    text = bpy.data.texts.get(name)
+    filename = shader_filename(settings.distortion.model)
+    source = shader_source(filename)
+    text = bpy.data.texts.get(filename)
     changed = False
     if text is None:
-        text = bpy.data.texts.new(name)
+        text = bpy.data.texts.new(filename)
         text.write(source)
         changed = True
     elif force or text.as_string() != source:
@@ -56,7 +65,7 @@ def install_shader(settings, force: bool = False) -> Tuple[bpy.types.Text, bool]
 
 
 def attach(cam_data, settings) -> bpy.types.Text:
-    """Point ``cam_data`` at the installed shader, switching it to Custom/Internal."""
+    """Point ``cam_data`` at the shader matching the selected model."""
     text, _ = install_shader(settings)
     cam_data.type = "CUSTOM"
     if cam_data.custom_mode != "INTERNAL":

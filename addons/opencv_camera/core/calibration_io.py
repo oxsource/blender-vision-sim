@@ -70,8 +70,8 @@ def _strip_comment(line: str) -> str:
             quote = ch
             out.append(ch)
             continue
-        if ch == "#" and out and out[-1] in " \t":
-            break
+        if ch == "#" and (not out or out[-1] in " \t"):
+            break  # a leading '#' also starts a comment
         out.append(ch)
     return "".join(out).rstrip()
 

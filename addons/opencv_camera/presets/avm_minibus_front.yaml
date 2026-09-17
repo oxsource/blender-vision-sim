@@ -1,0 +1,15 @@
+# AVM minibus front camera (filament_avm configs/vehicle_avm_minibus.json)
+# image 1280x960, OpenCV fisheye (equidistant) coefficients
+image_width: 1280
+image_height: 960
+camera_matrix:
+  rows: 3
+  cols: 3
+  dt: d
+  data: [317.77563818112867, 0.0, 636.2327868307656, 0.0, 318.0250964604786, 477.8201435641188, 0.0, 0.0, 1.0]
+distortion_model: equidistant
+distortion_coefficients:
+  rows: 1
+  cols: 4
+  dt: d
+  data: [0.08476733270570755, 0.043184113434448945, -0.037989564107367736, 0.009428162434166068]

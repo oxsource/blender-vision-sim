@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 import tempfile
@@ -62,6 +63,52 @@ def test_distortion_roundtrip():
     check("rational round trip", abs(xu - 0.4) < 1e-6 and abs(yu - 0.3) < 1e-6)
 
 
+def test_fisheye():
+    dist = camera_model.Distortion.from_coefficients(
+        [0.08476733270570755, 0.043184113434448945, -0.037989564107367736, 0.009428162434166068],
+        model=camera_model.MODEL_FISHEYE,
+    )
+    check("fisheye model kept", dist.model == camera_model.MODEL_FISHEYE
+          and dist.coefficients(4)[0] == dist.k1)
+    worst = 0.0
+    for r in (0.05, 0.2, 0.5, 0.9, 1.3, 1.6):
+        x, y = r, 0.3 * r
+        n = math.hypot(x, y)
+        x, y = x / n * r, y / n * r
+        xd, yd = camera_model.distort(x, y, dist)
+        xu, yu, converged = camera_model.undistort_converged(xd, yd, dist, 30)
+        worst = max(worst, abs(xu - x), abs(yu - y))
+        if not converged:
+            check("fisheye undistort converged", False, f"r={r}")
+    check("fisheye round trip", worst < 1e-6, f"max error {worst:.3e}")
+
+    # theta beyond 90 degrees must stay a valid ray (image corner of the AVM camera)
+    intr = camera_model.Intrinsics(fx=317.77563818112867, fy=318.0250964604786,
+                                   cx=636.2327868307656, cy=477.8201435641188,
+                                   width=1280, height=960)
+    ray = camera_model.ray_from_pixel(0.0, 0.0, intr, dist)
+    theta = math.degrees(math.acos(max(-1.0, min(1.0, ray[2]))))
+    check("fisheye corner ray valid", math.isfinite(theta) and theta < 140.0,
+          f"theta at the top-left corner = {theta:.2f} deg")
+    check("fisheye ray is unit length", approx(math.sqrt(sum(c * c for c in ray)), 1.0, 1e-9))
+
+    # inside the valid domain (theta < 90 deg) pixel -> ray -> pixel must be exact
+    radius = camera_model.fisheye_valid_radius_px(intr, dist)
+    check("fisheye valid radius", 600.0 < radius < 650.0, f"{radius:.1f} px")
+    samples = ((640.0, 480.0), (200.0, 700.0), (1000.0, 300.0), (640.0 + radius - 5.0, 480.0))
+    worst = 0.0
+    for u, v in samples:
+        x, y, z = camera_model.ray_from_pixel(u, v, intr, dist)
+        u2, v2, _ = camera_model.project_point(x * 5.0, y * 5.0, z * 5.0, intr, dist)
+        worst = max(worst, abs(u2 - u), abs(v2 - v))
+    check("fisheye pixel round trip (valid domain)", worst < 1e-6, f"max error {worst:.3e}")
+
+    disabled = camera_model.Distortion.from_coefficients(
+        list(dist.coefficients(4)), model=camera_model.MODEL_FISHEYE, enabled=False)
+    xd, yd = camera_model.distort(0.5, 0.3, disabled)
+    check("fisheye disabled == pinhole", (xd, yd) == (0.5, 0.3))
+
+
 def test_projection():
     intr = camera_model.Intrinsics.auto(800.0, 800.0, 1280, 720)
     dist = camera_model.Distortion.from_coefficients([-0.1, 0.01, 0.0, 0.0, 0.0])
@@ -109,6 +156,20 @@ def _write(tmp, name, text):
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(text)
     return path
+
+
+def test_bundled_preset():
+    """The AVM preset shipped with the add-on must load as a fisheye camera."""
+    preset = os.path.join(ROOT, "addons", "opencv_camera", "presets", "avm_minibus_front.yaml")
+    calib = calibration_io.load_calibration(preset)
+    check("preset intrinsics", approx(calib.intrinsics.fx, 317.77563818112867)
+          and approx(calib.intrinsics.cy, 477.8201435641188)
+          and (calib.width, calib.height) == (1280, 960))
+    check("preset model is fisheye", calib.distortion.model == camera_model.MODEL_FISHEYE)
+    check("preset coefficients", approx(calib.distortion.k1, 0.08476733270570755)
+          and approx(calib.distortion.k4, 0.009428162434166068)
+          and calib.distortion.coefficients(4) == [calib.distortion.k1, calib.distortion.k2,
+                                                   calib.distortion.k3, calib.distortion.k4])
 
 
 def test_calibration_io():
@@ -184,8 +245,8 @@ cam0:
 
 
 def main():
-    for test in (test_intrinsics, test_distortion_roundtrip, test_projection, test_transform,
-                 test_lens_conversion, test_calibration_io):
+    for test in (test_intrinsics, test_distortion_roundtrip, test_fisheye, test_projection,
+                 test_transform, test_lens_conversion, test_bundled_preset, test_calibration_io):
         test()
     print()
     if FAILURES:

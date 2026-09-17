@@ -7,7 +7,8 @@
 | M1 ✅ | `opencv_camera` 插件骨架：OSL 着色器、参数下发、编译校验、自检算子 | 面板可用；自检误差 < 0.3 px（实测 0.06 px） |
 | M2 ✅ | 标定文件导入导出（OpenCV YAML / ROS camera_info / Kalibr / JSON）、外参设置、镜头反推、分辨率换算 | 核心单测 + 集成测试全绿 |
 | M3 | 工程化补齐：README/文档、`scripts/package.sh` 打包、CI（无头 Blender 跑测试） | `dist/opencv_camera-*.zip` 可直接安装；CI 一键跑测试 |
-| M4 | 畸变模型扩展：OpenCV fisheye（equidistant，θ 多项式）、thin-prism/tilted sensor | 每个模型都有自检用例；导入导出保留模型标识 |
+| M4 ✅ | 畸变模型扩展：OpenCV fisheye（equidistant，θ 多项式） | 自检通过（θ≈72° 误差 0.048 px、θ≈87° 误差 0.026 px）；导入导出保留模型标识 |
+| M4b | 其余模型：thin-prism/tilted sensor（s1..s4）、双鱼眼/超广角（EUCM/DS） | 每个模型都有自检用例 |
 | M5 | 端到端回归：渲染 → 角点/ArUco 检测 → `cv2.calibrateCamera` 反标定回环 | 反标定内参相对误差 < 1%，畸变系数趋势一致 |
 | M6 | `camera_rig`：多相机刚体、同步渲染、多相机标定导出（含双目/HFOV 组合） | 双目极线几何验证通过；同步渲染输出可复现 |
 | M7 | `dataset_export`：渲染 + 真值（位姿/内参/深度/实例分割），KITTI / COLMAP / EuRoC 布局 | 导出的数据集能被参考工具链直接读取 |
@@ -21,7 +22,8 @@
 - [ ] Blender 5.x 复核：`custom_mode` / `custom_shader` / `custom_bytecode` 命名与行为是否变化。
 - [ ] 导出「渲染实际使用的内参」（分辨率换算后）以便回写 OpenCV 端流程。
 - [ ] 标定文件 XML（OpenCV FileStorage XML）读写。
-- [ ] fisheye 模型的正/反解与着色器（θ 多项式 + Newton 反解）。
+- [x] fisheye 模型的正/反解与着色器（θ 多项式 + Newton 反解）—— 已完成（`shaders/opencv_fisheye.osl`）。
+- [ ] fisheye 的 `cv2.fisheye.calibrate` 端到端回环（M5）与超 180° 的 EUCM/DS 模型。
 - [ ] 渲染农场场景：支持 EXTERNAL 模式（`.osl`/`.oso` 落盘 + 相对路径），避免依赖 Text 数据块。
 
 ## 设计原则

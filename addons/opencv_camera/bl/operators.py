@@ -14,14 +14,24 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from ..core import calibration_io
 from . import apply as apply_mod
-from . import selftest, shader
+from . import scene_builder, selftest, shader
 
 
-def _camera_data(context):
-    obj = context.active_object or context.camera
-    if obj is None or obj.type != "CAMERA":
-        return None
-    return obj.data
+def _camera_object(context):
+    """Resolve the camera to work on.
+
+    Prefers the active object when it is a camera, otherwise falls back to
+    ``context.camera`` (the camera shown in Object Data Properties) so the panel
+    operators keep working while some other object is selected.
+    """
+    obj = context.active_object
+    if obj is not None and obj.type == "CAMERA":
+        return obj
+    for candidate in (getattr(context, "camera", None),
+                      getattr(getattr(context, "scene", None), "camera", None)):
+        if candidate is not None and candidate.type == "CAMERA":
+            return candidate
+    return None
 
 
 class _CameraOperator:
@@ -29,10 +39,12 @@ class _CameraOperator:
 
     @classmethod
     def poll(cls, context):
-        return _camera_data(context) is not None
+        return _camera_object(context) is not None
 
     def camera(self, context):
-        obj = context.active_object or context.camera
+        obj = _camera_object(context)
+        if obj is None:
+            raise RuntimeError("no camera in context")
         return obj, obj.data
 
 
@@ -108,10 +120,14 @@ class OPENCV_CAM_OT_import_calibration(_CameraOperator, bpy.types.Operator, Impo
         settings.set_from_core(calibration.intrinsics, calibration.distortion)
         settings.calibration.filepath = self.filepath
         settings.calibration.last_import = os.path.basename(self.filepath)
+        note = ""
+        if not calibration.model_name:
+            note = (" (no distortion_model in the file: coefficients were read as "
+                    f"{calibration.distortion.model}; switch the model if that is wrong)")
         self.report(
             {"INFO"},
             f"{os.path.basename(self.filepath)}: {calibration.width}x{calibration.height}, "
-            f"fx={calibration.intrinsics.fx:.2f}, model={calibration.distortion.model}",
+            f"fx={calibration.intrinsics.fx:.2f}, model={calibration.distortion.model}{note}",
         )
         return {"FINISHED"}
 
@@ -186,6 +202,35 @@ class OPENCV_CAM_OT_read_pose(_CameraOperator, bpy.types.Operator):
         return {"FINISHED"}
 
 
+class OPENCV_CAM_OT_add_test_scene(_CameraOperator, bpy.types.Operator):
+    bl_idname = "opencv_cam.add_test_scene"
+    bl_label = "Add Test Scene"
+    bl_description = (
+        "Create a checker cube, ground grid and lights in front of the camera, "
+        "apply the current intrinsics and set up Cycles - then press F12 to look "
+        "at the distortion"
+    )
+    bl_options = {"REGISTER", "UNDO"}
+
+    distance: FloatProperty(name="Distance", default=4.0, min=0.5, max=100.0)
+    samples: IntProperty(name="Samples", default=64, min=1, max=4096)
+
+    def execute(self, context):
+        obj, cam_data = self.camera(context)
+        ok, messages, created = scene_builder.apply_and_build(
+            obj, context.scene, samples=self.samples
+        )
+        _report_messages(self, messages, "INFO" if ok else "ERROR")
+        if not ok:
+            return {"CANCELLED"}
+        self.report(
+            {"INFO"},
+            f"test scene ready ({len(created)} objects, "
+            f"{context.scene.render.resolution_x}x{context.scene.render.resolution_y}) - press F12",
+        )
+        return {"FINISHED"}
+
+
 class OPENCV_CAM_OT_selftest(_CameraOperator, bpy.types.Operator):
     bl_idname = "opencv_cam.self_test"
     bl_label = "Run Self Test"
@@ -231,6 +276,7 @@ class OPENCV_CAM_OT_selftest(_CameraOperator, bpy.types.Operator):
 
 _CLASSES = (
     OPENCV_CAM_OT_apply,
+    OPENCV_CAM_OT_add_test_scene,
     OPENCV_CAM_OT_install_shader,
     OPENCV_CAM_OT_import_calibration,
     OPENCV_CAM_OT_export_calibration,
