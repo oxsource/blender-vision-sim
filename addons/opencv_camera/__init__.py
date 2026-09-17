@@ -17,13 +17,14 @@ Only relative imports are used: an add-on is imported as ``bl_ext.<repo>.<id>``
 when installed as an extension and as its plain package name as a legacy add-on.
 """
 
-from .bl import menus, operators, panels_patch, properties, ui
+from .bl import icons, menus, operators, panels_patch, properties, ui
 
-__all__ = ["menus", "operators", "panels_patch", "properties", "ui"]
+__all__ = ["icons", "menus", "operators", "panels_patch", "properties", "ui"]
 
 
 def register():
     properties.register()
+    icons.register()
     menus.register()
     operators.register()
     ui.register()
@@ -35,4 +36,5 @@ def unregister():
     ui.unregister()
     operators.unregister()
     menus.unregister()
+    icons.unregister()
     properties.unregister()

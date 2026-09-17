@@ -16,7 +16,7 @@ from __future__ import annotations
 import bpy
 
 from . import apply as apply_mod
-from . import panels_patch, preview as preview_mod, shader
+from . import icons, panels_patch, preview as preview_mod, shader
 
 
 class _CameraPanel:
@@ -41,7 +41,8 @@ class OPENCV_CAM_PT_main(_CameraPanel, bpy.types.Panel):
         scene = context.scene
 
         column = layout.column(align=True)
-        column.operator("opencv_cam.apply_settings", icon="CHECKMARK")
+        icons.operator(layout=column, idname="opencv_cam.apply_settings",
+                       text="Apply to Camera", fallback_icon="CHECKMARK")
         column.operator("opencv_cam.preview", icon="RENDER_STILL")
 
         row = layout.row(align=True)

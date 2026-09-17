@@ -1,8 +1,8 @@
 schema_version = "1.0.0"
 
 id = "opencv_camera"
-version = "0.5.0"
-name = "OpenCV Camera"
+version = "0.5.1"
+name = "VisionSim: OpenCV Camera"
 tagline = "Render with OpenCV intrinsics and distortion coefficients"
 maintainer = "moks"
 type = "add-on"

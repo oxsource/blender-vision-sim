@@ -1,24 +1,25 @@
 """Menus.
 
-Everything the add-on adds lives under :menuselection:`Add ▸ vision-sim`:
+Everything the add-on adds lives under :menuselection:`Add ▸ VisionSim`:
 
 * ``Camera ▸ ...`` - create a camera configured with an OpenCV lens model
 * ``Test Scene`` - checker cube/ground/lights for a quick distortion check
+* ``Camera Rig`` - empty to parent cameras to (extrinsics / multi-camera)
 
 The camera entries are *not* also appended to :menuselection:`Add ▸ Camera`:
-Blender does not let add-ons extend ``Camera.type``, so an ``Add ▸ Camera`` entry
-would only ever create a *Custom* lens camera anyway - one place to look is
-clearer.
+Blender does not let add-ons extend ``Camera.type``, so an entry there could only
+ever create a *Custom* lens camera anyway - one place to look is clearer.
 """
 
 from __future__ import annotations
 
 import bpy
 
-from . import camera_factory
+from . import camera_factory, icons
 
 MENU_ID = "OPENCV_CAM_MT_vision_sim"
 MENU_CAMERA_ID = "OPENCV_CAM_MT_camera"
+MENU_LABEL = "VisionSim"
 
 
 class OPENCV_CAM_MT_camera(bpy.types.Menu):
@@ -28,24 +29,24 @@ class OPENCV_CAM_MT_camera(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         for model, (label, _, _) in camera_factory.MODELS.items():
-            layout.operator("opencv_cam.add_camera", text=label, icon="CAMERA_DATA").model = model
+            icons.operator(layout, "opencv_cam.add_camera", label, model=model)
 
 
 class OPENCV_CAM_MT_vision_sim(bpy.types.Menu):
     bl_idname = MENU_ID
-    bl_label = "vision-sim"
+    bl_label = MENU_LABEL
 
     def draw(self, context):
         layout = self.layout
-        layout.menu(MENU_CAMERA_ID, icon="CAMERA_DATA")
+        layout.menu(MENU_CAMERA_ID, icon=icons.FALLBACK_ICON)
         layout.separator()
-        layout.operator("opencv_cam.add_test_scene", icon="MESH_CUBE")
-        layout.operator("opencv_cam.add_rig_empty", icon="EMPTY_AXIS")
+        icons.operator(layout, "opencv_cam.add_test_scene", "Test Scene", fallback_icon="MESH_CUBE")
+        icons.operator(layout, "opencv_cam.add_rig_empty", "Camera Rig", fallback_icon="EMPTY_AXIS")
 
 
 def _menu_add(self, context):
-    """Draw the vision-sim submenu inside Add."""
-    self.layout.menu(MENU_ID, icon="CAMERA_DATA")
+    """Draw the VisionSim submenu inside Add (a submenu button takes a named icon)."""
+    self.layout.menu(MENU_ID, icon=icons.FALLBACK_ICON)
 
 
 _CLASSES = (OPENCV_CAM_MT_camera, OPENCV_CAM_MT_vision_sim)

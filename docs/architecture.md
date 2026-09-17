@@ -20,7 +20,8 @@ addons/opencv_camera/
 │   ├── preview.py         预览渲染（按标定宽高比、渲染设置用完即还原）+ 防抖定时器
 │   ├── scene_builder.py   验证场景（棋盘方块/地面/灯光）
 │   ├── selftest.py        渲染自检（隐藏其他对象，跑完还原）
-│   ├── menus.py           Add ▸ vision-sim 子菜单（Camera / Test Scene / Rig）
+│   ├── menus.py           Add ▸ VisionSim 子菜单（Camera / Test Scene / Camera Rig）
+│   ├── icons.py           自绘图标载入（bpy.utils.previews + icon_value，带内置图标回退）
 │   ├── panels_patch.py    隐藏 Cycles 自动生成的裸参数面板（可开关，卸载时还原）
 │   ├── ui.py              Lens 下的面板：OpenCV Camera / Intrinsics / Distortion /
 │   │                      Output Image / Preview / Extrinsics / Calibration IO
@@ -67,6 +68,15 @@ bpy 会在注册时用 `typing.get_type_hints` 重新求值注解字符串，任
 
 1. **编译失败会静默沿用旧字节码**。`custom_shader` 赋值后若 oslc 报错，`custom_bytecode` 保持旧值，渲染继续用旧着色器，Python 侧不抛异常（错误只写系统控制台）。因此 `bl/shader.py: ensure_compiled()` 是所有写入路径的必经关口，`tests` 里专门有一条「broken shader detected」用例。
 2. **编译由 RNA update 回调触发**，回调里会查当前场景的渲染引擎；在脚本/无场景上下文中不一定触发。`bl/shader.py: force_compile()` 直接调用 Cycles 插件的 `osl.update_custom_camera_shader()` 作为兜底（注意这是 Cycles 内部 API，升级 Blender 后需回归）。
+
+### 2.2 自定义图标
+
+- 图标是 64×64 PNG（`icons/visionsim.png`，由 `scripts/make_icon.py` 生成），用
+  `bpy.utils.previews.new()` / `pcoll.load(name, path, 'IMAGE')` 载入，`icon_value` 用在**算子按钮**上；
+- `bpy.utils.previews` 是惰性子模块，必须写 `import bpy.utils.previews`（直接 `bpy.utils.previews` 会 AttributeError）；
+- **子菜单按钮（`layout.menu`）只接受内置图标名**，所以 `Add ▸ VisionSim` 这一级用 `CAMERA_DATA`，我们的图标用在子菜单里的算子条目；
+- 后台/无 UI 会话 `icon_id` 为 0（无效），`icons.operator()` 会自动回退到内置图标；
+- 图标是**原创**标识（三弧 + 鱼眼镜头），不要分发 OpenCV 官方 logo（商标）。
 
 ## 3. 参数流向
 

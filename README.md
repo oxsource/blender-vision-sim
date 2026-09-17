@@ -16,6 +16,18 @@ Blender 视觉算法仿真插件集合：用 Blender/Cycles 生成**与真实相
 
 路线图见 [`docs/roadmap.md`](docs/roadmap.md)。
 
+### 入口与图标
+
+`Add ▸ VisionSim` 下的条目带插件自绘图标（三个彩色弧 + 鱼眼镜头同心环，向 OpenCV 配色致敬的
+**原创标识**，不是 OpenCV 商标本身；由 `scripts/make_icon.py` 纯 Python 生成，可重新生成）：
+
+```bash
+python3 scripts/make_icon.py     # 重新生成 addons/opencv_camera/icons/visionsim.png
+```
+
+图标通过 `bpy.utils.previews` 载入并用 `icon_value` 使用；无 UI 的会话（后台/测试）拿不到有效
+icon id，此时自动回退到 Blender 内置图标，不会出现空白按钮。
+
 ## 目录结构
 
 ```text
@@ -54,7 +66,7 @@ Blender 中使用：
 2. 选畸变模型（默认 `Fisheye (equidistant)`）、填 fx/fy 与系数（或 `Import Calibration` 导入标定文件，
    仓库自带参考标定 `addons/opencv_camera/presets/avm_minibus_front.yaml`）；
 3. 点 `Apply to Camera` —— 插件会写入对应 OSL 着色器、编译、把参数送进 Cycles；
-4. `Add ▸ vision-sim ▸ Test Scene` —— 生成棋盘方块 + 棋盘地面 + 灯光并设好 Cycles，直接 F12 看畸变效果
+4. `Add ▸ VisionSim ▸ Test Scene` —— 生成棋盘方块 + 棋盘地面 + 灯光并设好 Cycles，直接 F12 看畸变效果
    （场景里没有相机时会自动先建一台鱼眼相机）；
 5. 点 `Run Self Test` —— 渲染目标并与 OpenCV 模型比对，报出像素误差（参考相机实测 0.03–0.08 px）。
 
@@ -65,7 +77,7 @@ Blender 中使用：
 
 | 方式 | 操作 |
 | --- | --- |
-| **新建相机**（推荐） | `Add ▸ vision-sim ▸ Camera  Fisheye (OpenCV equidistant) / Brown-Conrady (radtan) / Rational polynomial / Pinhole (no distortion)`，创建出来即为 Custom 相机、已挂载着色器与参数，可选 `At 3D Cursor` / `Add Rig Empty`（父级空物体，便于多相机/外参）。同一菜单下还有 `Test Scene`（棋盘方块/地面/灯光）与 `Camera Rig (Empty)` |
+| **新建相机**（推荐） | `Add  VisionSim ▸ Camera  Fisheye / Brown-Conrady / Rational / Pinhole`，创建出来即为 Custom 相机、已挂载着色器与参数，可选 `At 3D Cursor` / `Add Rig Empty`（父级空物体，便于多相机/外参）。同一菜单下还有 `Test Scene`（棋盘方块/地面/灯光）与 `Camera Rig` |
 | **改造现有相机** | 选中相机 ▸ `Lens ▸ OpenCV Camera ▸ Apply to Camera` |
 | **批量/脚本** | `bpy.ops.opencv_cam.add_camera(model="fisheye", preset="avm_minibus_front", use_rig=True)` |
 

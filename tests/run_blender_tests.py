@@ -534,8 +534,15 @@ def test_add_camera_operator():
 
 def test_menus_and_raw_params():
     """Add ▸ vision-sim holds our operators; the Cycles raw list is hidden."""
-    check("vision-sim submenu registered", hasattr(bpy.types, "OPENCV_CAM_MT_vision_sim"))
+    check("VisionSim submenu registered", hasattr(bpy.types, "OPENCV_CAM_MT_vision_sim"))
     check("camera submenu registered", hasattr(bpy.types, "OPENCV_CAM_MT_camera"))
+    from opencv_camera.bl import icons as icons_mod
+    check("custom icon loaded into a preview collection", icons_mod.is_loaded())
+    check("icon file ships with the add-on", os.path.exists(icons_mod.icon_path()))
+    check("icon falls back to a built-in id without a UI", icons_mod.icon_id() == 0,
+          f"icon_id={icons_mod.icon_id()} (background mode)")
+    check("menu label is VisionSim",
+          bpy.types.OPENCV_CAM_MT_vision_sim.bl_label == "VisionSim")
     check("add_test_scene poll allows a camera-less scene",
           hasattr(bpy.types, "OPENCV_CAM_OT_add_test_scene"))
     check("rig empty operator registered", hasattr(bpy.ops.opencv_cam, "add_rig_empty"))
