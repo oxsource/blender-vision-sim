@@ -4,9 +4,11 @@
 #   scripts/package.sh                  # every add-on
 #   scripts/package.sh opencv_camera    # one add-on
 #   scripts/package.sh --check          # validate manifests only
-#   scripts/package.sh --blender        # use `blender --command extension build`
-#                                       # (writes dist-official/, so it never mixes
-#                                       #  with the reproducible dist/ output)
+#   scripts/package.sh --blender        # OPTIONAL extra validation with the official
+#                                       # `blender --command extension build`; writes
+#                                       # dist-official/ so it never mixes with the
+#                                       # reproducible dist/ output.  The default path
+#                                       # (and CI) needs no Blender at all.
 #
 # Without --blender this uses the dependency-free scripts/package.py, so it works
 # on machines (and CI runners) without Blender installed.  With Blender available

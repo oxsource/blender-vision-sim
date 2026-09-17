@@ -4,8 +4,10 @@ name: release
 #
 #   tag push                 -> fast checks, build the zip, publish the Release
 #   manual run (dispatch)    -> fast checks + build only; fill `tag` to (re)publish
-#                               that tag, tick `run_blender_tests` to also run the
-#                               headless Blender suite (never required to release)
+#
+# Everything here is pure Python: the zip is built by scripts/package.py, so CI
+# never downloads or installs Blender.  The headless Blender integration tests run
+# locally (scripts/run_tests.sh) and are skipped when Blender is not installed.
 on:
   push:
     tags: ["v*"]
@@ -14,10 +16,6 @@ on:
       tag:
         description: "Existing tag to publish (empty = build only, no release)"
         required: false
-      run_blender_tests:
-        description: "Also run the headless Blender test suite (slow)"
-        type: boolean
-        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -105,40 +103,3 @@ jobs:
             gh release create "${tag}" "${assets[@]}" --title "${tag}" --generate-notes
           fi
           gh release view "${tag}" --json assets --jq '.assets[].name'
-
-  blender-tests:
-    name: headless Blender tests (optional)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_blender_tests }}
-    runs-on: ubuntu-latest
-    env:
-      BLENDER_VERSION: "4.5.3"
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-
-      - name: Install Blender
-        run: |
-          set -euo pipefail
-          series="${BLENDER_VERSION%.*}"
-          url="https://download.blender.org/release/Blender${series}/blender-${BLENDER_VERSION}-linux-x64.tar.xz"
-          echo "downloading ${url}"
-          curl -fSL --retry 3 -o blender.tar.xz "${url}"
-          mkdir -p "${HOME}/blender"
-          tar -xJf blender.tar.xz -C "${HOME}/blender" --strip-components=1
-          echo "${HOME}/blender" >> "${GITHUB_PATH}"
-
-      - name: Blender version
-        run: blender --version | head -2
-
-      - name: Integration tests (self test, equivalence, panels, menus)
-        run: blender -b --factory-startup --python tests/run_blender_tests.py
-
-      - name: Official extension build (manifest validation)
-        run: |
-          set -euo pipefail
-          scripts/package.sh --check
-          scripts/package.sh --blender opencv_camera   # -> dist-official/
-          ls -la dist-official

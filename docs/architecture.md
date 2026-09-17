@@ -113,7 +113,7 @@ bl/apply.apply_settings()
 | `scripts/package.py` | 纯 Python 打包（zip 根目录放 `blender_manifest.toml` + 包内容），排除 `__pycache__`/`.pyc`/`.DS_Store`/`*.zip`，**固定时间戳**因此可复现（同源两次构建 sha256 相同）；同时输出 `.sha256` 并做清单基本校验（id 必须等于目录名、必填字段、`schema_version`） |
 | `scripts/package.sh` | 默认转调 `package.py`（无需 Blender，输出 `dist/`）；`--blender` 时改用官方 `blender --command extension build`（权威校验，输出 `dist-official/`，两个目录**刻意分开**避免互相覆盖） |
 | `scripts/version.sh` | npm version 风格：bump manifest 里的 `version` → commit `chore(release): vX.Y.Z` → 打注释 tag `vX.Y.Z`；`--push` 顺带推送；`--dry-run`/`--show`；脏工作区拒绝执行 |
-| `.github/workflows/ci.yml` | 唯一的工作流，**仅 `v*` tag 触发**：job `release` 校验 tag↔manifest → 快速检查（编译/核心单测/发布工具测试）→ `package.py` 出包 → `gh release create/upload` 附 zip + sha256（**不下载 Blender**）；job `blender-tests` 为可选（手动 dispatch 勾选 `run_blender_tests` 才跑），永不阻塞发版 |
+| `.github/workflows/ci.yml` | 唯一的工作流，**仅 `v*` tag 触发**，**不依赖 Blender**：job `release` 校验 tag↔manifest → 快速检查（编译/核心单测/发布工具测试）→ `package.py` 出包 → `gh release create/upload` 附 zip + sha256 + artifact |
 
 版本号的**唯一真源**是 `blender_manifest.toml` 的 `version`，CI 会断言 tag 与之匹配，避免"tag 与包不一致"。
 

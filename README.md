@@ -75,11 +75,13 @@ scripts/run_tests.sh
 
 # 5. 打包（无需 Blender；--blender 走官方 builder 做校验）
 scripts/package.sh              # -> dist/opencv_camera-<version>.zip (+ .sha256)
-scripts/package.sh --blender    # 官方 builder 校验 -> dist-official/…（需要本机 Blender）
+scripts/package.sh --blender    # 可选：用官方 builder 再校验一次（需要本机 Blender）-> dist-official/
 
 # 6. 发版：bump 版本 + 提交 + 打 tag（npm version 风格）
 scripts/version.sh patch --push   # 也可以 minor / major / 1.2.3
 ```
+
+> 构建/发版只需 **Python 3.11+**，不依赖 Blender；只有本地跑集成测试（`scripts/run_tests.sh` 的第三段）才需要 Blender。
 
 ### 发版流程
 

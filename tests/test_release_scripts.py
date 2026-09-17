@@ -150,8 +150,7 @@ def test_workflow_present():
     check("only v* tags trigger it", 'tags: ["v*"]' in trigger, trigger.strip()[:80])
     check("branch pushes do not trigger a build",
           "branches:" not in trigger and "pull_request:" not in trigger, trigger.strip()[:80])
-    check("manual runs can opt into the Blender tests",
-          "run_blender_tests" in trigger)
+    check("manual runs can still build without a tag", "tag:" in trigger)
 
     check("the release job runs the fast checks", "test_core.py" in text)
     check("the release job builds the zip", "scripts/package.py" in text)
@@ -167,13 +166,11 @@ def test_workflow_present():
     check("uses Node 24 action versions",
           "actions/checkout@v5" in text and "actions/setup-python@v6" in text)
 
-    # the heavy Blender suite must not gate the release
-    release_job = text.split("blender-tests:", 1)[0]
-    check("the release job does not download Blender",
-          "download.blender.org" not in release_job)
-    check("Blender tests are a separate opt-in job",
-          "blender-tests:" in text
-          and "github.event_name == 'workflow_dispatch' && inputs.run_blender_tests" in text)
+    # CI must not depend on Blender at all
+    check("CI never downloads Blender", "download.blender.org" not in text)
+    check("CI has no Blender job", "blender-tests:" not in text and "blender --version" not in text)
+    check("the build is the dependency-free packager",
+          "scripts/package.py" in text and "extension build" not in text)
 
 
 def main() -> int:
