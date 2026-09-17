@@ -1,15 +1,27 @@
 #!/usr/bin/env python3
-"""Generate the add-on icon (``addons/opencv_camera/icons/visionsim.png``).
+"""Generate the add-on icon set (``addons/opencv_camera/icons/*.png``).
 
-Pure Python (no Pillow): a tiny PNG writer plus analytic drawing with 3x3 super
-sampling.  Run with any python3:
+Pure Python (no Pillow): a tiny PNG writer plus signed-distance-field drawing with
+3x3 super sampling.  Run with any python3:
 
     python3 scripts/make_icon.py
 
-Design: three coloured arcs (red/green/blue, echoing the OpenCV palette) around a
-slightly barrel-warped 3x3 calibration grid.  No lens/aperture body, so the mark
-does not read as "just another camera icon" at menu size.  It is an original mark -
-do not ship the OpenCV logo itself, it is a trademark of the OpenCV project.
+Style: one monochrome line drawing per menu entry (no colour), so each entry is
+recognisable at menu size:
+
+===============  ==========================================================
+``visionsim``    eye with a grid pupil - the add-on itself
+``camera``       camera body, for the Camera submenu
+``fisheye``      circle with a barrel-warped grid (wide angle)
+``brown_conrady``square with a barrel-warped grid
+``rational``     like brown_conrady plus a centre ring (higher order terms)
+``pinhole``      square with a perfectly straight grid
+``test_scene``   isometric cube (the checker test scene)
+``rig``          three axes (the camera rig empty)
+===============  ==========================================================
+
+The marks are original; do not ship the OpenCV logo (a trademark of the OpenCV
+project).
 """
 
 from __future__ import annotations
@@ -18,86 +30,179 @@ import math
 import os
 import struct
 import zlib
+from typing import Callable, Dict, Iterable, List, Sequence, Tuple
 
 SIZE = 64
-SS = 3  # super sampling factor
+SS = 3                      # super sampling factor
+HALF_WIDTH = 0.036          # stroke half width in normalised units
+INK = (0.878, 0.902, 0.929)  # light neutral, readable on the dark UI
+CORNER = 0.10
 
-RED = (0.898, 0.157, 0.157)
-GREEN = (0.196, 0.678, 0.239)
-BLUE = (0.129, 0.451, 0.851)
-
-ARC_RADIUS = 0.385
-ARC_WIDTH = 0.098
-ARC_SPAN = 96.0         # degrees per arc
-ARC_CENTERS = ((90.0, RED), (210.0, GREEN), (330.0, BLUE))
-
-#: five calibration dots (a cross) ; the outer ones are pushed further out to hint
-#: at the barrel/fisheye warp this add-on is about.  Few and large so the mark
-#: still reads at menu size (16 px).
-GRID_STEP = 0.135
-DOT_RADIUS = 0.042
-WARP = 0.45
-DOT_COLOR = (0.560, 0.830, 1.000)
-DOT_CENTER_COLOR = (1.0, 1.0, 1.0)
+Point = Tuple[float, float]
+Shape = Callable[[float, float], float]  # signed distance (negative inside)
 
 
-def _mix(dst, src, alpha):
-    return tuple(d + (s - d) * alpha for d, s in zip(dst, src))
+# ---------------------------------------------------------------------------
+# drawing primitives
+# ---------------------------------------------------------------------------
+def segment_distance(p: Point, a: Point, b: Point) -> float:
+    px, py = p
+    ax, ay = a
+    bx, by = b
+    vx, vy = bx - ax, by - ay
+    length2 = vx * vx + vy * vy
+    t = 0.0 if length2 == 0.0 else max(0.0, min(1.0, ((px - ax) * vx + (py - ay) * vy) / length2))
+    return math.hypot(px - (ax + t * vx), py - (ay + t * vy))
 
 
-def _dot_centres():
-    """Centre plus four dots in a cross, radially displaced (barrel warp)."""
-    points = [(0.0, 0.0, True)]
-    for gx, gy in ((GRID_STEP, 0.0), (-GRID_STEP, 0.0), (0.0, GRID_STEP), (0.0, -GRID_STEP)):
-        scale = 1.0 + WARP
-        points.append((gx * scale, gy * scale, False))
-    return points
+def line(a: Point, b: Point) -> Shape:
+    return lambda x, y: segment_distance((x, y), a, b)
 
 
-DOTS = _dot_centres()
+def polyline(points: Sequence[Point]) -> Shape:
+    segments = [(line(points[i], points[i + 1])) for i in range(len(points) - 1)]
+    return lambda x, y: min(shape(x, y) for shape in segments)
 
 
-def shade(x: float, y: float) -> tuple:
-    """Colour of the icon at normalised coordinates (0..1, y down)."""
-    dx, dy = x - 0.5, y - 0.5
-    radius = math.hypot(dx, dy)
-    angle = math.degrees(math.atan2(dy, dx))
-
-    # calibration grid
-    for gx, gy, is_center in DOTS:
-        if math.hypot(dx - gx, dy - gy) <= DOT_RADIUS:
-            return DOT_CENTER_COLOR if is_center else DOT_COLOR
-
-    # coloured arcs
-    for center, rgb in ARC_CENTERS:
-        delta = (angle - center + 180.0) % 360.0 - 180.0
-        if abs(delta) <= ARC_SPAN * 0.5 and abs(radius - ARC_RADIUS) <= ARC_WIDTH * 0.5:
-            offset = abs(radius - ARC_RADIUS) / (ARC_WIDTH * 0.5)
-            return _mix(rgb, (1.0, 1.0, 1.0), 0.25 * (1.0 - offset) ** 2)
-    return (0.0, 0.0, 0.0, 0.0)
+def circle(center: Point, radius: float) -> Shape:
+    cx, cy = center
+    return lambda x, y: abs(math.hypot(x - cx, y - cy) - radius)
 
 
-def render() -> bytes:
+def disc(center: Point, radius: float) -> Shape:
+    cx, cy = center
+    return lambda x, y: math.hypot(x - cx, y - cy) - radius
+
+
+def rounded_rect(x0: float, y0: float, x1: float, y1: float, radius: float = CORNER) -> Shape:
+    cx, cy = (x0 + x1) * 0.5, (y0 + y1) * 0.5
+    hx, hy = (x1 - x0) * 0.5 - radius, (y1 - y0) * 0.5 - radius
+
+    def sdf(x: float, y: float) -> float:
+        dx = abs(x - cx) - hx
+        dy = abs(y - cy) - hy
+        outside = math.hypot(max(dx, 0.0), max(dy, 0.0))
+        inside = min(max(dx, dy), 0.0)
+        return abs(outside + inside - radius)  # distance to the outline
+
+    return sdf
+
+
+def curve(function: Callable[[float], Point], t0: float, t1: float, samples: int = 48) -> Shape:
+    points = [function(t0 + (t1 - t0) * i / samples) for i in range(samples + 1)]
+    return polyline(points)
+
+
+def warped_grid(cx: float, cy: float, half: float, lines: int, bend: float) -> Shape:
+    """``lines`` vertical + horizontal lines, radially displaced by ``bend``.
+
+    Positive ``bend`` bulges the lines outward at their ends (barrel), negative
+    pinches them (pincushion).
+    """
+    shapes: List[Shape] = []
+    steps = 5
+    offsets = [(-half + 2.0 * half * i / (lines - 1)) for i in range(lines)] if lines > 1 else [0.0]
+    for offset in offsets:
+        for sign, axis in ((1.0, "v"), (1.0, "h")):
+            if axis == "v":
+                points = []
+                for i in range(steps + 1):
+                    t = -half + 2.0 * half * i / steps
+                    bulge = bend * (offset / half) * ((t / half) ** 2) if half else 0.0
+                    points.append((cx + offset + bulge, cy + t))
+            else:
+                points = []
+                for i in range(steps + 1):
+                    t = -half + 2.0 * half * i / steps
+                    bulge = bend * (offset / half) * ((t / half) ** 2) if half else 0.0
+                    points.append((cx + t, cy + offset + bulge))
+            shapes.append(polyline(points))
+    return lambda x, y: min(shape(x, y) for shape in shapes)
+
+
+def eye_shape() -> Shape:
+    """Almond outline: two mirrored elliptical arcs."""
+    def top(t: float) -> Point:
+        u = -1.0 + 2.0 * t
+        return (0.5 + 0.40 * u, 0.5 - 0.26 * math.sqrt(max(0.0, 1.0 - u * u)))
+
+    def bottom(t: float) -> Point:
+        u = -1.0 + 2.0 * t
+        return (0.5 + 0.40 * u, 0.5 + 0.26 * math.sqrt(max(0.0, 1.0 - u * u)))
+
+    return lambda x, y: min(curve(top, 0.0, 1.0)(x, y), curve(bottom, 0.0, 1.0)(x, y))
+
+
+def cube_shape() -> Shape:
+    """Isometric wireframe cube."""
+    top = (0.5, 0.16)
+    left = (0.16, 0.34)
+    right = (0.84, 0.34)
+    front = (0.5, 0.52)
+    bottom_left = (0.16, 0.70)
+    bottom_right = (0.84, 0.70)
+    bottom = (0.5, 0.88)
+    shapes = [
+        polyline([top, left, bottom_left, bottom, bottom_right, right, top]),  # hexagon
+        line(front, top), line(front, bottom_left), line(front, bottom_right),  # inner edges
+    ]
+    return lambda x, y: min(shape(x, y) for shape in shapes)
+
+
+def axes_shape() -> Shape:
+    center = (0.5, 0.62)
+    shapes = [
+        line(center, (0.5, 0.18)),      # up
+        line(center, (0.84, 0.78)),     # right-down
+        line(center, (0.16, 0.78)),     # left-down
+        disc(center, 0.035),
+    ]
+    return lambda x, y: min(shape(x, y) for shape in shapes)
+
+
+# ---------------------------------------------------------------------------
+# the icon set
+# ---------------------------------------------------------------------------
+def build_icons() -> Dict[str, List[Shape]]:
+    return {
+        "visionsim": [eye_shape(), circle((0.5, 0.5), 0.10),
+                      disc((0.5, 0.5), 0.035)],
+        "camera": [
+            rounded_rect(0.10, 0.30, 0.90, 0.84, 0.08),
+            rounded_rect(0.36, 0.20, 0.58, 0.30, 0.03),   # viewfinder
+            circle((0.50, 0.57), 0.16),
+        ],
+        "fisheye": [circle((0.5, 0.5), 0.40), warped_grid(0.5, 0.5, 0.26, 3, 0.13)],
+        "brown_conrady": [rounded_rect(0.10, 0.10, 0.90, 0.90), warped_grid(0.5, 0.5, 0.26, 3, 0.11)],
+        "rational": [rounded_rect(0.10, 0.10, 0.90, 0.90), warped_grid(0.5, 0.5, 0.26, 3, 0.13),
+                     circle((0.5, 0.5), 0.085)],
+        "pinhole": [rounded_rect(0.10, 0.10, 0.90, 0.90), warped_grid(0.5, 0.5, 0.26, 3, 0.0)],
+        "test_scene": [cube_shape()],
+        "rig": [axes_shape()],
+    }
+
+
+# ---------------------------------------------------------------------------
+# rasterise + PNG
+# ---------------------------------------------------------------------------
+def render(shapes: Iterable[Shape]) -> bytes:
+    shapes = list(shapes)
     rows = []
     for py in range(SIZE):
         row = bytearray()
         for px in range(SIZE):
-            acc = [0.0, 0.0, 0.0, 0.0]
+            covered = 0
             for sy in range(SS):
                 for sx in range(SS):
                     x = (px + (sx + 0.5) / SS) / SIZE
                     y = (py + (sy + 0.5) / SS) / SIZE
-                    colour = shade(x, y)
-                    if len(colour) == 3:
-                        colour = colour + (1.0,)
-                    for i in range(4):
-                        acc[i] += colour[i]
-            samples = SS * SS
-            rgba = [max(0, min(255, int(round(255.0 * c / samples)))) for c in acc]
-            row.extend(rgba)
+                    if min(shape(x, y) for shape in shapes) <= HALF_WIDTH:
+                        covered += 1
+            alpha = max(0, min(255, int(round(255.0 * covered / (SS * SS)))))
+            rgb = [max(0, min(255, int(round(255.0 * c)))) for c in INK]
+            row.extend(rgb + [alpha])
         rows.append(bytes(row))
-    raw = b"".join(b"\x00" + row for row in rows)
-    return raw
+    return b"".join(b"\x00" + row for row in rows)
 
 
 def write_png(path: str, raw: bytes) -> None:
@@ -115,9 +220,11 @@ def write_png(path: str, raw: bytes) -> None:
 
 def main() -> None:
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    path = os.path.join(root, "addons", "opencv_camera", "icons", "visionsim.png")
-    write_png(path, render())
-    print(f"written {path} ({os.path.getsize(path)} bytes)")
+    directory = os.path.join(root, "addons", "opencv_camera", "icons")
+    for name, shapes in build_icons().items():
+        path = os.path.join(directory, f"{name}.png")
+        write_png(path, render(shapes))
+        print(f"written {path} ({os.path.getsize(path)} bytes)")
 
 
 if __name__ == "__main__":

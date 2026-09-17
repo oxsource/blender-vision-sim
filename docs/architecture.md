@@ -21,10 +21,10 @@ addons/opencv_camera/
 │   ├── scene_builder.py   验证场景（棋盘方块/地面/灯光）
 │   ├── selftest.py        渲染自检（隐藏其他对象，跑完还原）
 │   ├── menus.py           Add ▸ VisionSim 子菜单（Camera / Test Scene / Camera Rig）
-│   ├── icons.py           自绘图标载入（bpy.utils.previews + icon_value，带内置图标回退）
+│   ├── icons.py           图标集载入（每个菜单项一个单色线条 PNG，带内置图标回退）
 │   ├── panels_patch.py    隐藏 Cycles 自动生成的裸参数面板（可开关，卸载时还原）
-│   ├── ui.py              独立的 OpenCV 面板组：主面板 + Intrinsics / Distortion /
-│   │                      Output Image / Extrinsics / Calibration IO / Preview
+│   ├── ui.py              独立的 OpenCV 面板：内参/畸变/输出/外参 inline 排列，
+│   │                      按钮在参数之后；Calibration IO / Preview 为可折叠子块
 │   ── operators.py       算子：薄壳，只做 context 解析、调用 bl 逻辑、report
 └── shaders/opencv_camera.osl   权威着色器源文件
 ```
@@ -71,12 +71,13 @@ bpy 会在注册时用 `typing.get_type_hints` 重新求值注解字符串，任
 
 ### 2.2 自定义图标
 
-- 图标是 64×64 PNG（`icons/visionsim.png`，由 `scripts/make_icon.py` 生成），用
+- 图标是 64×64 单色线条 PNG（`icons/<entry>.png`，由 `scripts/make_icon.py` 用 SDF 画线生成），用
   `bpy.utils.previews.new()` / `pcoll.load(name, path, 'IMAGE')` 载入，`icon_value` 用在**算子按钮**上；
 - `bpy.utils.previews` 是惰性子模块，必须写 `import bpy.utils.previews`（直接 `bpy.utils.previews` 会 AttributeError）；
 - `UILayout.menu()` 在 4.5 **支持 `icon_value`**，所以 `Add ▸ VisionSim` 这一级也用自绘图标（拿不到 id 时回退内置 `TRACKING`，避免和相机图标混淆）；
 - 后台/无 UI 会话 `icon_id` 为 0（无效），`icons.operator()` 会自动回退到内置图标；
-- 图标是**原创**标识（三弧 + 鱼眼镜头），不要分发 OpenCV 官方 logo（商标）。
+- 图标是**原创**线条标识（眼睛/相机/畸变网格/立方体/坐标轴），不要分发 OpenCV 官方 logo（商标）；
+  每个菜单项一个图标名，`icons.kwargs(name)` / `icons.operator(..., name=...)` 统一处理回退。
 
 ## 3. 参数流向
 

@@ -1,12 +1,13 @@
 """Menus.
 
-Everything the add-on adds lives under :menuselection:`Add ▸ VisionSim`:
+Everything the add-on adds lives under :menuselection:`Add ▸ VisionSim`, and every
+entry carries its own line icon (see ``scripts/make_icon.py``):
 
 * ``Camera ▸ ...`` - create a camera configured with an OpenCV lens model
 * ``Test Scene`` - checker cube/ground/lights for a quick distortion check
 * ``Camera Rig`` - empty to parent cameras to (extrinsics / multi-camera)
 
-The camera entries are *not* also appended to :menuselection:`Add ▸ Camera`:
+The camera entries are *not* also appended to :menuselection:`Add  Camera`:
 Blender does not let add-ons extend ``Camera.type``, so an entry there could only
 ever create a *Custom* lens camera anyway - one place to look is clearer.
 """
@@ -21,6 +22,14 @@ MENU_ID = "OPENCV_CAM_MT_vision_sim"
 MENU_CAMERA_ID = "OPENCV_CAM_MT_camera"
 MENU_LABEL = "VisionSim"
 
+#: distortion model -> icon name
+MODEL_ICONS = {
+    "fisheye": "fisheye",
+    "brown_conrady": "brown_conrady",
+    "rational": "rational",
+    "pinhole": "pinhole",
+}
+
 
 class OPENCV_CAM_MT_camera(bpy.types.Menu):
     bl_idname = MENU_CAMERA_ID
@@ -29,7 +38,8 @@ class OPENCV_CAM_MT_camera(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         for model, (label, _, _) in camera_factory.MODELS.items():
-            icons.operator(layout, "opencv_cam.add_camera", label, model=model)
+            icons.operator(layout, "opencv_cam.add_camera", label,
+                           name=MODEL_ICONS.get(model, "camera"), model=model)
 
 
 class OPENCV_CAM_MT_vision_sim(bpy.types.Menu):
@@ -38,23 +48,15 @@ class OPENCV_CAM_MT_vision_sim(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
-        layout.menu(MENU_CAMERA_ID, **_submenu_kwargs("Camera"))
+        layout.menu(MENU_CAMERA_ID, **icons.kwargs("camera", "Camera"))
         layout.separator()
-        icons.operator(layout, "opencv_cam.add_test_scene", "Test Scene", fallback_icon="MESH_CUBE")
-        icons.operator(layout, "opencv_cam.add_rig_empty", "Camera Rig", fallback_icon="EMPTY_AXIS")
-
-
-def _submenu_kwargs(text: str = MENU_LABEL) -> dict:
-    """``layout.menu`` arguments with our own icon (built-in name as fallback)."""
-    value = icons.icon_id()
-    if value > 0:
-        return {"text": text, "icon_value": value}
-    return {"text": text, "icon": "TRACKING"}  # crosshair, not another camera icon
+        icons.operator(layout, "opencv_cam.add_test_scene", "Test Scene", name="test_scene")
+        icons.operator(layout, "opencv_cam.add_rig_empty", "Camera Rig", name="rig")
 
 
 def _menu_add(self, context):
     """Draw the VisionSim submenu inside Add."""
-    self.layout.menu(MENU_ID, **_submenu_kwargs())
+    self.layout.menu(MENU_ID, **icons.kwargs("visionsim", MENU_LABEL))
 
 
 _CLASSES = (OPENCV_CAM_MT_camera, OPENCV_CAM_MT_vision_sim)

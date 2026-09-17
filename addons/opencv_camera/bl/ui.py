@@ -1,15 +1,14 @@
 """Panels.
 
-Layout: one standalone group in the camera's Object Data Properties, independent
-of Blender's *Lens* panel:
+One standalone group in the camera's Object Data Properties, independent of
+Blender's *Lens* panel.  Intrinsics and extrinsics are edited *inline* inside that
+group (no per-section blocks), the actions sit after the parameters, and only the
+two self-contained features keep their own collapsible sub-block:
 
-* ``OpenCV``           - status, apply/live/raw-parameter toggles
-    * ``Intrinsics``   - K and the resolution K/D were calibrated at
-    * ``Distortion``   - coefficients of the selected model
-    * ``Output Image`` - the image size the render should produce
-    * ``Extrinsics``   - R/t, world frame
+* ``OpenCV``           - model, intrinsics, distortion, output size, extrinsics,
+                         then Apply / Preview / Live Apply / Recompile and status
     * ``Calibration IO`` - files, presets, defaults
-    * ``Preview``      - preview render settings and tools
+    * ``Preview``        - preview render settings and tools
 """
 
 from __future__ import annotations
@@ -30,62 +29,32 @@ class _CameraPanel:
         return context.camera is not None
 
 
+def _section(layout, text: str) -> None:
+    """Inline section heading inside the OpenCV panel."""
+    layout.separator()
+    layout.label(text=text)
+
+
 class OPENCV_CAM_PT_main(_CameraPanel, bpy.types.Panel):
-    """Top level group: everything the add-on owns lives in here.
-
-    Deliberately *not* parented to ``DATA_PT_lens``: the OpenCV camera settings
-    (intrinsics, distortion, output size, extrinsics, IO) are an independent group
-    rather than more Lens options.
-    """
-
     bl_idname = "OPENCV_CAM_PT_main"
     bl_label = "OpenCV"
 
     def draw(self, context):
         layout = self.layout
+        layout.use_property_split = True
         cam_data = context.camera
         settings = cam_data.opencv_cam
         scene = context.scene
-
-        column = layout.column(align=True)
-        icons.operator(layout=column, idname="opencv_cam.apply_settings",
-                       text="Apply to Camera", fallback_icon="CHECKMARK")
-        column.operator("opencv_cam.preview", icon="RENDER_STILL")
-
-        row = layout.row(align=True)
-        row.prop(settings, "auto_apply", toggle=True)
-        row.operator("opencv_cam.recompile", icon="FILE_REFRESH")
-
-        layout.prop(settings, "show_raw_params")
-
-        box = layout.box()
-        compiled = shader.is_compiled(cam_data) and cam_data.type == "CUSTOM"
-        box.label(
-            text=(f"{shader.shader_filename(settings.distortion.model)} "
-                  f"({len(cam_data.custom_bytecode)} chars bytecode)") if compiled
-            else "shader not compiled yet - press Apply to Camera",
-            icon="CHECKMARK" if compiled else "ERROR",
-        )
-        if settings.status:
-            box.label(text=f"status: {settings.status}")
-        for note in apply_mod.resolution_notes(settings, scene):
-            box.label(text=note, icon="INFO")
-        if not panels_patch.is_patched():
-            box.label(text="Cycles parameter list is shown (patch inactive)", icon="INFO")
-
-
-class OPENCV_CAM_PT_intrinsics(_CameraPanel, bpy.types.Panel):
-    bl_idname = "OPENCV_CAM_PT_intrinsics"
-    bl_label = "Intrinsics"
-    bl_parent_id = "OPENCV_CAM_PT_main"
-
-    def draw(self, context):
-        layout = self.layout
-        layout.use_property_split = True
-        settings = context.camera.opencv_cam
         intrinsics = settings.intrinsics
-        scene = context.scene
+        distortion = settings.distortion
+        output = settings.output
+        pose = settings.pose
 
+        # ---- lens model ---------------------------------------------------
+        layout.prop(distortion, "model")
+
+        # ---- intrinsics ---------------------------------------------------
+        _section(layout, "Intrinsics")
         column = layout.column()
         column.prop(intrinsics, "fx")
         column.prop(intrinsics, "fy")
@@ -96,40 +65,26 @@ class OPENCV_CAM_PT_intrinsics(_CameraPanel, bpy.types.Panel):
         row = column.row()
         row.enabled = not intrinsics.auto_center
         row.prop(intrinsics, "cy")
-        layout.separator()
-        layout.label(text="Calibrated at (where K/D come from):")
-        column = layout.column()
         column.prop(intrinsics, "image_width")
         column.prop(intrinsics, "image_height")
         column.prop(intrinsics, "scale_to_render")
+        layout.operator("opencv_cam.sync_from_lens", icon="DRIVER_ROTATIONAL_DIFFERENCE")
 
         effective = apply_mod.effective_intrinsics(
             settings, scene.render.resolution_x, scene.render.resolution_y
         )
         box = layout.box()
-        box.label(text=f"render: fx={effective.fx:.2f} fy={effective.fy:.2f}")
-        box.label(text=f"cx={effective.cx:.2f} cy={effective.cy:.2f}")
-        box.label(text=f"hfov={effective.hfov_deg():.2f}° vfov={effective.vfov_deg():.2f}°")
-        layout.operator("opencv_cam.sync_from_lens", icon="DRIVER_ROTATIONAL_DIFFERENCE")
+        box.label(text=f"render: fx={effective.fx:.2f} fy={effective.fy:.2f} "
+                       f"cx={effective.cx:.2f} cy={effective.cy:.2f}")
+        box.label(text=f"hfov={effective.hfov_deg():.2f}°  vfov={effective.vfov_deg():.2f}°")
 
-
-class OPENCV_CAM_PT_distortion(_CameraPanel, bpy.types.Panel):
-    bl_idname = "OPENCV_CAM_PT_distortion"
-    bl_label = "Distortion"
-    bl_parent_id = "OPENCV_CAM_PT_main"
-
-    def draw(self, context):
-        layout = self.layout
-        layout.use_property_split = True
-        distortion = context.camera.opencv_cam.distortion
-        model = distortion.model
-
-        layout.prop(distortion, "model")
+        # ---- distortion ----------------------------------------------------
+        _section(layout, "Distortion")
         layout.prop(distortion, "enabled")
         column = layout.column()
         column.enabled = distortion.enabled
-        if model == "fisheye":
-            layout.label(text="theta_d = t (1 + k1 t² + k2 t⁴ + k3 t⁶ + k4 t⁸)")
+        if distortion.model == "fisheye":
+            column.label(text="theta_d = t (1 + k1 t² + k2 t⁴ + k3 t⁶ + k4 t⁸)")
             column.prop(distortion, "k1")
             column.prop(distortion, "k2")
             column.prop(distortion, "k3")
@@ -140,28 +95,15 @@ class OPENCV_CAM_PT_distortion(_CameraPanel, bpy.types.Panel):
             column.prop(distortion, "p1")
             column.prop(distortion, "p2")
             column.prop(distortion, "k3")
-            if model == "rational" or distortion.k4 or distortion.k5 or distortion.k6:
+            if distortion.model == "rational" or distortion.k4 or distortion.k5 or distortion.k6:
                 column.prop(distortion, "k4")
                 column.prop(distortion, "k5")
                 column.prop(distortion, "k6")
         column.prop(distortion, "iterations")
-        layout.separator()
-        column = layout.column()
         column.prop(distortion, "discard_invalid_rays")
 
-
-class OPENCV_CAM_PT_output(_CameraPanel, bpy.types.Panel):
-    bl_idname = "OPENCV_CAM_PT_output"
-    bl_label = "Output Image"
-    bl_parent_id = "OPENCV_CAM_PT_main"
-
-    def draw(self, context):
-        layout = self.layout
-        layout.use_property_split = True
-        settings = context.camera.opencv_cam
-        output = settings.output
-        scene = context.scene
-
+        # ---- output size ---------------------------------------------------
+        _section(layout, "Output Image")
         layout.prop(output, "mode")
         if output.mode == "custom":
             layout.prop(output, "preset")
@@ -173,72 +115,18 @@ class OPENCV_CAM_PT_output(_CameraPanel, bpy.types.Panel):
             row = layout.row(align=True)
             row.operator("opencv_cam.set_render_resolution", icon="FULLSCREEN_ENTER")
             row.operator("opencv_cam.read_scene_resolution", icon="FULLSCREEN_EXIT")
-
         width, height = apply_mod.output_resolution(settings, scene)
-        intrinsics = settings.intrinsics
         box = layout.box()
-        box.label(
-            text=f"output {width}x{height}  |  scene "
-                 f"{scene.render.resolution_x}x{scene.render.resolution_y}"
-        )
-        box.label(text=f"calibrated {intrinsics.image_width}x{intrinsics.image_height}")
-        effective = apply_mod.effective_intrinsics(settings, width, height)
-        box.label(text=f"effective fx={effective.fx:.2f} fy={effective.fy:.2f}")
+        box.label(text=f"output {width}x{height}  |  scene "
+                       f"{scene.render.resolution_x}x{scene.render.resolution_y}")
         if (width, height) != (intrinsics.image_width, intrinsics.image_height):
             same_aspect = (height > 0 and intrinsics.image_height > 0
                            and abs(width / height - intrinsics.image_width / intrinsics.image_height) < 1e-3)
-            box.label(
-                text="rescaled: same field of view" if same_aspect
-                else "centre crop at the original pixel pitch",
-                icon="INFO",
-            )
+            box.label(text="rescaled: same field of view" if same_aspect
+                      else "centre crop at the original pixel pitch", icon="INFO")
 
-
-class OPENCV_CAM_PT_preview(_CameraPanel, bpy.types.Panel):
-    bl_idname = "OPENCV_CAM_PT_preview"
-    bl_label = "Preview"
-    bl_parent_id = "OPENCV_CAM_PT_main"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    def draw(self, context):
-        layout = self.layout
-        layout.use_property_split = True
-        settings = context.camera.opencv_cam
-        preview = settings.preview
-
-        column = layout.column(align=True)
-        column.prop(preview, "size")
-        column.prop(preview, "samples")
-
-        width, height = preview_mod.preview_resolution(settings, preview.size)
-        layout.label(
-            text=f"preview renders {width}x{height} "
-                 f"({preview.samples} samples) - F12 uses "
-                 f"{context.scene.render.resolution_x}x{context.scene.render.resolution_y}",
-            icon="INFO",
-        )
-
-        column = layout.column(align=True)
-        column.operator("opencv_cam.preview", icon="RENDER_STILL")
-        column.operator("opencv_cam.save_preview", icon="FILE_IMAGE")
-        column.operator("opencv_cam.self_test", icon="RESTRICT_RENDER_OFF")
-
-        layout.prop(preview, "denoise")
-        layout.prop(preview, "on_change")
-        layout.label(text="Rendered into Blender's Image Editor", icon="INFO")
-
-
-class OPENCV_CAM_PT_extrinsics(_CameraPanel, bpy.types.Panel):
-    bl_idname = "OPENCV_CAM_PT_extrinsics"
-    bl_label = "Extrinsics"
-    bl_parent_id = "OPENCV_CAM_PT_main"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    def draw(self, context):
-        layout = self.layout
-        layout.use_property_split = True
-        pose = context.camera.opencv_cam.pose
-
+        # ---- extrinsics ----------------------------------------------------
+        _section(layout, "Extrinsics")
         column = layout.column()
         column.prop(pose, "rotation")
         column.prop(pose, "translation")
@@ -246,11 +134,35 @@ class OPENCV_CAM_PT_extrinsics(_CameraPanel, bpy.types.Panel):
         row = layout.row()
         row.enabled = pose.use_world_transform
         row.prop(pose, "world_matrix")
-
         row = layout.row(align=True)
         row.operator("opencv_cam.apply_pose", icon="OBJECT_ORIGIN")
         row.operator("opencv_cam.read_pose", icon="TRACKER")
-        layout.label(text="Object transform is the primary pose source", icon="INFO")
+
+        # ---- actions, after the parameters ---------------------------------
+        layout.separator()
+        column = layout.column(align=True)
+        icons.operator(column, "opencv_cam.apply_settings", "Apply", name="visionsim")
+        column.operator("opencv_cam.preview", icon="RENDER_STILL")
+        row = layout.row(align=True)
+        row.prop(settings, "auto_apply", toggle=True)
+        row.operator("opencv_cam.recompile", icon="FILE_REFRESH")
+
+        # ---- status --------------------------------------------------------
+        box = layout.box()
+        compiled = shader.is_compiled(cam_data) and cam_data.type == "CUSTOM"
+        box.label(
+            text=(f"{shader.shader_filename(distortion.model)} "
+                  f"({len(cam_data.custom_bytecode)} chars bytecode)") if compiled
+            else "shader not compiled yet - press Apply",
+            icon="CHECKMARK" if compiled else "ERROR",
+        )
+        if settings.status:
+            box.label(text=f"status: {settings.status}")
+        for note in apply_mod.resolution_notes(settings, scene):
+            box.label(text=note, icon="INFO")
+        box.prop(settings, "show_raw_params")
+        if not panels_patch.is_patched():
+            box.label(text="Cycles parameter list is shown (patch inactive)", icon="INFO")
 
 
 class OPENCV_CAM_PT_io(_CameraPanel, bpy.types.Panel):
@@ -278,12 +190,38 @@ class OPENCV_CAM_PT_io(_CameraPanel, bpy.types.Panel):
         layout.label(text="Presets come from the add-on's presets/ folder", icon="INFO")
 
 
+class OPENCV_CAM_PT_preview(_CameraPanel, bpy.types.Panel):
+    bl_idname = "OPENCV_CAM_PT_preview"
+    bl_label = "Preview"
+    bl_parent_id = "OPENCV_CAM_PT_main"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        settings = context.camera.opencv_cam
+        preview = settings.preview
+
+        column = layout.column(align=True)
+        column.prop(preview, "size")
+        column.prop(preview, "samples")
+        column.prop(preview, "denoise")
+        column.prop(preview, "on_change")
+
+        width, height = preview_mod.preview_resolution(settings, preview.size)
+        layout.label(
+            text=f"preview {width}x{height} ({preview.samples} samples) - F12 uses "
+                 f"{context.scene.render.resolution_x}x{context.scene.render.resolution_y}",
+            icon="INFO",
+        )
+        column = layout.column(align=True)
+        column.operator("opencv_cam.preview", icon="RENDER_STILL")
+        column.operator("opencv_cam.save_preview", icon="FILE_IMAGE")
+        column.operator("opencv_cam.self_test", icon="RESTRICT_RENDER_OFF")
+
+
 _CLASSES = (
     OPENCV_CAM_PT_main,
-    OPENCV_CAM_PT_intrinsics,
-    OPENCV_CAM_PT_distortion,
-    OPENCV_CAM_PT_output,
-    OPENCV_CAM_PT_extrinsics,
     OPENCV_CAM_PT_io,
     OPENCV_CAM_PT_preview,
 )

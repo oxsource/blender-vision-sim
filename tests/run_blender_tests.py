@@ -533,34 +533,48 @@ def test_add_camera_operator():
 
 
 def test_panel_layout():
-    """The OpenCV settings are their own group, not children of Lens."""
+    """One standalone OpenCV group; intrinsics/extrinsics are inline in it."""
     main = bpy.types.OPENCV_CAM_PT_main
     check("OpenCV group is top level", not getattr(main, "bl_parent_id", ""),
           f"bl_parent_id={getattr(main, 'bl_parent_id', '')!r}")
     check("OpenCV group label", main.bl_label == "OpenCV", main.bl_label)
-    for name in ("OPENCV_CAM_PT_intrinsics", "OPENCV_CAM_PT_distortion",
-                 "OPENCV_CAM_PT_output", "OPENCV_CAM_PT_extrinsics",
-                 "OPENCV_CAM_PT_io", "OPENCV_CAM_PT_preview"):
+    for name in ("OPENCV_CAM_PT_io", "OPENCV_CAM_PT_preview"):
         panel = getattr(bpy.types, name)
         check(f"{name} is inside the OpenCV group",
               panel.bl_parent_id == "OPENCV_CAM_PT_main",
               f"bl_parent_id={panel.bl_parent_id}")
+    for name in ("OPENCV_CAM_PT_intrinsics", "OPENCV_CAM_PT_distortion",
+                 "OPENCV_CAM_PT_output", "OPENCV_CAM_PT_extrinsics"):
+        check(f"{name} no longer exists (inline now)", not hasattr(bpy.types, name))
     check("nothing of ours hangs off the Lens panel",
           all(getattr(getattr(bpy.types, name), "bl_parent_id", "") != "DATA_PT_lens"
-              for name in ("OPENCV_CAM_PT_main", "OPENCV_CAM_PT_extrinsics",
-                           "OPENCV_CAM_PT_io")))
-    check("extrinsics label", bpy.types.OPENCV_CAM_PT_extrinsics.bl_label == "Extrinsics")
+              for name in ("OPENCV_CAM_PT_main", "OPENCV_CAM_PT_io", "OPENCV_CAM_PT_preview")))
+    from opencv_camera.bl import operators as operators_mod
+    check("Apply operator label", operators_mod.OPENCV_CAM_OT_apply.bl_label == "Apply",
+          operators_mod.OPENCV_CAM_OT_apply.bl_label)
 
 
 def test_menus_and_raw_params():
     """Add ▸ vision-sim holds our operators; the Cycles raw list is hidden."""
     check("VisionSim submenu registered", hasattr(bpy.types, "OPENCV_CAM_MT_vision_sim"))
     check("camera submenu registered", hasattr(bpy.types, "OPENCV_CAM_MT_camera"))
-    from opencv_camera.bl import icons as icons_mod
-    check("custom icon loaded into a preview collection", icons_mod.is_loaded())
-    check("icon file ships with the add-on", os.path.exists(icons_mod.icon_path()))
+    from opencv_camera.bl import icons as icons_mod, menus as menus_mod
+    check("icons loaded into a preview collection",
+          all(icons_mod.is_loaded(name) for name in
+              ("visionsim", "camera", "fisheye", "brown_conrady", "rational",
+               "pinhole", "test_scene", "rig")),
+          str(icons_mod.available()))
+    check("icon files ship with the add-on", len(icons_mod.available()) >= 8)
+    check("every menu entry has its own icon",
+          menus_mod.MODEL_ICONS == {"fisheye": "fisheye", "brown_conrady": "brown_conrady",
+                                    "rational": "rational", "pinhole": "pinhole"})
+    check("menu icons fall back to built-ins without a UI",
+          icons_mod.kwargs("fisheye").get("icon") == "CAMERA_DATA"
+          or icons_mod.kwargs("fisheye").get("icon_value", 0) > 0)
     check("icon falls back to a built-in id without a UI", icons_mod.icon_id() == 0,
           f"icon_id={icons_mod.icon_id()} (background mode)")
+    check("test_scene icon set", icons_mod.is_loaded("test_scene"))
+    check("rig icon set", icons_mod.is_loaded("rig"))
     check("menu label is VisionSim",
           bpy.types.OPENCV_CAM_MT_vision_sim.bl_label == "VisionSim")
     check("add_test_scene poll allows a camera-less scene",

@@ -72,7 +72,7 @@ def _report_messages(operator, messages, level="INFO"):
 # ---------------------------------------------------------------------------
 class OPENCV_CAM_OT_apply(_CameraOperator, bpy.types.Operator):
     bl_idname = "opencv_cam.apply_settings"
-    bl_label = "Apply to Camera"
+    bl_label = "Apply"
     bl_description = (
         "Install/compile the OSL shader and copy the intrinsics and distortion "
         "into the camera's Cycles custom parameters"

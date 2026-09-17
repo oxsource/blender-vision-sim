@@ -18,9 +18,21 @@ Blender 视觉算法仿真插件集合：用 Blender/Cycles 生成**与真实相
 
 ### 入口与图标
 
-菜单图标是自绘的：**三个彩色弧 + 5 点标定网格（外圈点被"桶形"外扩）**，一眼能看出是视觉/畸变工具
-而不是又一个相机图标；`Add ▸ VisionSim` 这一级也用它（`UILayout.menu` 支持 `icon_value`）。
-这是**原创标识**，不是 OpenCV 商标本身；由 `scripts/make_icon.py` 纯 Python 生成，可重新生成：
+菜单图标是**单色线条风格的一套图标**（`scripts/make_icon.py` 纯 Python 生成，无 Pillow 依赖），
+每个菜单项各有其形，16 px 下也能分辨：
+
+| 图标 | 用于 | 形状 |
+| --- | --- | --- |
+| `visionsim` | `Add ▸ VisionSim` | 眼睛 + 瞳孔（视觉） |
+| `camera` | `VisionSim ▸ Camera` | 相机机身 + 镜头 + 取景器 |
+| `fisheye` | Fisheye 条目 | 圆 + 桶形外扩网格 |
+| `brown_conrady` | Brown-Conrady 条目 | 方 + 桶形外扩网格 |
+| `rational` | Rational 条目 | 方 + 外扩网格 + 中心环（高阶项） |
+| `pinhole` | Pinhole 条目 | 方 + 完全笔直的网格 |
+| `test_scene` | Test Scene | 等轴测立方体 |
+| `rig` | Camera Rig | 三轴坐标 |
+
+这些都是**原创标识**（不是 OpenCV 商标本身），想改图案改脚本里的形状定义后重跑：
 
 ```bash
 python3 scripts/make_icon.py     # 重新生成 addons/opencv_camera/icons/visionsim.png
@@ -121,19 +133,24 @@ Blender 中使用：
 
 ### 面板结构
 
-设置集中在**独立的一组 `OpenCV`** 里（Object Data Properties ▸ OpenCV，**不**挂在 Lens 面板下）：
+设置集中在**独立的一组 `OpenCV`** 里（Object Data Properties ▸ OpenCV，**不**挂在 Lens 面板下）。
+内参/畸变/输出/外参都是**同一块里的 inline 小节**（不再各自单独成 block），按钮统一排在参数**之后**：
 
 ```
-Object Data Properties ▸ OpenCV            状态 / Apply / Live Apply / Recompile / 是否显示 Cycles 原始参数
-├── Intrinsics      fx fy cx cy、标定分辨率、渲染时生效值、From Blender Lens
-├── Distortion      模型 + 系数（鱼眼/radtan/rational）、迭代次数、Discard Invalid Rays
-├── Output Image    输出图像尺寸（标定/自定义/跟随场景）+ 是否驱动场景分辨率
-├── Extrinsics      外参 R/t、可选自定义世界系
-├── Calibration IO  标定文件导入导出、Presets、Reset Defaults
-└── Preview         预览尺寸/采样/去噪/改参数自动预览/自检
+Object Data Properties ▸ OpenCV
+├── Model                   鱼眼 / Brown-Conrady / Rational
+├── Intrinsics              fx fy cx cy、标定分辨率、scale_to_render、From Blender Lens、生效值只读框
+├── Distortion              enabled + 系数、迭代次数、Discard Invalid Rays
+├── Output Image            输出尺寸（标定/自定义/跟随场景）、是否驱动场景分辨率、Set/From Scene
+├── Extrinsics              R/t、自定义世界系、Apply Pose / Read Pose
+├── [ Apply ]  [ Preview ]  [Live Apply]  [Recompile]        ← 参数之后
+├── 状态框                  着色器/字节码、status、分辨率提示、Show Cycles Raw Parameters
+├── Calibration IO          标定文件导入导出、Presets、Reset Defaults（可折叠）
+└── Preview                 预览尺寸/采样/去噪/自动预览/自检（可折叠）
 ```
 
-- **内参 / 外参 / IO 分成三个块**，各自独立，不再混在一起。
+- 内参 / 畸变 / 输出 / 外参不再各自成块，都在 `OpenCV` 块顶层顺次排列；只有 `Calibration IO` 与
+  `Preview` 这两个自成体系的功能保留可折叠子块。
 - `enable_distortion` 这类开关在**本插件面板里是真复选框**（`distortion.enabled`、`discard_invalid_rays`）。
 - Cycles 依据 OSL 形参自动生成的那串裸参数列表默认**被隐藏**（值以数字显示、且 Cycles 对自定义相机
   参数不支持复选画法），需要时打开 `Show Cycles Raw Parameters` 即可恢复显示。
