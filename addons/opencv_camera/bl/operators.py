@@ -118,7 +118,7 @@ class OPENCV_CAM_OT_install_shader(_CameraOperator, bpy.types.Operator):
 
 class OPENCV_CAM_OT_import_calibration(_CameraOperator, bpy.types.Operator, ImportHelper):
     bl_idname = "opencv_cam.import_calibration"
-    bl_label = "Import Calibration"
+    bl_label = "Import"
     bl_description = "Load intrinsics and distortion from an OpenCV/ROS/Kalibr calibration file"
     bl_options = {"REGISTER", "UNDO"}
 
@@ -158,7 +158,7 @@ class OPENCV_CAM_OT_import_calibration(_CameraOperator, bpy.types.Operator, Impo
 
 class OPENCV_CAM_OT_export_calibration(_CameraOperator, bpy.types.Operator, ExportHelper):
     bl_idname = "opencv_cam.export_calibration"
-    bl_label = "Export Calibration"
+    bl_label = "Export"
     bl_description = "Write the current intrinsics and distortion to a calibration file"
     bl_options = {"REGISTER"}
 

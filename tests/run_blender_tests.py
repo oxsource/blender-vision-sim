@@ -533,13 +533,12 @@ def test_add_camera_operator():
 
 
 def test_panel_layout():
-    """Six top level panels with the CV prefix, none nested under Lens."""
+    """Five top level CV panels, sorted before Blender's own, none under Lens."""
     expected = {
-        "OPENCV_CAM_PT_main": "CV Camera",
-        "OPENCV_CAM_PT_intrinsics": "CV Intrinsics",
+        "OPENCV_CAM_PT_main": "CV Intrinsics",
         "OPENCV_CAM_PT_extrinsics": "CV Extrinsics",
         "OPENCV_CAM_PT_output": "CV Output",
-        "OPENCV_CAM_PT_io": "CV Config File",
+        "OPENCV_CAM_PT_io": "CV Presets",
         "OPENCV_CAM_PT_preview": "CV Preview",
     }
     for name, label in expected.items():
@@ -551,8 +550,15 @@ def test_panel_layout():
               not getattr(panel, "bl_parent_id", ""),
               f"bl_parent_id={getattr(panel, 'bl_parent_id', '')!r}")
         check(f"{name} label is {label!r}", panel.bl_label == label, panel.bl_label)
-        check(f"{name} sorts after Blender's panels", panel.bl_order >= 10,
+        check(f"{name} sorts before Blender's panels", panel.bl_order < 0,
               f"bl_order={getattr(panel, 'bl_order', None)}")
+    check("no separate CV Camera panel any more", not hasattr(bpy.types, "OPENCV_CAM_PT_camera"))
+    from opencv_camera.bl import operators as operators_mod
+    check("Import/Export labels",
+          operators_mod.OPENCV_CAM_OT_import_calibration.bl_label == "Import"
+          and operators_mod.OPENCV_CAM_OT_export_calibration.bl_label == "Export",
+          f"{operators_mod.OPENCV_CAM_OT_import_calibration.bl_label} / "
+          f"{operators_mod.OPENCV_CAM_OT_export_calibration.bl_label}")
     check("no panel of ours hangs off Lens",
           all(getattr(getattr(bpy.types, name), "bl_parent_id", "") != "DATA_PT_lens"
               for name in expected))

@@ -133,21 +133,22 @@ Blender 中使用：
 
 ### 面板结构
 
-所有模块都是 camera 数据属性里的**顶层面板**（与 Blender 自带的 Lens 等平级，不嵌套），并统一用
-`CV ` 前缀区分：
+所有模块都是 camera 数据属性里的**顶层面板**（与 Blender 自带的 Lens 等平级，不嵌套），统一用
+`CV ` 前缀，并用**负的 `bl_order` 排在最前面**：
 
 ```
 Object Data Properties
-├── Lens / Camera / Depth of Field ...      （Blender 自带）
-├── CV Camera       模型选择、[Apply] [Preview] [Live Apply] [Recompile]、状态框
-├── CV Intrinsics   fx fy cx cy、畸变（模型 + 系数 + 迭代 + Discard Invalid Rays）、标定分辨率、From Blender Lens
+├── CV Intrinsics   模型、fx fy cx cy、畸变（模型 + 系数 + 迭代 + Discard Invalid Rays）、
+│                   标定分辨率 + From Blender Lens、生效值只读框，
+│                   然后才是 [Apply] [Preview] [Live Apply] [Recompile] 与状态框
 ├── CV Extrinsics   R/t、自定义世界系、Apply Pose / Read Pose
 ├── CV Output       输出尺寸（标定/自定义/跟随场景）、驱动场景分辨率、Set/From Scene
-├── CV Config File  标定文件导入导出、Presets、Reset Defaults（默认折叠）
-└── CV Preview      预览尺寸/采样/去噪/自动预览/自检（默认折叠）
+├── CV Presets      标定文件 [Import] / [Export]、Load Preset、Reset Defaults（默认折叠）
+├── CV Preview      预览尺寸/采样/去噪/自动预览、Save Preview、Self Test（默认折叠）
+── Lens / Camera / Depth of Field ...      （Blender 自带面板排在后面）
 ```
 
-- 面板用 `bl_order` 排在 Blender 自带面板之后；动作按钮统一在 `CV Camera` 里、排在参数面板之后。
+- 参数在前、动作在后：`Apply` / `Preview` / `Live Apply` / `Recompile` 都在 `CV Intrinsics` 的参数之后。
 - `enable_distortion` 这类开关在**本插件面板里是真复选框**（`distortion.enabled`、`discard_invalid_rays`）。
 - Cycles 依据 OSL 形参自动生成的那串裸参数列表默认**被隐藏**（值以数字显示、且 Cycles 对自定义相机
   参数不支持复选画法），需要时打开 `Show Cycles Raw Parameters` 即可恢复显示。
