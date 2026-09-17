@@ -12,6 +12,18 @@ from typing import List
 
 ADDON_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHADERS_DIR = os.path.join(ADDON_ROOT, "shaders")
+#: bundled camera calibration presets (scanned by :mod:`core.presets`)
+PRESETS_DIR = os.path.join(ADDON_ROOT, "presets")
+
+
+def scene_preset_file(scene_id: str, name: str = "default") -> str:
+    """Absolute path of a scene default preset.
+
+    Scene presets live in a *sub-folder* of ``presets/`` so that
+    :func:`core.presets.list_preset_paths` (which only lists the top level)
+    never offers them as camera calibrations.
+    """
+    return os.path.join(PRESETS_DIR, scene_id, f"{name}.json")
 
 
 def shader_file(name: str) -> str:

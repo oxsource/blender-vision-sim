@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -19,6 +20,19 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PACKAGE = os.path.join(ROOT, "scripts", "package.py")
 VERSION = os.path.join(ROOT, "scripts", "version.sh")
 MANIFEST = os.path.join(ROOT, "addons", "opencv_camera", "blender_manifest.toml")
+SOLVE_AVM = os.path.join(ROOT, "scripts", "solve_avm_defaults.py")
+AVM_PRESET = os.path.join(ROOT, "addons", "opencv_camera", "presets", "avm_scene", "default.json")
+AVM_CONFIG = os.path.normpath(os.path.join(
+    ROOT, "..", "..", "..", "codes", "filament_avm", "configs", "vehicle_avm_minibus.json"))
+
+#: camera centres recorded in filament_avm
+#: ``falcon/core/camera/camera_pose.cc: SolveOrbit`` (the offline solve must match)
+AVM_EXPECTED_CENTERS = {
+    "front": (-0.030997, 2.466795, 2.690680),
+    "back": (-0.071000, -2.436533, 2.833544),
+    "left": (-1.279710, -0.025104, 2.340202),
+    "right": (1.185362, 0.044024, 2.321480),
+}
 
 FAILURES = []
 
@@ -173,10 +187,56 @@ def test_workflow_present():
           "scripts/package.py" in text and "extension build" not in text)
 
 
+def test_avm_defaults_preset():
+    """The offline AVM solve must reproduce filament_avm and stay in sync.
+
+    Skipped when numpy/cv2 or the filament_avm config are unavailable, so the
+    dependency-free CI run stays green.
+    """
+    try:
+        import cv2  # noqa: F401
+        import numpy  # noqa: F401
+    except ImportError:
+        print("[SKIP] numpy/cv2 not installed: the offline AVM solver is not checked")
+        return
+    if not os.path.exists(AVM_CONFIG):
+        print("[SKIP] filament_avm config not present")
+        return
+
+    check("bundled AVM preset exists", os.path.exists(AVM_PRESET), AVM_PRESET)
+    result = run([sys.executable, SOLVE_AVM, "--config", AVM_CONFIG, "--check"])
+    check("bundled preset matches a fresh solve",
+          result.returncode == 0, (result.stderr or result.stdout).strip()[:200])
+
+    with open(AVM_PRESET, encoding="utf-8") as handle:
+        preset = json.load(handle)
+    check("preset field parameters",
+          preset["field"] == {"core_w": 240.0, "core_h": 480.0, "corner": 100.0,
+                              "inner_w": 20.0, "inner_h": 80.0,
+                              "border_w": 0.0, "border_h": 0.0},
+          str(preset["field"]))
+    cameras = {camera["name"]: camera for camera in preset["cameras"]}
+    check("preset has the four cameras", set(cameras) == set(AVM_EXPECTED_CENTERS),
+          str(sorted(cameras)))
+    for name, expected in AVM_EXPECTED_CENTERS.items():
+        centre = cameras[name]["camera_center"]
+        error = max(abs(a - b) for a, b in zip(centre, expected))
+        check(f"{name}: camera centre matches camera_pose.cc", error < 1e-3,
+              f"err {error:.2e} m")
+    # the render intrinsics are the original K (cy unchanged); the ba_opt offset
+    # is a PnP-only quantity (camera_pose.cc copies value.K before mutating K)
+    check("render cy is the original K",
+          all(abs(camera["K"][3] - 477.8201435641188) < 1e-6 for camera in cameras.values()))
+    check("ba_opt offset recorded for left/right only",
+          cameras["left"]["cy_offset"] > 40 and cameras["right"]["cy_offset"] > 40
+          and cameras["front"]["cy_offset"] == 0.0 and cameras["back"]["cy_offset"] == 0.0,
+          f"left={cameras['left']['cy_offset']} right={cameras['right']['cy_offset']}")
+
+
 def main() -> int:
     for test in (test_package_check, test_package_build_is_reproducible,
                  test_package_rejects_bad_manifest, test_version_script,
-                 test_workflow_present):
+                 test_workflow_present, test_avm_defaults_preset):
         test()
     print()
     if FAILURES:

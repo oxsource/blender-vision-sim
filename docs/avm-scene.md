@@ -424,7 +424,7 @@ N ▸ VisionSim ▸ AVM Scene            （仅在 AVM Scene 存在时出现）
 | 环节 | 位置 | 方案 |
 | --- | --- | --- |
 | 反算脚本 | `scripts/solve_avm_defaults.py`（**开发期，可用 cv2/numpy**） | 解析 `vehicle_avm_*.json` → 去畸变 → cy 精化 → `cv2.solvePnP` → 转成 `location`/`rotation` |
-| 产物 | `addons/opencv_camera/presets/avm_minibus.yaml` | 场地尺寸 + 4 台相机的 `location` / `rotation` / `K` / `D`（**内置默认值**） |
+| 产物 | `addons/opencv_camera/presets/avm_scene/default.json` | 场地尺寸 + 4 台相机的 `location` / `rotation` / `K` / `D`（**内置默认值**） |
 | 场景运行时 | `core/scenes/avm_layout.py`（纯 Python） | 只做场地方程、`points(camera)`、读预设；**不含 PnP** |
 | 可选：从配置读场地尺寸 | `core/scenes/avm_layout.py` | `points_3d` → `corner` / `cInX` / `cInY` 的纯算术反推（无 PnP） |
 
@@ -433,7 +433,7 @@ N ▸ VisionSim ▸ AVM Scene            （仅在 AVM Scene 存在时出现）
 1. **职责**：场景只做「摆放 + 渲染 + 导出」，位姿解算属于外部 AVM 工具；
 2. **依赖**：CI 只跑 `actions/setup-python`（无 numpy/cv2），Blender 也不带 cv2；
    离线脚本用 cv2 最省事，且反算只需跑一次；
-3. **可复现**：产物是随包分发的 `presets/avm_minibus.yaml`，场景行为与 cv2 版本无关。
+3. **可复现**：产物是随包分发的 `presets/avm_scene/default.json`，场景行为与 cv2 版本无关。
 
 **离线脚本的对照验证**：脚本自带校验（与 `camera_pose.cc` 注释里的相机中心比对 < 1 mm，
 见 §6.2），并写成 `tests/test_release_scripts.py` 风格的用例（**无 cv2 则 SKIP**）。
@@ -459,7 +459,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 
 | 时机 | 行为 |
 | --- | --- |
-| 开发期（离线） | `scripts/solve_avm_defaults.py` 跑 §6.1 流水线 → 写 `presets/avm_minibus.yaml` |
+| 开发期（离线） | `scripts/solve_avm_defaults.py` 跑 §6.1 流水线 → 写 `presets/avm_scene/default.json` |
 | `Add ▸ VisionSim ▸ AVM Scene` | 读内置预设里的 `location` / `rotation` / `K` / `D` 建场景，**不做任何解算** |
 | 用户拖动相机 / 改角度 | 直接改 `location` / `rotation`（纯参数编辑） |
 | 用户改内参 | **相机不动**（场景不解算；要新默认位姿就重跑离线脚本或导入预设） |
@@ -562,7 +562,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | `opencv_cam.avm_export_params` | 文件对话框导出，`format` 枚举选完整 / 精简 |
 | `opencv_cam.avm_import_params` | 文件对话框导入，自动识别格式 |
 | `opencv_cam.avm_export_json` / `avm_apply_json` | 面板文本框的生成 / 应用（无对话框） |
-| `opencv_cam.avm_reset_defaults` | 还原内置默认参数（重读 `presets/avm_minibus.yaml`，含相机默认位姿） |
+| `opencv_cam.avm_reset_defaults` | 还原内置默认参数（重读 `presets/avm_scene/default.json`，含相机默认位姿） |
 | `opencv_cam.avm_remove_scene` | 移除 AVM Scene（删对象 + 清空 `root` 指针，面板随之隐藏） |
 | `opencv_cam.avm_render_cameras` | **导出 4 路渲染图**（决议 #13）：按各相机自身的 K/D 与输出尺寸渲染到 PNG 目录，供外部程序检测角点 |
 | `opencv_cam.avm_analyze_coverage` | **覆盖评估**（§16）：算 4 台相机的地面足迹、并集/重叠/盲区、标定块可见性矩阵；生成贴地覆盖曲线 |
@@ -595,7 +595,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | `bl/icons.py` + `scripts/make_icon.py` | 改 | 新增 `avm_scene` 图标（4 角黑块 + 车辆俯视轮廓） |
 | `__init__.py` | 改 | 注册编排加入 `bl.scenes`（相机属性之后、UI 之前） |
 | `scripts/solve_avm_defaults.py` | 新增 | **离线**反算脚本（cv2）：`vehicle_avm_*.json` → `location`/`rotation`/`K`/`D` → 写预设 |
-| `presets/avm_minibus.yaml` | 新增 | 内置默认预设（场地 + 4 台相机位姿/内参），随包分发 |
+| `presets/avm_scene/default.json` | 新增 | 内置默认预设（场地 + 4 台相机位姿/内参），随包分发 |
 | `tests/test_core.py` | 改 | `core.scenes.avm_layout` + `core.scenes.avm_coverage` 单测（零依赖） |
 | `tests/test_release_scripts.py` | 改 | 离线脚本的产物与 `camera_pose.cc` 注释比对（**无 cv2 则 SKIP**） |
 | `tests/run_blender_tests.py` | 改 | 建场景 / 改参数重建 / 相机内外参 / JSON 往返；**场景注册表与菜单条目**（§17.7） |
@@ -607,7 +607,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 
 | 层 | 用例 |
 | --- | --- |
-| `test_core.py` | 场地方程与 HTML 一致；**`points(camera)` 四组输出与 minibus 配置的 `points_3d` 逐点一致（§15.2）**；Store JSON 与 App `Size` 格式互认（`"WxH"`、int cm）；**4 个标定块矩形与 `points(camera)` 的 8 点一致、边长均为 `corner`**；`border` 不影响块位；**参数往返**（完整/精简 × JSON/YAML，导出→导入→再导出逐字节稳定）；`sizeFrom` 容错；精简导入只改场地；版本迁移；**内置预设 `presets/avm_minibus.yaml` 可解析**；**覆盖足迹**（射线与 z=0 求交、边界闭合、无解时的退化处理）与**可见性矩阵**（标定块是否被各相机覆盖） |
+| `test_core.py` | 场地方程与 HTML 一致；**`points(camera)` 四组输出与 minibus 配置的 `points_3d` 逐点一致（§15.2）**；Store JSON 与 App `Size` 格式互认（`"WxH"`、int cm）；**4 个标定块矩形与 `points(camera)` 的 8 点一致、边长均为 `corner`**；`border` 不影响块位；**参数往返**（完整/精简 × JSON/YAML，导出→导入→再导出逐字节稳定）；`sizeFrom` 容错；精简导入只改场地；版本迁移；**内置预设 `presets/avm_scene/default.json` 可解析**；**覆盖足迹**（射线与 z=0 求交、边界闭合、无解时的退化处理）与**可见性矩阵**（标定块是否被各相机覆盖） |
 | `test_release_scripts.py` | **离线反算脚本**：跑 `scripts/solve_avm_defaults.py`（cv2），断言解出的相机中心与 `camera_pose.cc` 注释一致（<1 mm）、渲染内参用原始 K、PnP 用 K'（§6.1）；**无 cv2 则 SKIP**（CI 不受影响） |
 | `run_blender_tests.py` | `avm_add_scene` 建出 1 地面 + 1 车 + 4 标定块 + 4 相机且都在 `AVM Scene` 集合、`settings.root` 指向 `AVM_Root`；**面板可见性**：建前 `poll=False`、建后 `poll=True`、删除 `AVM_Root` 后 `poll=False`；改 `core_w` / `corner` 后标定块/相机随之更新；4 台相机是 `CUSTOM` + `opencv_fisheye.osl` 且已编译、内外参各自独立；**参数文件只有 `location`/`rotation`/`K`/`D`（无 R/t）**；**文件导入导出算子**（`avm_export_params` → 改参数 → `avm_import_params` 还原）；**`avm_render_cameras` 按各相机输出尺寸落盘 4 张 PNG**；**`avm_analyze_coverage` 生成 4 条贴地覆盖曲线**、**`avm_export_materials` 产出 5 类文件**；导入失败时不改场景；卸载无残留 |
 | 手测 | 拖滑块实时重建、N 面板显隐、F12 看 4 路鱼眼畸变、图层开关、标定块是否落在预期位置 |
@@ -618,7 +618,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 
 | 阶段 | 内容 | 验收 |
 | --- | --- | --- |
-| P0 | **离线反算一次**：`scripts/solve_avm_defaults.py` + `presets/avm_minibus.yaml` | 预设与 `camera_pose.cc` 注释一致（<1 mm）；脚本用例可在无 cv2 时 SKIP |
+| **P0 ✅** | **离线反算一次**：`scripts/solve_avm_defaults.py` + `presets/avm_scene/default.json` | ✅ 预设与 `camera_pose.cc` 注释一致（<1 mm）；`tests/test_release_scripts.py` 新增用例（无 cv2 则 SKIP） |
 | P1 | `core/scenes/avm_layout.py` + `core/scenes/avm_coverage.py` + 单测 | `python3 tests/test_core.py` 全绿（零依赖） |
 | **P1b** | **场景框架收编**（§17）：`bl/scenes/{base,debounce}.py` + 注册表 + `menus.py` 改遍历；**迁移 `scene_builder.py` → `bl/scenes/camera_scene.py`**（含兼容转发） | 注册表列出 `Camera Scene`；菜单条目 = 场景数 + 1；旧测试在新路径下全绿 |
 | P2 | `avm_scene/{properties,builder,operators,ui}.py` + 图标：一键建静态场景 | Blender 里 `Add ▸ VisionSim ▸ AVM Scene` 出全部对象，F12 可见；**渲染一张对照标定块落点**（决议 #14） |
@@ -656,7 +656,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | 2 | 车长 `core_h` / `core_w` 的来源 | **面板滑杆**（决策 H），不从 GLB 反推；默认 240×480 cm |
 | 3 | 地面是否要程序化网格 | 要（对照 HTML 的「地面网格」图层，便于看尺度） |
 | 4 | 是否需要在 Blender 内直接渲染 4 路拼图 | 本期不做拼图，但**导出 4 路渲染图**（见 #13） |
-| 5 | 一键建场景的默认参数 | 读内置预设 `presets/avm_minibus.yaml`（场地 + 4 台相机位姿/内参），**不做解算** |
+| 5 | 一键建场景的默认参数 | 读内置预设 `presets/avm_scene/default.json`（场地 + 4 台相机位姿/内参），**不做解算** |
 | 6 | 参数文件默认格式 | JSON（精确往返）为默认，YAML 作可读备选；两者都支持 |
 | 7 | 完整格式是否内嵌源配置路径 | `meta.source` 记录，便于追溯默认值的来源 |
 | 8 | 标定布形态 | **布 = 块**：4 个规格相同的纯黑方块放在车四周四对角（决策 A），无单独布面 |

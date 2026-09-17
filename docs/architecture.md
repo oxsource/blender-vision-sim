@@ -34,7 +34,7 @@ addons/opencv_camera/
 │   │   └── avm_scene/       AVM Scene（properties/builder/controller/io/coverage/operators/ui）
 │   └── scene_builder.py   兼容转发 → scenes.camera_scene（保留一个版本）
 ├── shaders/opencv_camera.osl   权威着色器源文件
-├── presets/avm_minibus.yaml    AVM 内置默认参数（离线反算产物）
+├── presets/avm_scene/default.json    AVM 内置默认参数（离线反算产物）
 └── icons/                     菜单/场景图标 PNG
 ```
 

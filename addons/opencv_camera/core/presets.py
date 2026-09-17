@@ -14,7 +14,7 @@ from typing import List, Optional, Tuple
 from . import paths
 from .calibration_io import Calibration, load_calibration
 
-PRESETS_DIR = os.path.join(paths.ADDON_ROOT, "presets")
+PRESETS_DIR = paths.PRESETS_DIR
 
 #: fake entries used by the UI
 DEFAULTS = "__defaults__"   #: use the add-on's default camera values
