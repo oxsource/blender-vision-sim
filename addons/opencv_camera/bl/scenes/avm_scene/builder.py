@@ -28,6 +28,9 @@ COLLECTION_NAME = "AVM Scene"
 GROUND_NAME = "AVM_Ground"
 CAR_NAME = "AVM_Car"
 SUN_NAME = "AVM_Sun"
+#: the fill light shares the SUN_NAME prefix on purpose: the ``show_sun`` layer
+#: toggle matches by prefix, so one flag hides both
+FILL_NAME = "AVM_Sun_Fill"
 BLOCK_PREFIX = "AVM_Block_"
 CAMERA_PREFIX = "AVM_Cam_"
 PROP_PREFIX = "AVM_Prop_"
@@ -707,6 +710,18 @@ def _new_mesh_object(name: str, mesh: bpy.types.Mesh,
     return obj
 
 
+def _ensure_light(scene: bpy.types.Scene, target: bpy.types.Collection, name: str,
+                  light_type: str, pitch: float, yaw: float) -> bpy.types.Object:
+    """Create / reuse a light of the scene, aimed by a (pitch, yaw) rotation."""
+    light = bpy.data.objects.get(name)
+    if light is None:
+        light_data = bpy.data.lights.new(name, type=light_type)
+        light = bpy.data.objects.new(name, light_data)
+        target.objects.link(light)
+    light.rotation_euler = (pitch, 0.0, yaw)
+    return light
+
+
 def _ensure_root(scene: bpy.types.Scene, target: bpy.types.Collection) -> bpy.types.Object:
     root = bpy.data.objects.get(ROOT_NAME)
     if root is None:
@@ -723,6 +738,22 @@ def _parent(obj: bpy.types.Object, root: bpy.types.Object) -> None:
     if obj.parent is not root:
         obj.parent = root
         obj.matrix_parent_inverse = root.matrix_world.inverted()
+
+
+def view_targets(scene: bpy.types.Scene) -> List[bpy.types.Object]:
+    """The subject of the default view: the blocks, the car and the cameras.
+
+    Deliberately *not* the 30 m ground, the props (1.7 m outside the field), the
+    ground text or the lights - framing those would shrink the 4.8 x 8.4 m field
+    to a few percent of the viewport.  The blocks are the outermost field
+    objects, so they alone decide the frame.
+    """
+    target = bpy.data.collections.get(COLLECTION_NAME)
+    if target is None:
+        return []
+    return [obj for obj in target.objects
+            if obj.name == CAR_NAME
+            or obj.name.startswith((BLOCK_PREFIX, CAMERA_PREFIX))]
 
 
 def _ensure_cameras(scene: bpy.types.Scene, settings, target: bpy.types.Collection,
@@ -818,22 +849,27 @@ def build(scene: bpy.types.Scene, settings, preset: Optional[Dict] = None) -> Di
     return created
 
 
-def _ensure_cycles(scene: bpy.types.Scene, messages: List[str]) -> None:
-    """Custom OSL cameras only render in Cycles.
+def _ensure_render_setup(scene: bpy.types.Scene, messages: List[str]) -> None:
+    """Make the scene renderable the way the AVM material needs it.
 
-    A fresh scene (e.g. after a Blender restart) defaults to EEVEE, where the
-    custom lens model does not exist and F12 comes out empty - so the scene is
-    switched, like the Camera Scene builder does.
+    * **Cycles**: the custom OSL camera only exists there; a fresh scene (e.g.
+      after a Blender restart) defaults to EEVEE and F12 comes out empty.
+    * **Standard view transform**: Blender 4.x defaults to AgX, which tone-maps
+      and desaturates the image, so the blocks, the ground and the car no longer
+      match their albedo.  The Camera Scene builder does the same.
     """
     if scene.render.engine != "CYCLES":
         scene.render.engine = "CYCLES"
         messages.append("switched the render engine to Cycles (custom cameras need it)")
+    if scene.view_settings.view_transform != "Standard":
+        scene.view_settings.view_transform = "Standard"
+        messages.append("set the view transform to Standard (AgX would tone-map the images)")
 
 
 def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
     """Update every object in place; creates anything that is missing."""
     messages: List[str] = []
-    _ensure_cycles(scene, messages)
+    _ensure_render_setup(scene, messages)
     if settings.root is None:
         target = collection(COLLECTION_NAME, scene, create=True)
         settings.root = _ensure_root(scene, target)
@@ -914,18 +950,18 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
         _parent(camera, root)
         camera_objects.append(camera)
 
-    # a sun so the scene reads out of the box (it is removed with the scene).
-    # Shadows are off by default: a cast shadow is a dark ground patch that the
-    # black-region corner detector can mistake for a calibration block.
-    sun = bpy.data.objects.get(SUN_NAME)
-    if sun is None:
-        sun_data = bpy.data.lights.new(SUN_NAME, type="SUN")
-        sun = bpy.data.objects.new(SUN_NAME, sun_data)
-        target.objects.link(sun)
-    sun.data.energy = 3.0
+    # A key sun plus a dim fill from the opposite side, both shadowless, so the
+    # scene reads the same whatever other lights the surrounding scene has (a
+    # fresh scene after a restart only has these).  Shadows stay off: a cast
+    # shadow is a dark ground patch the corner detector can mistake for a block.
+    sun = _ensure_light(scene, target, SUN_NAME, "SUN", math.radians(35.0), math.radians(-40.0))
+    sun.data.energy = float(settings.sun_energy)
     sun.data.use_shadow = bool(settings.sun_shadow)
-    sun.rotation_euler = (math.radians(35.0), 0.0, math.radians(-40.0))
-    _parent(sun, root)
+    fill = _ensure_light(scene, target, FILL_NAME, "SUN", math.radians(50.0), math.radians(140.0))
+    fill.data.energy = float(settings.sun_energy) * 0.4
+    fill.data.use_shadow = False
+    for light in (sun, fill):
+        _parent(light, root)
 
     # props (pedestrians, crates, a pallet cart) ---------------------------
     props = _ensure_props(scene, settings, target, root)

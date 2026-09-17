@@ -20,6 +20,8 @@ Layout
 from __future__ import annotations
 
 from ..base import SceneDefinition
+from ..view import ViewSpec
+from . import builder
 
 DEFINITION = SceneDefinition(
     id="avm_scene",
@@ -29,9 +31,13 @@ DEFINITION = SceneDefinition(
     add_operator="opencv_cam.avm_add_scene",
     root_name="AVM_Root",
     collection_name="AVM Scene",
+    # the car's nose is +Y, so front-right-above (azimuth 135) shows the nose,
+    # the right flank, all four blocks and all four cameras in one frame
+    view=ViewSpec(azimuth=135.0, elevation=30.0),
+    view_targets=builder.view_targets,
 )
 
-from . import builder, controller, coverage, io, operators, properties, ui  # noqa: E402
+from . import controller, coverage, io, operators, properties, ui  # noqa: E402
 
 __all__ = ["DEFINITION", "builder", "controller", "coverage", "io",
            "operators", "properties", "ui"]

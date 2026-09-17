@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import bmesh
 import json
+import math
 import os
 import sys
 import tempfile
@@ -21,6 +22,7 @@ sys.path.insert(0, os.path.join(ROOT, "addons"))
 
 import bpy  # noqa: E402
 import numpy as np  # noqa: E402
+from mathutils import Matrix, Vector  # noqa: E402
 
 import opencv_camera  # noqa: E402
 from opencv_camera.bl import apply as apply_mod
@@ -843,9 +845,13 @@ def test_avm_scene_builder():
 
     check("avm add operator registered", "avm_add_scene" in dir(bpy.ops.opencv_cam))
     scene.render.engine = "BLENDER_EEVEE_NEXT"
+    scene.view_settings.view_transform = "AgX"
     check("add AVM scene", bpy.ops.opencv_cam.avm_add_scene() == {"FINISHED"})
     check("building switches the scene to Cycles (custom cameras need it)",
           scene.render.engine == "CYCLES", scene.render.engine)
+    check("building sets the Standard view transform (no AgX tone mapping)",
+          scene.view_settings.view_transform == "Standard",
+          scene.view_settings.view_transform)
 
     settings = scene.avm_scene
     definition = scenes_mod.definition("avm_scene")
@@ -1243,6 +1249,229 @@ def test_avm_visibility_and_logo():
           bpy.data.objects.get("AVM_Label_Logo") is not None)
 
 
+def test_scene_default_view():
+    """A fresh scene is framed from the standard 3/4 orbit, fitted to its subject.
+
+    The orbit maths is pure Python, so most of this runs without a viewport; the
+    last block checks the exact corner fit on the real AVM field.
+    """
+    from opencv_camera.bl import scenes as scenes_mod
+    from opencv_camera.bl.scenes import view as view_mod
+
+    # --- the orbit itself --------------------------------------------------
+    # mathutils vectors are single precision, so the tolerances stay at 1e-6
+    offset = view_mod.orbit_offset(view_mod.DEFAULT_AZIMUTH, view_mod.DEFAULT_ELEVATION)
+    check("default orbit is a unit vector", approx(offset.length, 1.0, 1e-6), f"{offset.length}")
+    check("default orbit sits front-right-above",
+          offset.x > 0 and offset.y > 0 and offset.z > 0,
+          f"{tuple(round(v, 3) for v in offset)}")
+    check("default orbit is 45 deg off both horizontal axes",
+          approx(offset.x, offset.y, 1e-6), f"{offset.x:.4f} vs {offset.y:.4f}")
+    check("default elevation is 30 deg",
+          approx(offset.z / math.hypot(offset.x, offset.y), math.tan(math.radians(30.0)), 1e-6),
+          f"{math.degrees(math.atan2(offset.z, math.hypot(offset.x, offset.y))):.4f} deg")
+
+    # Blender's own numpad views, to pin the azimuth convention down
+    for azimuth, elevation, axis, sign in ((0.0, 0.0, "y", -1.0),    # front
+                                           (90.0, 0.0, "x", 1.0),    # right
+                                           (180.0, 0.0, "y", 1.0),   # back
+                                           (270.0, 0.0, "x", -1.0)):  # left
+        direction = view_mod.orbit_offset(azimuth, elevation)
+        check(f"azimuth {azimuth:.0f} puts the viewer on {sign:+.0f}{axis}",
+              approx(getattr(direction, axis), sign, 1e-6)
+              and approx(direction.length, 1.0, 1e-6),
+              f"{tuple(round(v, 3) for v in direction)}")
+    check("elevation 90 looks straight down",
+          approx(view_mod.orbit_offset(45.0, 90.0).z, 1.0, 1e-6))
+    check("the view rotation reproduces the orbit offset",
+          approx((view_mod._view_rotation(135.0, 30.0) @ Vector((0, 0, 1)))
+                 .dot(view_mod.orbit_offset(135.0, 30.0)), 1.0, 1e-6))
+
+    # --- every registered scene carries it ---------------------------------
+    ids = {definition.id for definition in scenes_mod.definitions()}
+    check("the registry has both scenes", ids == {"camera_scene", "avm_scene"}, str(ids))
+    for definition in scenes_mod.definitions():
+        check(f"{definition.id} uses the 3/4 default view",
+              approx(definition.view.azimuth, 135.0) and approx(definition.view.elevation, 30.0),
+              str(definition.view))
+
+    # --- what a scene frames ----------------------------------------------
+    scene = setup_scene(resolution=64, samples=1)
+    clear_scene()
+    scene = setup_scene(resolution=64, samples=1)
+    check("add AVM scene", bpy.ops.opencv_cam.avm_add_scene() == {"FINISHED"})
+    definition = scenes_mod.definition("avm_scene")
+    subject = view_mod.targets(definition, scene)
+    names = {obj.name for obj in subject}
+    check("the AVM subject is the field, not the whole scene",
+          names and all("Block" in n or "Cam" in n or n == "AVM_Car" for n in names),
+          str(sorted(names)))
+    check("the 30 m ground and the lights are not framed",
+          "AVM_Ground" not in names and "AVM_Sun" not in names
+          and "AVM_Label_Title" not in names)
+    measured = view_mod.bounds(subject)
+    check("the AVM subject has bounds", measured is not None)
+    centre, radius = measured
+    check("the AVM field is centred on the car",
+          approx(centre.x, 0.0, 1e-6) and approx(centre.y, 0.0, 1e-6),
+          f"{tuple(round(v, 3) for v in centre)}")
+    check("the AVM bounding radius covers the field diagonal",
+          4.5 < radius < 6.0, f"{radius:.3f}")
+
+    # --- the write into the viewport --------------------------------------
+    # background Blender still has a window/screen, so the VIEW_3D area is real
+    # and the write is exercised - we just cannot look at it
+    check("framing nothing is a no-op", view_mod.frame([], definition.view) == 0)
+    moved = view_mod.frame(subject, definition.view)
+    check("framing moves the viewport(s)", moved >= 1, str(moved))
+    viewports = list(view_mod.view_areas())
+    check("the viewport was pointed at the field",
+          viewports and all(approx(region_3d.view_location.x, centre.x, 1e-4)
+                            and approx(region_3d.view_location.y, centre.y, 1e-4)
+                            and approx(region_3d.view_location.z, centre.z, 1e-4)
+                            for _, _, _, region_3d in viewports),
+          f"{[tuple(round(v, 3) for v in region_3d.view_location) for *_, region_3d in viewports]}")
+    check("the viewport orbit is the default 3/4 one",
+          all(region_3d.view_rotation.dot(
+              view_mod._view_rotation(definition.view.azimuth, definition.view.elevation)) > 0.999999
+              for _, _, _, region_3d in viewports))
+    check("the viewport is far enough away",
+          all(region_3d.view_distance > 10.0 for _, _, _, region_3d in viewports),
+          f"{[round(region_3d.view_distance, 2) for *_, region_3d in viewports]}")
+    check("frame_view is registered", "frame_view" in dir(bpy.ops.opencv_cam))
+    check("frame_view reframes the built scene",
+          bpy.ops.opencv_cam.frame_view(scene_id="avm_scene") == {"FINISHED"})
+    check("frame_view refuses an unknown scene",
+          bpy.ops.opencv_cam.frame_view(scene_id="nope") == {"CANCELLED"})
+
+    # --- the exact corner fit, checked against Blender's own projection -----
+    # _frustum reads the two scales off the viewport's projection matrix; they
+    # depend only on the lens and the region size, so they survive the write
+    points = view_mod.corners(subject)
+    rotation = view_mod._view_rotation(definition.view.azimuth, definition.view.elevation)
+    inverse = rotation.conjugated()
+    viewport = viewports[0]
+    k_h, k_v, is_perspective = view_mod._frustum(viewport[3])
+    region = viewport[1]
+    aspect = max(1, region.width) / max(1, region.height)
+    check("the frustum scales come from the projection, split by the aspect ratio",
+          is_perspective and k_h > 0.0 and k_v > 0.0 and approx(k_v / k_h, aspect, 0.01),
+          f"k_h={k_h:.4f} k_v={k_v:.4f} aspect={aspect:.4f} persp={is_perspective}")
+
+    def worst_ndc(distance, half_w, half_h):
+        worst = 0.0
+        for point in points:
+            q = inverse @ (point - centre)
+            depth = distance - q.z
+            if depth <= 0.0:
+                return float("inf")
+            worst = max(worst, abs(q.x) / (depth * half_w), abs(q.y) / (depth * half_h))
+        return worst
+
+    half_h = 1.0 / k_v
+    half_w = 1.0 / k_h
+    for _, _, _, region_3d in viewports:
+        distance = region_3d.view_distance
+        worst = worst_ndc(distance, half_w, half_h)
+        check("every corner projects inside the frame", worst <= 1.0, f"worst |NDC| {worst:.3f}")
+        check("the subject nearly fills the frame", worst > 0.8, f"worst |NDC| {worst:.3f}")
+
+    needed = max(max(q.z + abs(q.x) * k_h, q.z + abs(q.y) * k_v)
+                 for q in (inverse @ (point - centre) for point in points))
+    check("the margin is applied on top of the exact fit",
+          approx(viewport[3].view_distance, needed * definition.view.margin, 1e-4),
+          f"d={viewport[3].view_distance:.4f} needed={needed:.4f} "
+          f"margin={definition.view.margin}")
+    check("the fit is tight (5% closer would clip)",
+          worst_ndc(needed / 1.05, half_w, half_h) > 1.0, f"needed={needed:.3f}")
+
+    # --- the ortho branch: same scales, same knob, no depth term -----------
+    # Background Blender cannot produce a valid ortho projection matrix (the
+    # operator that would force a redraw needs a real UI context), so the ortho
+    # scales are fed in from the perspective read above - they are the same two
+    # constants, as the live GUI confirms.
+    ortho_distance = view_mod._fit_distance(points, centre, rotation, (k_h, k_v),
+                                            False, definition.view.margin)
+    space_points = view_mod._view_space(points, centre, rotation)
+    ortho_needed = max(max(abs(q.x) * k_h, abs(q.y) * k_v) for q in space_points)
+    check("the ortho fit drops the depth term",
+          approx(ortho_distance, ortho_needed * definition.view.margin, 1e-4),
+          f"d={ortho_distance:.4f} needed={ortho_needed:.4f}")
+    check("the ortho fit sits closer than the perspective one",
+          ortho_distance < viewport[3].view_distance,
+          f"ortho {ortho_distance:.3f} vs persp {viewport[3].view_distance:.3f}")
+
+    class FakeRegion:
+        """An orthographic viewport, whose matrix folds in 1 / view_distance."""
+
+        view_perspective = "ORTHO"
+        view_distance = 20.0
+        perspective_matrix = Matrix(((k_h / 20.0, 0.0, 0.0, 0.0),
+                                     (0.0, k_v / 20.0, 0.0, 0.0),
+                                     (0.0, 0.0, -0.05, 0.0),
+                                     (0.0, 0.0, 0.0, 1.0)))
+
+    check("_frustum undoes the ortho 1 / view_distance fold",
+          approx(view_mod._frustum(FakeRegion())[0], k_h, 1e-6)
+          and approx(view_mod._frustum(FakeRegion())[1], k_v, 1e-6)
+          and view_mod._frustum(FakeRegion())[2] is False,
+          f"{view_mod._frustum(FakeRegion())}")
+
+    # --- the Camera Scene frames the cube, not the 24 m checker ground -----
+    check("add Camera Scene",
+          bpy.ops.opencv_cam.add_camera_scene(distance=4.0, samples=2) == {"FINISHED"})
+    camera_definition = scenes_mod.definition("camera_scene")
+    camera_subject = view_mod.targets(camera_definition, scene)
+    check("the Camera Scene frames the checker cube",
+          any(obj.name == "CheckerCube" for obj in camera_subject))
+    check("the Camera Scene leaves the 24 m checker ground out",
+          camera_subject and all(obj.name != "CheckerGround" for obj in camera_subject),
+          str(sorted(obj.name for obj in camera_subject)))
+    cube_centre, cube_radius = view_mod.bounds(camera_subject)
+    check("the Camera Scene subject is cube sized",
+          cube_radius < 5.0, f"{cube_radius:.3f}")
+
+    # world aligned: a level floor with everything standing on it
+    ground = bpy.data.objects[camera_scene.GROUND_NAME]
+    cube = bpy.data.objects["CheckerCube"]
+    check("the Camera Scene ground is horizontal",
+          all(abs(v) < 1e-9 for v in ground.rotation_euler)
+          and approx(ground.matrix_world.to_3x3()[2][2], 1.0, 1e-9),
+          f"{tuple(round(v, 4) for v in ground.rotation_euler)}")
+    floor = ground.location.z + camera_scene.GROUND_DROP
+    check("the cube stands on the ground",
+          approx(cube.location.z - cube.dimensions.z * 0.5, floor, 1e-6),
+          f"cube bottom {cube.location.z - cube.dimensions.z * 0.5:.4f} floor {floor:.4f}")
+    for index in range(4):
+        block = bpy.data.objects[f"ColorBlock{index}"]
+        check(f"colour block {index} stands on the ground",
+              approx(block.location.z - block.dimensions.z * 0.5, floor, 1e-6),
+              f"{block.location.z - block.dimensions.z * 0.5:.4f} vs {floor:.4f}")
+    expected, expected_floor = camera_scene.layout(scene.camera, 4.0, 1.2)
+    check("the cube sits where the camera is looking",
+          approx((cube.location - expected).length, 0.0, 1e-5),
+          f"{tuple(round(v, 3) for v in cube.location)} vs "
+          f"{tuple(round(v, 3) for v in expected)}")
+    active = scene.camera
+    check("the test camera looks down from above the ground",
+          -(active.matrix_world.to_3x3() @ Vector((0, 0, 1))).z < -1e-3
+          and active.matrix_world.translation.z > 1e-3,
+          f"{active.name} at z={active.matrix_world.translation.z:.3f}")
+    check("the ground is the world floor (z = 0), like the AVM Scene",
+          approx(expected_floor, 0.0, 1e-9) and approx(floor, 0.0, 1e-9),
+          f"floor {floor}")
+
+    # a camera sitting in the ground plane (a freshly added one) never meets
+    # z = 0, so the floor drops to the cube's feet instead
+    fallback = bpy.data.objects.new("FallbackCam", bpy.data.cameras.new("FallbackCam"))
+    scene.collection.objects.link(fallback)
+    fallback_subject, fallback_floor = camera_scene.layout(fallback, 4.0, 1.2)
+    check("a camera in the ground plane drops the floor to the cube's feet",
+          approx(fallback_floor, fallback_subject.z - 0.6, 1e-9) and fallback_floor < 0.0,
+          f"floor {fallback_floor:.3f} subject {tuple(round(v, 3) for v in fallback_subject)}")
+    bpy.data.objects.remove(fallback, do_unlink=True)
+
+
 def test_add_camera_default_preset():
     """The Add menu path (no preset argument) must use the add-on defaults.
 
@@ -1518,6 +1747,7 @@ def main():
         test_avm_io,
         test_avm_coverage_and_export,
         test_avm_visibility_and_logo,
+        test_scene_default_view,
         test_shader_force_compile,
         test_presets,
         test_shader_text_upgrade_recompiles,

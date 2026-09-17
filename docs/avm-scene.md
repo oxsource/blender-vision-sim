@@ -195,7 +195,8 @@ hy     = cOutY  + borderH/100 # 场地半长
 | | `car_clearance` | 0.00 m | 0–0.5 | — |
 | 地面 | `ground_w` / `ground_d` | 30 / 30 m | 2–200 | — |
 | 标定块 | `block_lift` | 0.001 m | 0–0.05 | —（离地抬升） |
-| | `sun_shadow` | **关** | on/off | —（太阳是否投影，默认关，避免阴影被当成黑块） |
+| | `sun_energy` | 3.0 | 0–100 | —（主光强度；另有一盏 0.4× 的**无影补光**） |
+| | `sun_shadow` | **关** | on/off | —（主光是否投影，默认关，避免阴影被当成黑块） |
 | 道具 | `prop_pedestrians` / `prop_boxes` / `prop_carts` | 3 / 4 / 1 | 0–16 / 0–16 / 0–8 | —（对齐真实场地的行人/箱子/小板车） |
 | 地面文字 | `ground_title` / `label_font` | 「AVM 仿真标定场地」/ 自动 | 字符串 / 字体文件 | —（`label_font` 留空则自动找系统 CJK 字体） |
 | 地面 logo | `logo_enabled` / `logo_image` / `logo_size` | 开 / 空 / 1.2 m | 开关 / 图片文件 / 0.1–10 | `logo_size` 是 logo **宽度**，高度按图片宽高比推导（不拉伸）；`logo_image` 为空时用**插件内置 logo**（`logos/avm_logo.png`，随包分发、重启仍在）；`logo_enabled` 关掉则不创建 |
@@ -488,7 +489,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | 地面 | 大 plane（1 面，z = −2 mm） | **纯色浅灰**（无网格/贴图：任何印刷网格都会干扰黑块检测，且浅灰与黑块对比度高） |
 | 车模 | 单 mesh：车身 + 斜挡风 + 车顶盖 + 侧/后车窗 + 4 车轮 + 前/尾灯 | 5 个材质槽：车身**青绿**（对齐真实 minibus）、玻璃深灰、轮胎近黑、前灯米白、尾灯红 |
 | 标定块 ×4 | **几何面片**（独立四边形，抬高 `block_lift`） | 纯黑（对照 `--cloth-ink`） |
-| 太阳 `AVM_Sun` | — | 随场景创建的 SUN 灯，**默认不投影阴影**（`sun_shadow` 开关）：投影会被黑色区域检测器误判为标定块 |
+| 太阳 `AVM_Sun` + `AVM_Sun_Fill` | — | 随场景创建的主光 + 对侧补光（`0.4 × sun_energy`），**默认都不投影阴影**：投影会被黑色区域检测器误判为标定块。补光让画面不依赖场景里其它灯（重启后新场景只剩这两盏也能正常出图）；`show_sun` 一个开关同时隐藏两盏 |
 | 道具 | 行人（腿/夹克/头 3 槽）、塑料箱（箱体/边框 2 槽）、小板车（木板/脚轮/金属 3 槽） | 深蓝夹克行人、蓝色箱、木色板车，摆在场地外 `margin ≈ 1.7 m` 的固定槽位上（确定性散布） |
 | 地面文字 ×5 | 平面 FONT 曲线（`extrude 2 mm`，平铺在 `z = 2 mm`） | 深灰；**必须用带 CJK 的字体**（内置 Bfont 没有中文，会渲染成空白）：`label_font` 留空时按 `CJK_FONT_CANDIDATES` 自动找（macOS `Arial Unicode.ttf` / PingFang / STHeiti，Linux Noto CJK，Windows 微软雅黑/黑体） |
 | 地面 logo | quad（宽 = `logo_size`，**高 = 宽 × 图高/图宽**；`z = 2 mm`）；图片来自 `logos/avm_logo.png`（内置）或 `logo_image` | 贴图 + alpha（`Image Texture → Base Color/Alpha`）；quad **没有 UV**，用 `TexCoord.Generated` 喂纹理，否则只采样一个像素、贴图看不见；每次重建 `image.reload()`，覆盖图片文件后点 [Rebuild] 即刷新 |
@@ -687,6 +688,9 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | 16 | `ba_opt` 导致 left/right 固有偏差 | **文档写明，非 bug**（§14） |
 | 17 | 相机内参归属与面板分工 | **内参复用既有自定义相机配置**（`camera.data.opencv_cam` + `CV Intrinsics/Presets/Output`），AVM 面板只管**安装位姿**；**N 面板只放各「大件」的布局属性**（尺寸/位置/姿态/图层），不含内参、不含导入导出 |
 | 18 | 是否加真实场地里的杂物 | **加**：车四周放行人 / 蓝色塑料箱 / 小板车（数量可调、可整组隐藏），对齐真实场地观感 |
+| 21 | 重启后画面偏暗/发灰 | **自带光照**：主光 `AVM_Sun` + 对侧无影补光 `AVM_Sun_Fill`（`0.4×`），并把 view transform 设为 **Standard**、引擎设为 **Cycles**；不再依赖场景里恰好存在的其它灯 |
+| 22 | 新建场景后的默认观察角度 | **3/4 视图：方位 135°、仰角 30°、透视**（§18.1）。45° 方位是行业惯例（Blender 自己的 User Perspective 是 45°/26.6°，真等轴测是 45°/35.26°），135° 只是把象限选在**前右上**，这样能看到车头 + 右侧 + 四块 + 四台相机 |
+| 23 | Camera Scene 的地面是斜的 | **整个场景改为世界对齐**（§18.2）：地面 = 水平面，物体都站在上面，和 AVM Scene 同一套约定；相机只决定"在它前面哪儿"放主体，不再决定地面的朝向 |
 | 20 | 显隐切换与 logo | **所有新增物体都要能显示/隐藏**：`show_ground/car/blocks/cameras/props/labels/coverage/sun` 八个图层开关，**只切 `hide_render`/`hide_set`、不重建几何**；**地面 logo** 放在标题前面（`logo_image` 指定图片，标题自动右移让位） |
 | 19 | 地面是否写文字 | **写**：车四周地面标 **前/后/左/右**，场地外写标题「AVM 仿真标定场地」；中文字形需 CJK 字体（`label_font` 可指定，留空自动找）。另：导出素材时**临时关掉场景其它灯的阴影**（常见 Blender 默认点光源会投出会被误判的暗块） |
 
@@ -944,6 +948,7 @@ addons/opencv_camera/
 │   └── scenes/                             # 每个场景一个模块/包
 │       ├── __init__.py                     # 注册表 + register()/unregister() 编排
 │       ├── base.py                         # SceneDefinition / has_scene / root / 公共面板骨架
+│       ├── view.py                         # ViewSpec / 默认 3/4 视角取景（§18）
 │       ├── debounce.py                     # 通用去抖（从 preview.py 抽出复用）
 │       ├── camera_scene.py                 # ← 迁移自 bl/scene_builder.py（行为不变，§17.5）
 │       └── avm_scene/
@@ -1014,10 +1019,15 @@ Add ▸ VisionSim
 | `operators.OPENCV_CAM_OT_add_camera_scene` | 迁到 `bl/scenes/camera_scene.py`（或改用公共 add 模板） |
 | `menus.py` 里硬编码 `Camera Scene` 条目 | 由注册表驱动 |
 
-- **行为与命名保持不变**：集合仍叫 `OpenCV Camera Scene`，对象仍叫 `CheckerCube` /
+- **命名保持不变**：集合仍叫 `OpenCV Camera Scene`，对象仍叫 `CheckerCube` /
   `CheckerGround` / `ColorBlock*` / `KeyLight` / `SunLight`，`prepare_render` / `apply_and_build` 语义不变；
 - `bl/scene_builder.py` 保留为**兼容转发**（`from .scenes.camera_scene import *`）一个版本，
   避免外部脚本与旧测试立刻失效；后续版本删除。
+
+> **世界对齐（后续修订，见 §18.2）**：原来整个场景建在**相机坐标系**里
+> （`build()` 用 `camera_object.matrix_world`），"地面"垂直于相机 up 轴——相机平视时是地板，
+> 相机俯视时（AVM 鱼眼俯角 42–70°，或默认相机正朝下）就变成**一堵墙**。
+> 现在改为**世界对齐**：地面固定为水平面、物体都站在上面，和 AVM Scene 同一套约定。
 
 ### 17.6 命名约定
 
@@ -1039,3 +1049,62 @@ Add ▸ VisionSim
 - `tests/test_core.py`：导入路径改为 `core.scenes.avm_layout` / `core.scenes.avm_coverage`；
 - `docs/architecture.md` 的目录树与 `scripts/make_icon.py` 的图标表同步更新；
 - 迁移作为独立提交（`refactor: collect scenes under bl/scenes`），便于回溯。
+
+---
+
+## 18. 默认观察视角与「世界对齐」场地（决议 #22 / #23）
+
+### 18.1 默认 3/4 视角（`bl/scenes/view.py`）
+
+新建任何场景后，3D 视口会被摆到**标准 3/4 视图**并自动取景，省得每次手动转视角。
+
+**为什么是 45°？** 方位角 45° 就是行业惯例的 three-quarter view：同时看到两个侧面 + 顶面，
+信息量最大；0°（平视）没有纵深、90°（俯视）没有高度。仰角惯例是 26–35°：
+
+| 参照 | 方位 | 仰角 |
+| --- | --- | --- |
+| Blender 自己的 User Perspective | ~45° | ~26.6° |
+| 真等轴测（isometric） | 45° | 35.26° |
+| **本插件默认** | **135°** | **30°** |
+
+方位角沿用 Blender 数字键盘约定（0 = 前，即观察者在 −Y；90 = 右，观察者在 +X）。
+**135° = 从主体的前右上方看**：AVM 场景里车头朝 +Y，所以能同时看到车头、右侧车身、
+四块标定块、四台相机；Camera Scene 里则是"相机看出去的那一侧 + 地面"。
+
+**取景**：把 `SceneDefinition.view_targets` 给出的对象（默认 = 场景集合里的全部对象）
+的 8 个包围盒角点，按视图旋转投影到视图空间，对每个角点解出所需距离
+`d ≥ z + |x|·k_h`（透视）/ `d ≥ |x|·k_h`（正交），取最大值再乘 `margin = 1.1`。
+比"拟合包围球"紧得多，且是**精确解**——所有角点都刚好贴边。
+
+`k_h`/`k_v`（即 `1/tan(half_fov)`）**从视口自己的投影矩阵读出**，不按"36 mm 传感器 + `lens`"
+去算：Blender 把传感器映射到哪个方向是版本相关的，而且视口本身没有 `sensor_width` 属性。
+投影矩阵的行是 `k × 单位视图轴`，所以行长度就是这两个系数；它们只取决于镜头和区域尺寸、
+与视图变换无关，因此**即使矩阵是旧的也仍然正确**。正交视口的矩阵把 `1/view_distance`
+折进了系数里（`is_perspective` 要等下一次重绘才更新），所以模式与系数都从矩阵本身判断
+（正交矩阵底行是仿射的），保证两者永远自洽。
+
+取景写入 `region_3d.view_location` / `view_rotation` / `view_distance`，
+**不改选区**（Camera Scene 刻意保持相机被选中，否则面板算子会失效），
+锁了旋转的视口会跳过，CAMERA 视角（透过渲染相机看）也跳过。
+
+面板里另有 `Frame View` 按钮（`opencv_cam.frame_view`，`scene_id` 可选）：
+手动转飞了以后一键回到默认视角。AVM 面板两处 + Camera Scene 的 N 面板各有一个。
+新建场景时只在**创建**路径取景，`rebuild`（拖滑杆）不抢镜头。
+
+### 18.2 Camera Scene 改为世界对齐
+
+原来 Camera Scene 整个建在**相机坐标系**里（`build()` 用 `camera_object.matrix_world`），
+"地面"垂直于相机 up 轴。相机平视时它是地板，但相机俯视时——AVM 鱼眼俯角 42–70°，
+或默认新建相机正朝下——它就成了**一堵立起来的墙**。现在改为世界对齐：
+
+* **地面**：水平面（法线 = 世界 +Z），和 AVM Scene 同一套约定；比方块底面低 1 mm
+  （AVM 的 `GROUND_DROP` 是 2 mm，取不同的值是为了两个场景同时存在时地面不会重合在同一个平面）；
+* **主体位置** `camera_scene.layout()`：相机在 `z = 0` 之上且俯视时，把它的**中心视线与
+  `z = 0` 的交点**作为方块中心——方块正好落在相机看的点上，且**站在和 AVM Scene 同一个世界地面上**；
+  相机平视/仰视、或本身就在地面平面上（新建相机在原点）时取不到交点，退化为"沿视线 `distance` 处，
+  地面落到方块脚下"；
+* **彩色块**：铺在同一地面上、方块四周（用于看边缘畸变）；
+* **太阳**：改成世界固定朝向（和 AVM 的太阳一致）；原来挂在相机坐标系上，相机一俯视它就跟着倒。
+
+对象名（`CheckerCube` / `CheckerGround` / `ColorBlock*` / `KeyLight` / `SunLight`）不变；
+`build()` 去掉了不再有意义的 `ground_offset` 参数。

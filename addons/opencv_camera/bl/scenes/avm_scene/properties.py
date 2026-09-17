@@ -135,6 +135,10 @@ class AVMSceneSettings(bpy.types.PropertyGroup):
                               unit="LENGTH", precision=4,
                               description="Blocks hover this far above the ground (z-fighting)",
                               update=_schedule)
+    sun_energy: FloatProperty(
+        name="Sun Energy", default=3.0, min=0.0, max=100.0,
+        description="Key light strength; a shadowless fill is derived from it",
+        update=_schedule)
     sun_shadow: BoolProperty(
         name="Sun Shadow", default=False,
         description="Let the sun cast shadows. Off by default: cast shadows are dark "

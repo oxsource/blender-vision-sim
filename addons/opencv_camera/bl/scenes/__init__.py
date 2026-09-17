@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from . import avm_scene, camera_scene, debounce
+from . import avm_scene, camera_scene, debounce, view
 from .base import (
     SceneDefinition,
     ScenePanel,
@@ -23,11 +23,12 @@ from .base import (
     root_pointer,
     scene_settings,
 )
+from .view import ViewSpec, scene_objects
 
 __all__ = [
-    "SceneDefinition", "ScenePanel", "debounce",
+    "SceneDefinition", "ScenePanel", "ViewSpec", "debounce", "view",
     "collection", "has_scene", "link_to_collection", "remove_collection_objects",
-    "root_pointer", "scene_settings",
+    "root_pointer", "scene_settings", "scene_objects",
     "definitions", "definition", "register", "unregister",
 ]
 
@@ -49,6 +50,7 @@ def definition(scene_id: str) -> Optional[SceneDefinition]:
 
 
 def register() -> None:
+    view.register()
     for module in _MODULES:
         module.register()
 
@@ -56,3 +58,4 @@ def register() -> None:
 def unregister() -> None:
     for module in reversed(_MODULES):
         module.unregister()
+    view.unregister()

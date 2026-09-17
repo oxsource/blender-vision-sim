@@ -60,6 +60,7 @@ def _ground_and_blocks(layout, settings) -> None:
     column.prop(settings, "ground_w")
     column.prop(settings, "ground_d")
     column.prop(settings, "block_lift")
+    column.prop(settings, "sun_energy")
     column.prop(settings, "sun_shadow")
 
 
@@ -120,6 +121,8 @@ def _actions(layout, context) -> None:
     row = layout.row(align=True)
     row.operator("opencv_cam.avm_rebuild", icon="FILE_REFRESH")
     row.operator("opencv_cam.avm_reset_defaults", icon="LOOP_BACK")
+    layout.operator("opencv_cam.frame_view", text="Frame View",
+                    icon="VIEW_PERSPECTIVE").scene_id = DEFINITION.id
     layout.operator_menu_enum("opencv_cam.avm_apply_preset", "preset",
                               text="Quick Preset", icon="PRESET")
     layout.operator("opencv_cam.avm_remove_scene", icon="TRASH")
@@ -195,6 +198,8 @@ class OPENCV_CAM_PT_avm_scene_view3d(_AVMPanel, bpy.types.Panel):
         row = layout.row(align=True)
         row.operator("opencv_cam.avm_rebuild", icon="FILE_REFRESH")
         row.operator("opencv_cam.avm_reset_defaults", icon="LOOP_BACK")
+        layout.operator("opencv_cam.frame_view", text="Frame View",
+                        icon="VIEW_PERSPECTIVE").scene_id = DEFINITION.id
 
 
 _CLASSES = (OPENCV_CAM_PT_avm_scene, OPENCV_CAM_PT_avm_scene_view3d)

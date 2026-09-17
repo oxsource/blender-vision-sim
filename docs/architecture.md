@@ -161,8 +161,9 @@ scripts/dev_install.sh
 ```text
 bl/scenes/
 ├── base.py            SceneDefinition / has_scene / root / 集合命名 / ScenePanelMixin
+├── view.py            ViewSpec / 包围盒 / 默认 3/4 视角取景 + opencv_cam.frame_view
 ├── debounce.py        通用去抖定时器（多场景共用）
-├── camera_scene.py    Camera Scene（原 bl/scene_builder.py，行为/命名不变）
+├── camera_scene.py    Camera Scene（原 bl/scene_builder.py，命名不变；§17.5）
 └── avm_scene/         AVM Scene（properties / builder / controller / io / coverage / operators / ui）
 ```
 
@@ -175,10 +176,13 @@ bl/scenes/
 | 场景属性 | `Scene.<id>`（由场景模块自己注册） | `scene.avm_scene` |
 | 面板 / 算子 | `OPENCV_CAM_PT_<id>` / `opencv_cam.<id>_<action>` | `opencv_cam.avm_add_scene` |
 | 核心模块 | `core/scenes/<name>_*.py`（纯 Python） | `core/scenes/avm_layout.py` |
+| 默认视角 | `SceneDefinition.view`（`ViewSpec`，方位 135° / 仰角 30°） | `bl/scenes/view.py` |
 
 - `menus.py` **遍历注册表**生成 `Add ▸ VisionSim` 条目，不再硬编码；
 - 面板的「是否已建立」统一用 `has_scene()`（根空物体指针非空且对象仍在），
   未建立时面板不出现；删除根空物体后面板自动隐藏；
+- 新建场景后由 `bl/scenes/view.py` 把 3D 视口摆到**默认 3/4 视角**并自动取景
+  （`SceneDefinition.view` + `view_targets`，`opencv_cam.frame_view` 可随时复位）；
 - 纯数学/IO 放 `core/scenes/`（禁止 `import bpy`），可在 `python3` 下单测；
 - `bl/scene_builder.py` 作为兼容转发保留一个版本，之后删除。
 

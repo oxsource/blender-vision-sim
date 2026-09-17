@@ -14,6 +14,7 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from ....core.scenes import avm_layout
 from ..base import has_scene
+from .. import view as view_mod
 from . import DEFINITION, builder, controller, io as io_mod, properties
 
 
@@ -72,6 +73,7 @@ class OPENCV_CAM_OT_avm_add_scene(_AVMOperator, bpy.types.Operator):
             self.report({"ERROR"}, f"{type(exc).__name__}: {exc}")
             return {"CANCELLED"}
         created = builder.build(scene, settings, preset=preset)
+        view_mod.frame(view_mod.scene_objects(DEFINITION), DEFINITION.view)
         messages = created.get("messages") or []
         for message in messages:
             self.report({"WARNING"}, message)

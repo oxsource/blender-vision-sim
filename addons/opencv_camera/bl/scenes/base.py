@@ -10,6 +10,9 @@ scene shares:
 * :func:`collection` / :func:`link_to_collection` - the object grouping helpers;
 * :class:`ScenePanel` - a panel mixin that only shows while its scene exists.
 
+The default 3/4 orbit a freshly built scene is framed from lives in
+:mod:`.view` and is carried on the definition (:attr:`SceneDefinition.view`).
+
 The naming convention (see ``docs/avm-scene.md`` §17.6): scene id
 ``<name>_scene``, collection ``<Name> Scene``, root empty ``<NAME>_Root``,
 properties ``scene.<id>``, panel ``OPENCV_CAM_PT_<id>`` and operators
@@ -18,10 +21,16 @@ properties ``scene.<id>``, panel ``OPENCV_CAM_PT_<id>`` and operators
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Callable, List, Optional
 
 import bpy
+
+from .view import ViewSpec
+
+#: a scene's "what should the default view frame?" hook: it gets the scene and
+#: returns the *subject* objects (see :func:`bl.scenes.view.targets`)
+ViewTargets = Callable[[bpy.types.Scene], List[bpy.types.Object]]
 
 
 @dataclass(frozen=True)
@@ -35,6 +44,8 @@ class SceneDefinition:
     add_operator: str       #: "opencv_cam.avm_add_scene"
     root_name: str = ""     #: "AVM_Root"; empty = no root / no panel
     collection_name: str = ""  #: "AVM Scene"
+    view: ViewSpec = field(default_factory=ViewSpec)  #: orbit of a fresh scene
+    view_targets: Optional[ViewTargets] = None  #: default: the whole collection
 
     @property
     def has_panel(self) -> bool:

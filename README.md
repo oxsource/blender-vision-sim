@@ -52,7 +52,7 @@ blender-vision-sim/
 │   │   └── scenes/              # 每个算法场景的几何/模型/IO（avm_layout / avm_coverage）
 │   ├── bl/                      # Blender 集成：properties / shader / apply / selftest / ui / operators
 │   │   └── scenes/              # 场景框架 + 每个场景一个模块/包
-│   │       ├── base.py / debounce.py    # SceneDefinition、has_scene、通用去抖
+│   │       ├── base.py / view.py / debounce.py  # SceneDefinition、默认 3/4 视角、通用去抖
 │   │       ├── camera_scene.py          # 原 bl/scene_builder.py
 │   │       └── avm_scene/               # AVM Scene（properties/builder/controller/io/coverage/operators/ui）
 │   ├── presets/avm_scene/default.json   # AVM 内置默认参数（离线反算产物）
@@ -123,7 +123,9 @@ Blender 中使用：
    仓库自带参考标定 `addons/opencv_camera/presets/default_camera.yaml`）；
 3. 点 `Apply` —— 插件会写入对应 OSL 着色器、编译、把参数送进 Cycles；
 4. `Add ▸ VisionSim  Camera Scene` —— 生成棋盘方块 + 棋盘地面 + 灯光并设好 Cycles，直接 F12 看畸变效果
-   （场景里没有相机时会自动先建一台鱼眼相机）；
+   （场景里没有相机时会自动先建一台鱼眼相机）。地面是水平面（和 AVM Scene 同一套约定），
+   方块落在相机视线的着地点上；视口会自动摆到标准 **3/4 视角**（方位 135°、仰角 30°），
+   转飞了用面板里的 `Frame View` 复位；
 5. 点 `Run Self Test` —— 渲染目标并与 OpenCV 模型比对，报出像素误差（参考相机实测 0.03–0.08 px）。
 
 > 自定义相机只在 **Cycles** 下生效，且只能使用 **CPU 或 OptiX** 后端（macOS 无 OptiX ⇒ 只能 CPU）。
@@ -224,6 +226,8 @@ Object Data Properties
 - **面板**：`AVM Scene` 在 Scene Properties（全部参数 + 覆盖评估 + 导入导出）；
   3D 视口 N 侧栏 `VisionSim ▸ AVM Scene` 只放**布局**（尺寸/位姿/图层）。
   相机内参不在这里，继续用既有的 `CV Intrinsics` / `CV Presets` / `CV Output`。
+- **默认视角**：建场景时视口自动摆到标准 **3/4 视角**（方位 135°、仰角 30°，看车头 + 右侧 +
+  四块 + 四台相机）并自动取景，两个面板里的 `Frame View` 可随时复位（拖滑杆重建时不抢镜头）。
 - **本场景不做位姿解算**：只摆放、渲染、导出；PnP 只在离线脚本里跑一次用来产出默认预设。
 - **覆盖评估**：`[Analyze Coverage]` 给出每台相机的贴地覆盖曲线、并集/重叠/盲区、
   场地覆盖率，以及「哪个标定块被哪几台相机看到」的可见性矩阵。
