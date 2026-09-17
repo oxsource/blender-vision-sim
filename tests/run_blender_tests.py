@@ -97,6 +97,52 @@ def checker_plane(scene):
     return plane
 
 
+def gradient_plane(scene, size=6.0):
+    """Smooth linear gradient plane at z = -3.
+
+    Used for the equivalence checks: a sub-pixel geometry difference shows up as a
+    small, proportional diff, while a wrong mapping shows up as a large one.  Unlike
+    a sharp checker it does not amplify last-bit differences through texture
+    filtering, so the comparison is not architecture dependent.
+    """
+    mesh = bpy.data.meshes.new("gradient_plane")
+    bm = bmesh.new()
+    bmesh.ops.create_grid(bm, x_segments=1, y_segments=1, size=size)
+    bm.to_mesh(mesh)
+    bm.free()
+    plane = bpy.data.objects.new("GradientPlane", mesh)
+    plane.location = (0.0, 0.0, -3.0)
+    scene.collection.objects.link(plane)
+
+    material = bpy.data.materials.new("gradient")
+    material.use_nodes = True
+    nodes = material.node_tree.nodes
+    for node in list(nodes):
+        nodes.remove(node)
+    output = nodes.new("ShaderNodeOutputMaterial")
+    emission = nodes.new("ShaderNodeEmission")
+    coords = nodes.new("ShaderNodeTexCoord")
+    separate = nodes.new("ShaderNodeSeparateXYZ")
+    combine = nodes.new("ShaderNodeCombineColor")
+    map_x = nodes.new("ShaderNodeMapRange")
+    map_y = nodes.new("ShaderNodeMapRange")
+    for node in (map_x, map_y):
+        node.inputs["From Min"].default_value = 0.0
+        node.inputs["From Max"].default_value = 1.0
+        node.inputs["To Min"].default_value = 0.05
+        node.inputs["To Max"].default_value = 0.95
+    material.node_tree.links.new(coords.outputs["Generated"], separate.inputs["Vector"])
+    material.node_tree.links.new(separate.outputs["X"], map_x.inputs["Value"])
+    material.node_tree.links.new(separate.outputs["Y"], map_y.inputs["Value"])
+    material.node_tree.links.new(map_x.outputs["Result"], combine.inputs["Red"])
+    material.node_tree.links.new(map_y.outputs["Result"], combine.inputs["Green"])
+    combine.inputs["Blue"].default_value = 0.4
+    material.node_tree.links.new(combine.outputs["Color"], emission.inputs["Color"])
+    material.node_tree.links.new(emission.outputs["Emission"], output.inputs["Surface"])
+    plane.data.materials.append(material)
+    return plane
+
+
 def make_camera(name, custom=True, auto_center=True):
     cam_data = bpy.data.cameras.new(name)
     camera = bpy.data.objects.new(name, cam_data)
@@ -128,17 +174,50 @@ def set_distortion(settings, model="brown_conrady", **coefficients):
     return distortion
 
 
-def render_to(scene, camera, path):
-    scene.camera = camera
-    scene.render.filepath = path
-    bpy.ops.render.render(write_still=True)
-    image = bpy.data.images.load(path)
+def render_to(scene, camera, path, file_format="OPEN_EXR"):
+    """Render and return the RGB pixels.
+
+    ``OPEN_EXR`` (float, linear) is the default for comparisons: an 8 bit PNG
+    quantises the result, so a last-bit difference between two architectures (SIMD
+    rounding, different Cycles build) can flip a pixel by 1/255 and make an exact
+    equality check fail for no good reason.
+    """
+    saved_format = scene.render.image_settings.file_format
+    scene.render.image_settings.file_format = file_format
     try:
-        width, height = image.size
-        pixels = np.array(image.pixels[:], dtype=np.float32).reshape(height, width, 4)[..., :3]
+        scene.camera = camera
+        scene.render.filepath = path
+        bpy.ops.render.render(write_still=True)
+        image = bpy.data.images.load(path)
+        try:
+            width, height = image.size
+            pixels = np.array(image.pixels[:], dtype=np.float32).reshape(height, width, 4)[..., :3]
+        finally:
+            bpy.data.images.remove(image)
     finally:
-        bpy.data.images.remove(image)
+        scene.render.image_settings.file_format = saved_format
     return pixels
+
+
+def compare_pixels(custom, builtin, tolerance=1e-3):
+    """Diff statistics for two renders, with a platform-safe verdict.
+
+    A wrong camera mapping shifts whole pixels (huge diff), while different SIMD
+    rounding only shows up in the last bits, so a small tolerance keeps the test
+    meaningful without being brittle across architectures.
+    """
+    diff = np.abs(custom - builtin)
+    max_diff = float(diff.max())
+    differing = int((diff > tolerance).sum())
+    return {
+        "max": max_diff,
+        "mean": float(diff.mean()),
+        "differing": differing,
+        "total": int(diff.size),
+        "ok": max_diff <= tolerance,
+        "detail": f"mean {float(diff.mean()):.3e} max {max_diff:.3e} "
+                  f"pixels over {tolerance:g}: {differing}/{diff.size}",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -315,7 +394,7 @@ def test_builtin_camera_equivalence():
     scene = setup_scene(resolution=128, samples=4)
     clear_scene()
     setup_scene(resolution=128, samples=4)
-    checker_plane(scene)
+    gradient_plane(scene)
 
     custom, custom_data = make_camera("EquivCustom", custom=True)
     builtin, builtin_data = make_camera("EquivBuiltin", custom=False)
@@ -332,13 +411,13 @@ def test_builtin_camera_equivalence():
     ok, messages = apply_mod.apply_settings(custom_data, settings, scene)
     check("equivalence: apply ok", ok, "; ".join(messages))
 
-    custom_pixels = render_to(scene, custom, os.path.join(TMPDL, "equiv_custom.png"))
-    builtin_pixels = render_to(scene, builtin, os.path.join(TMPDL, "equiv_builtin.png"))
-    diff = np.abs(custom_pixels - builtin_pixels)
+    custom_pixels = render_to(scene, custom, os.path.join(TMPDL, "equiv_custom.exr"))
+    builtin_pixels = render_to(scene, builtin, os.path.join(TMPDL, "equiv_builtin.exr"))
+    stats = compare_pixels(custom_pixels, builtin_pixels)
     check("equivalence: image has structure",
           float(custom_pixels.std()) > 0.05, f"std {float(custom_pixels.std()):.4f}")
-    check("equivalence: pixel identical", float(diff.max()) == 0.0,
-          f"mean {float(diff.mean()):.3e} max {float(diff.max()):.3e}")
+    check("equivalence: matches the built-in camera", stats["ok"], stats["detail"])
+    check("equivalence: no systematic offset", stats["mean"] < 1e-3, f"mean {stats['mean']:.3e}")
 
 
 def test_shift_equivalence():
@@ -346,7 +425,7 @@ def test_shift_equivalence():
     scene = setup_scene(resolution=128, samples=4)
     clear_scene()
     setup_scene(resolution=128, samples=4)
-    checker_plane(scene)
+    gradient_plane(scene)
 
     custom, custom_data = make_camera("ShiftCustom", custom=True)
     builtin, builtin_data = make_camera("ShiftBuiltin", custom=False)
@@ -368,11 +447,12 @@ def test_shift_equivalence():
     ok, messages = apply_mod.apply_settings(custom_data, settings, scene)
     check("shift: apply ok", ok, "; ".join(messages))
 
-    custom_pixels = render_to(scene, custom, os.path.join(TMPDL, "shift_custom.png"))
-    builtin_pixels = render_to(scene, builtin, os.path.join(TMPDL, "shift_builtin.png"))
-    diff = np.abs(custom_pixels - builtin_pixels)
-    check("shift equivalence: pixel identical", float(diff.max()) == 0.0,
-          f"cx={cx:.2f} cy={cy:.2f}, mean {float(diff.mean()):.3e} max {float(diff.max()):.3e}")
+    custom_pixels = render_to(scene, custom, os.path.join(TMPDL, "shift_custom.exr"))
+    builtin_pixels = render_to(scene, builtin, os.path.join(TMPDL, "shift_builtin.exr"))
+    stats = compare_pixels(custom_pixels, builtin_pixels)
+    check("shift equivalence: pixel identical (float tolerance)", stats["ok"],
+          f"cx={cx:.2f} cy={cy:.2f}, {stats['detail']}, "
+          f"std {float(custom_pixels.std()):.4f}/{float(builtin_pixels.std()):.4f}")
 
 
 def test_resolution_scaling():

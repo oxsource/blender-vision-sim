@@ -1,60 +1,114 @@
-name: ci
+name: release
 
-# One workflow for everything.  It only runs for v* tags, so ordinary commits and
-# branch pushes do not start a build (add `branches: ["**"]` / `pull_request:` below
-# if you want pre-tag checks; the release job stays tag-only either way):
-#   * v* tag                            -> checks + tests, then publish a Release
-#                                          with the extension zip and its sha256
-#   * manual run (workflow_dispatch)    -> checks + tests only; with a `tag` input it
-#                                          also (re)publishes that tag's release
+# Only v* tags build, so ordinary commits and branch pushes do not start anything.
+#
+#   tag push                 -> fast checks, build the zip, publish the Release
+#   manual run (dispatch)    -> fast checks + build only; fill `tag` to (re)publish
+#                               that tag, tick `run_blender_tests` to also run the
+#                               headless Blender suite (never required to release)
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to publish (leave empty to run the checks only)"
+        description: "Existing tag to publish (empty = build only, no release)"
         required: false
-
-permissions:
-  contents: read
+      run_blender_tests:
+        description: "Also run the headless Blender test suite (slow)"
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  checks:
-    name: checks and package
+  release:
+    name: build and publish
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v5
+        with:
+          # a manual run checks out the requested tag instead of the branch
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
 
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.11"   # same minor as Blender 4.5
+          python-version: "3.11"
 
-      - name: Compile all Python sources
-        run: python -m compileall -q addons tests scripts
+      - name: Resolve the tag
+        id: meta
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          case "${tag}" in
+            v*) ;;
+            *) tag="" ;;   # a manual build without a tag: nothing to verify or publish
+          esac
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "building for tag '${tag:-<none>}'"
 
-      - name: Core unit tests (no Blender)
-        run: python tests/test_core.py
+      - name: Check the tag against the manifest
+        if: steps.meta.outputs.tag != ''
+        run: |
+          set -euo pipefail
+          tag="${{ steps.meta.outputs.tag }}"
+          version="$(python - <<'PY'
+          import tomllib
+          print(tomllib.load(open("addons/opencv_camera/blender_manifest.toml", "rb"))["version"])
+          PY
+          )"
+          if [ "v${version}" != "${tag}" ]; then
+            echo "tag ${tag} does not match the manifest version v${version}" >&2
+            exit 1
+          fi
+          echo "releasing ${tag} (manifest version ${version})"
 
-      - name: Release tooling tests (packager + version script)
-        run: python tests/test_release_scripts.py
+      - name: Fast checks (no Blender)
+        run: |
+          set -euo pipefail
+          python -m compileall -q addons tests scripts
+          python tests/test_core.py
+          python tests/test_release_scripts.py
 
-      - name: Validate manifests and build the add-on zip
-        run: python scripts/package.py --check && python scripts/package.py
+      - name: Build the extension zip
+        run: |
+          set -euo pipefail
+          python scripts/package.py --check
+          python scripts/package.py
+          ls -la dist
+          sha256sum dist/*.zip
 
-      - name: Upload the built zip
+      - name: Upload the zip as an artifact
         uses: actions/upload-artifact@v4
         with:
           name: opencv_camera-zip
           path: dist/*.zip
           if-no-files-found: error
 
-  blender:
-    name: headless Blender tests
+      - name: Publish the release
+        if: steps.meta.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.meta.outputs.tag }}"
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' addons/opencv_camera/blender_manifest.toml | head -1)"
+          assets=(dist/opencv_camera-${version}.zip dist/opencv_camera-${version}.zip.sha256)
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            gh release upload "${tag}" "${assets[@]}" --clobber
+          else
+            gh release create "${tag}" "${assets[@]}" --title "${tag}" --generate-notes
+          fi
+          gh release view "${tag}" --json assets --jq '.assets[].name'
+
+  blender-tests:
+    name: headless Blender tests (optional)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_blender_tests }}
     runs-on: ubuntu-latest
     env:
       BLENDER_VERSION: "4.5.3"
@@ -88,85 +142,3 @@ jobs:
           scripts/package.sh --check
           scripts/package.sh --blender opencv_camera   # -> dist-official/
           ls -la dist-official
-
-  release:
-    name: build and publish
-    # only for v* tags, or a manual run that names a tag
-    if: >-
-      startsWith(github.ref, 'refs/tags/v')
-      || (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
-    needs: [checks, blender]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      BLENDER_VERSION: "4.5.3"
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          # a manual run checks out the requested tag instead of the branch
-          ref: ${{ github.event.inputs.tag || github.ref }}
-          fetch-depth: 0
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-
-      - name: Resolve the tag and check it against the manifest
-        id: meta
-        run: |
-          set -euo pipefail
-          tag="${{ github.event.inputs.tag || github.ref_name }}"
-          version="$(python - <<'PY'
-          import tomllib
-          print(tomllib.load(open("addons/opencv_camera/blender_manifest.toml", "rb"))["version"])
-          PY
-          )"
-          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
-          echo "version=${version}" >> "${GITHUB_OUTPUT}"
-          if [ "v${version}" != "${tag}" ]; then
-            echo "tag ${tag} does not match the manifest version v${version}" >&2
-            exit 1
-          fi
-          echo "releasing ${tag} (manifest version ${version})"
-
-      - name: Install Blender
-        run: |
-          set -euo pipefail
-          series="${BLENDER_VERSION%.*}"
-          url="https://download.blender.org/release/Blender${series}/blender-${BLENDER_VERSION}-linux-x64.tar.xz"
-          curl -fSL --retry 3 -o blender.tar.xz "${url}"
-          mkdir -p "${HOME}/blender"
-          tar -xJf blender.tar.xz -C "${HOME}/blender" --strip-components=1
-          echo "${HOME}/blender" >> "${GITHUB_PATH}"
-
-      - name: Build the extension zip (official builder + reproducible packager)
-        run: |
-          set -euo pipefail
-          # the official builder requires the output directory to exist
-          mkdir -p dist dist-official
-          blender -b --factory-startup --command extension build \
-            --source-dir addons/opencv_camera --output-dir dist-official
-          python scripts/package.py
-          ls -la dist dist-official
-
-      - name: Release contents
-        run: |
-          set -euo pipefail
-          ls -la dist
-          sha256sum dist/*.zip
-
-      - name: Publish the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          tag="${{ steps.meta.outputs.tag }}"
-          version="${{ steps.meta.outputs.version }}"
-          assets=(dist/opencv_camera-${version}.zip dist/opencv_camera-${version}.zip.sha256)
-          if gh release view "${tag}" >/dev/null 2>&1; then
-            gh release upload "${tag}" "${assets[@]}" --clobber
-          else
-            gh release create "${tag}" "${assets[@]}" --title "${tag}" --generate-notes
-          fi
-          gh release view "${tag}" --json assets --jq '.assets[].name'

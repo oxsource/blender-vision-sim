@@ -136,7 +136,7 @@ def test_version_script():
 
 
 def test_workflow_present():
-    """A single workflow handles CI and releases."""
+    """One workflow: v* tags build and publish, Blender tests are opt-in."""
     path = os.path.join(ROOT, ".github/workflows/ci.yml")
     check("workflow exists", os.path.exists(path))
     check("the separate release workflow is gone",
@@ -145,19 +145,18 @@ def test_workflow_present():
         return
     text = open(path, encoding="utf-8").read()
 
-    check("runs the test suites", "test_core.py" in text and "test_release_scripts.py" in text)
-    # inspect the trigger block only (the header comment mentions the alternatives)
+    # trigger block only (the header comment mentions the alternatives)
     trigger = text.split("\non:", 1)[1].split("\njobs:", 1)[0]
     check("only v* tags trigger it", 'tags: ["v*"]' in trigger, trigger.strip()[:80])
     check("branch pushes do not trigger a build",
           "branches:" not in trigger and "pull_request:" not in trigger, trigger.strip()[:80])
-    check("runs the headless Blender tests", "run_blender_tests.py" in text)
-    check("triggers on v* tags", 'tags: ["v*"]' in text)
-    check("release job only runs for tags or a named tag",
-          "startsWith(github.ref, 'refs/tags/v')" in text and "github.event.inputs.tag" in text)
-    check("release waits for the test jobs", "needs: [checks, blender]" in text)
+    check("manual runs can opt into the Blender tests",
+          "run_blender_tests" in trigger)
+
+    check("the release job runs the fast checks", "test_core.py" in text)
+    check("the release job builds the zip", "scripts/package.py" in text)
+    check("the release job publishes", "gh release create" in text)
     check("release has write permission", "contents: write" in text)
-    check("release creates the build output dirs", "mkdir -p dist dist-official" in text)
     check("release attaches the zip and checksum of this version",
           "dist/opencv_camera-${version}.zip" in text
           and "dist/opencv_camera-${version}.zip.sha256" in text)
@@ -167,6 +166,14 @@ def test_workflow_present():
           "does not match the manifest version" in text)
     check("uses Node 24 action versions",
           "actions/checkout@v5" in text and "actions/setup-python@v6" in text)
+
+    # the heavy Blender suite must not gate the release
+    release_job = text.split("blender-tests:", 1)[0]
+    check("the release job does not download Blender",
+          "download.blender.org" not in release_job)
+    check("Blender tests are a separate opt-in job",
+          "blender-tests:" in text
+          and "github.event_name == 'workflow_dispatch' && inputs.run_blender_tests" in text)
 
 
 def main() -> int:

@@ -90,11 +90,12 @@ scripts/version.sh <patch|minor|major|X.Y.Z> [--push] [--dry-run]
         └─ tag:    vX.Y.Z（带注释）
                 │
                 └─ push tag ──► GitHub Actions（单一工作流 .github/workflows/ci.yml）
-                                 1. checks job：核心单测 + 发布工具测试 + 打包
-                                 2. blender job：无头集成测试 + 官方 builder 清单校验
-                                 3. release job（仅 tag 触发，needs 上面两个）：
-                                    校验 tag 与 manifest 版本一致 → 出包 → 创建 GitHub Release
-                                    附带本版本的 zip 与 sha256
+                                 1. 校验 tag 与 manifest 版本一致
+                                 2. 快速检查（编译 + 核心单测 + 发布工具测试，纯 Python 数秒）
+                                 3. 打包（scripts/package.py，可复现 zip + sha256）
+                                 4. 创建/更新 GitHub Release，附带本版本的 zip 与 sha256
+                                 无头 Blender 集成测试**不在发版路径上**，需要时手动触发
+                                 （workflow_dispatch 勾选 run_blender_tests）
 ```
 
 - `--dry-run` 只打印将要发生的版本变化；`--show` 打印当前版本；工作区不干净时拒绝执行（和 npm 一致）。
