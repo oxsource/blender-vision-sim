@@ -106,6 +106,18 @@ bl/apply.apply_settings()
 
 参数名与类型由 OSL 形参决定（float/int/bool/数组/字符串），列表在 `bl/apply.py: SHADER_PARAMS` 与 `shaders/opencv_camera.osl` 之间必须保持同步。
 
+## 3.1 打包与发版
+
+| 工具 | 说明 |
+| --- | --- |
+| `scripts/package.py` | 纯 Python 打包（zip 根目录放 `blender_manifest.toml` + 包内容），排除 `__pycache__`/`.pyc`/`.DS_Store`/`*.zip`，**固定时间戳**因此可复现（同源两次构建 sha256 相同）；同时输出 `.sha256` 并做清单基本校验（id 必须等于目录名、必填字段、`schema_version`） |
+| `scripts/package.sh` | 默认转调 `package.py`（无需 Blender）；`--blender` 时改用官方 `blender --command extension build`（权威校验） |
+| `scripts/version.sh` | npm version 风格：bump manifest 里的 `version` → commit `chore(release): vX.Y.Z` → 打注释 tag `vX.Y.Z`；`--push` 顺带推送；`--dry-run`/`--show`；脏工作区拒绝执行 |
+| `.github/workflows/ci.yml` | push/PR：编译检查 + 核心单测 + 发布工具测试 + 打包上传 artifact；独立 job 下载指定 Blender 跑无头集成测试与官方 builder 校验 |
+| `.github/workflows/release.yml` | tag `v*`：校验 tag 与 manifest 一致 → 测试 → 打包 → `gh release create` 附带 zip + sha256 |
+
+版本号的**唯一真源**是 `blender_manifest.toml` 的 `version`，CI 会断言 tag 与之匹配，避免"tag 与包不一致"。
+
 ## 4. 测试策略
 
 | 层次 | 文件 | 覆盖内容 |

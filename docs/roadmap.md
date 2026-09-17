@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | M1 ✅ | `opencv_camera` 插件骨架：OSL 着色器、参数下发、编译校验、自检算子 | 面板可用；自检误差 < 0.3 px（实测 0.06 px） |
 | M2 ✅ | 标定文件导入导出（OpenCV YAML / ROS camera_info / Kalibr / JSON）、外参设置、镜头反推、分辨率换算 | 核心单测 + 集成测试全绿 |
-| M3 | 工程化补齐：README/文档、`scripts/package.sh` 打包、CI（无头 Blender 跑测试） | `dist/opencv_camera-*.zip` 可直接安装；CI 一键跑测试 |
+| M3 ✅ | 工程化补齐：README/文档、`scripts/package.py`（可复现打包）+ `package.sh`、`scripts/version.sh`（npm version 风格发版）、GitHub Actions（ci + tag 自动出包发 Release） | `dist/opencv_camera-*.zip` 可直接安装；push/PR 跑测试，打 tag 自动发版 |
 | M4 ✅ | 畸变模型扩展：OpenCV fisheye（equidistant，θ 多项式） | 自检通过（θ≈72° 误差 0.048 px、θ≈87° 误差 0.026 px）；导入导出保留模型标识 |
 | M4b | 其余模型：thin-prism/tilted sensor（s1..s4）、双鱼眼/超广角（EUCM/DS） | 每个模型都有自检用例 |
 | M5 | 端到端回归：渲染 → 角点/ArUco 检测 → `cv2.calibrateCamera` 反标定回环 | 反标定内参相对误差 < 1%，畸变系数趋势一致 |

@@ -1,0 +1,72 @@
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+    tags-ignore: ["v*"]        # tags are handled by release.yml
+  pull_request:
+
+jobs:
+  check:
+    name: tests and package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"   # same minor as Blender 4.5
+
+      - name: Compile all Python sources
+        run: python -m compileall -q addons tests scripts
+
+      - name: Core unit tests (no Blender)
+        run: python tests/test_core.py
+
+      - name: Release tooling tests (packager + version script)
+        run: python tests/test_release_scripts.py
+
+      - name: Validate manifests and build the add-on zip
+        run: python scripts/package.py --check && python scripts/package.py
+
+      - name: Upload the built zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencv_camera-zip
+          path: dist/*.zip
+          if-no-files-found: error
+
+  blender:
+    name: headless Blender integration tests
+    runs-on: ubuntu-latest
+    env:
+      BLENDER_VERSION: "4.5.3"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Blender
+        run: |
+          set -euo pipefail
+          series="${BLENDER_VERSION%.*}"
+          url="https://download.blender.org/release/Blender${series}/blender-${BLENDER_VERSION}-linux-x64.tar.xz"
+          echo "downloading ${url}"
+          curl -fSL --retry 3 -o blender.tar.xz "${url}"
+          mkdir -p "${HOME}/blender"
+          tar -xJf blender.tar.xz -C "${HOME}/blender" --strip-components=1
+          echo "${HOME}/blender" >> "${GITHUB_PATH}"
+
+      - name: Blender version
+        run: blender --version | head -2
+
+      - name: Integration tests (self test, equivalence, panels, menus)
+        run: blender -b --factory-startup --python tests/run_blender_tests.py
+
+      - name: Official extension build (manifest validation)
+        run: |
+          blender -b --factory-startup --command extension build \
+            --source-dir addons/opencv_camera --output-dir dist
+          ls -la dist

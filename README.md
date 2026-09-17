@@ -51,8 +51,10 @@ blender-vision-sim/
 │   ├── bl/                      # Blender 集成：properties / shader / apply / selftest / ui / operators
 │   └── shaders/*.osl            # 随插件分发的 OSL 源文件（权威副本）
 ├── docs/                        # 架构、相机模型、路线图
-├── scripts/                     # dev_install / dev_uninstall / package / run_tests
-└── tests/                       # 纯 Python 单测 + 无头 Blender 集成测试
+├── .github/workflows/           # ci（push/PR）+ release（打 tag 自动出包发 Release）
+├── scripts/                     # dev_install / dev_uninstall / package(.sh|.py) /
+│                                # version.sh（npm version 风格）/ run_tests / make_icon
+└── tests/                       # 核心单测 + 无头 Blender 集成测试 + 发布工具测试
 ```
 
 ## 快速开始
@@ -68,9 +70,37 @@ scripts/dev_install.sh
 # 3. 打包成可分发/可安装的 zip
 scripts/package.sh
 
-# 4. 跑全部测试
+# 4. 跑全部测试（核心 + 无头 Blender + 发布工具）
 scripts/run_tests.sh
+
+# 5. 打包（无需 Blender；--blender 走官方 builder 做校验）
+scripts/package.sh              # -> dist/opencv_camera-<version>.zip (+ .sha256)
+
+# 6. 发版：bump 版本 + 提交 + 打 tag（npm version 风格）
+scripts/version.sh patch --push   # 也可以 minor / major / 1.2.3
 ```
+
+### 发版流程
+
+```text
+scripts/version.sh <patch|minor|major|X.Y.Z> [--push] [--dry-run]
+        │  读/写 addons/opencv_camera/blender_manifest.toml 的 version（唯一真源）
+        │  commit: chore(release): vX.Y.Z
+        └─ tag:    vX.Y.Z（带注释）
+                │
+                └─ push tag ──► GitHub Actions「release」工作流
+                                 1. 校验 tag 与 manifest 版本一致
+                                 2. 核心单测 + 无头 Blender 集成测试
+                                 3. 官方 `blender --command extension build`（清单校验）
+                                    + scripts/package.py（可复现 zip）
+                                 4. 创建 GitHub Release，附带 zip 与 sha256
+```
+
+- `--dry-run` 只打印将要发生的版本变化；`--show` 打印当前版本；工作区不干净时拒绝执行（和 npm 一致）。
+- 普通 push / PR 触发「ci」工作流：编译检查、核心单测、发布工具测试、打包，并上传 zip 作为 artifact；无头 Blender 集成测试在单独的 job 里跑（自动下载指定版本的 Blender）。
+- 两个工作流都在 `.github/workflows/`；Blender 版本用 `BLENDER_VERSION` 环境变量固定（当前 4.5.3）。
+
+### 目录结构
 
 Blender 中使用：
 

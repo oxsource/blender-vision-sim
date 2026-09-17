@@ -1,0 +1,87 @@
+name: release
+
+# Triggered by `scripts/version.sh <bump> --push` (or any vX.Y.Z tag):
+# runs the tests, builds the extension zip and publishes a GitHub Release with the
+# zip and its sha256 attached.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to publish (defaults to the pushed tag)"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: build and publish
+    runs-on: ubuntu-latest
+    env:
+      BLENDER_VERSION: "4.5.3"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Resolve the tag and check it against the manifest
+        id: meta
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          version="$(python - <<'PY'
+          import tomllib
+          print(tomllib.load(open("addons/opencv_camera/blender_manifest.toml", "rb"))["version"])
+          PY
+          )"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          if [ "v${version}" != "${tag}" ]; then
+            echo "tag ${tag} does not match the manifest version v${version}" >&2
+            exit 1
+          fi
+          echo "releasing ${tag} (manifest version ${version})"
+
+      - name: Core unit tests
+        run: python tests/test_core.py
+
+      - name: Install Blender
+        run: |
+          set -euo pipefail
+          series="${BLENDER_VERSION%.*}"
+          url="https://download.blender.org/release/Blender${series}/blender-${BLENDER_VERSION}-linux-x64.tar.xz"
+          curl -fSL --retry 3 -o blender.tar.xz "${url}"
+          mkdir -p "${HOME}/blender"
+          tar -xJf blender.tar.xz -C "${HOME}/blender" --strip-components=1
+          echo "${HOME}/blender" >> "${GITHUB_PATH}"
+
+      - name: Integration tests
+        run: blender -b --factory-startup --python tests/run_blender_tests.py
+
+      - name: Build the extension zip (official builder + reproducible packager)
+        run: |
+          set -euo pipefail
+          blender -b --factory-startup --command extension build \
+            --source-dir addons/opencv_camera --output-dir dist-official
+          python scripts/package.py
+          ls -la dist dist-official
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.meta.outputs.tag }}"
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            gh release upload "${tag}" dist/*.zip dist/*.sha256 --clobber
+          else
+            gh release create "${tag}" dist/*.zip dist/*.sha256 \
+              --title "${tag}" --generate-notes
+          fi
+          gh release view "${tag}" --json assets --jq '.assets[].name'
