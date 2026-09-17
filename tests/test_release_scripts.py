@@ -146,8 +146,13 @@ def test_workflows_present():
     release = os.path.join(ROOT, ".github/workflows/release.yml")
     if os.path.exists(release):
         text = open(release, encoding="utf-8").read()
-        check("release attaches the zip and checksum",
-              "dist/*.zip" in text and "dist/*.sha256" in text)
+        check("release attaches the zip and checksum of this version",
+              "dist/opencv_camera-${version}.zip" in text
+              and "dist/opencv_camera-${version}.zip.sha256" in text)
+        check("release creates the output directories before the official build",
+              "mkdir -p dist dist-official" in text)
+        check("manual runs check out the requested tag",
+              "github.event.inputs.tag || github.ref" in text)
         check("release verifies the tag against the manifest",
               "does not match the manifest version" in text)
 

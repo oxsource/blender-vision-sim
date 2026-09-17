@@ -22,11 +22,13 @@ jobs:
     env:
       BLENDER_VERSION: "4.5.3"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
+          # a manual run (workflow_dispatch) checks out the requested tag
+          ref: ${{ github.event.inputs.tag || github.ref }}
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -67,10 +69,18 @@ jobs:
       - name: Build the extension zip (official builder + reproducible packager)
         run: |
           set -euo pipefail
+          # the official builder requires the output directory to exist
+          mkdir -p dist dist-official
           blender -b --factory-startup --command extension build \
             --source-dir addons/opencv_camera --output-dir dist-official
           python scripts/package.py
           ls -la dist dist-official
+
+      - name: Release contents
+        run: |
+          set -euo pipefail
+          ls -la dist
+          sha256sum dist/*.zip || true
 
       - name: Publish the release
         env:
@@ -78,10 +88,11 @@ jobs:
         run: |
           set -euo pipefail
           tag="${{ steps.meta.outputs.tag }}"
+          version="${{ steps.meta.outputs.version }}"
+          assets=(dist/opencv_camera-${version}.zip dist/opencv_camera-${version}.zip.sha256)
           if gh release view "${tag}" >/dev/null 2>&1; then
-            gh release upload "${tag}" dist/*.zip dist/*.sha256 --clobber
+            gh release upload "${tag}" "${assets[@]}" --clobber
           else
-            gh release create "${tag}" dist/*.zip dist/*.sha256 \
-              --title "${tag}" --generate-notes
+            gh release create "${tag}" "${assets[@]}" --title "${tag}" --generate-notes
           fi
           gh release view "${tag}" --json assets --jq '.assets[].name'

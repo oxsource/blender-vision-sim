@@ -1,5 +1,6 @@
 # Blender build artefacts
 dist/
+dist-official/
 *.blend1
 *.blend2
 *.blend@

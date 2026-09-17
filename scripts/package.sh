@@ -5,6 +5,8 @@
 #   scripts/package.sh opencv_camera    # one add-on
 #   scripts/package.sh --check          # validate manifests only
 #   scripts/package.sh --blender        # use `blender --command extension build`
+#                                       # (writes dist-official/, so it never mixes
+#                                       #  with the reproducible dist/ output)
 #
 # Without --blender this uses the dependency-free scripts/package.py, so it works
 # on machines (and CI runners) without Blender installed.  With Blender available
@@ -37,12 +39,14 @@ if [ "${USE_BLENDER}" = "1" ]; then
       ADDONS+=("$(basename "${path}")")
     done
   fi
+  OUT="${REPO_ROOT}/dist-official"
+  mkdir -p "${OUT}"                     # the builder needs the directory to exist
   for addon in "${ADDONS[@]}"; do
-    echo "== ${addon} (blender --command extension build)"
+    echo "== ${addon} (blender --command extension build -> dist-official)"
     "${BLENDER}" -b --factory-startup --command extension build \
-      --source-dir "${REPO_ROOT}/addons/${addon}" --output-dir "${REPO_ROOT}/dist"
+      --source-dir "${REPO_ROOT}/addons/${addon}" --output-dir "${OUT}"
   done
-  ls -la "${REPO_ROOT}/dist"
+  ls -la "${OUT}"
   exit 0
 fi
 

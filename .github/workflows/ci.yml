@@ -11,9 +11,9 @@ jobs:
     name: tests and package
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"   # same minor as Blender 4.5
 
@@ -42,9 +42,9 @@ jobs:
     env:
       BLENDER_VERSION: "4.5.3"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -67,6 +67,7 @@ jobs:
 
       - name: Official extension build (manifest validation)
         run: |
-          blender -b --factory-startup --command extension build \
-            --source-dir addons/opencv_camera --output-dir dist
-          ls -la dist
+          set -euo pipefail
+          scripts/package.sh --check
+          scripts/package.sh --blender opencv_camera
+          ls -la dist-official
