@@ -51,7 +51,7 @@ blender-vision-sim/
 │   ├── bl/                      # Blender 集成：properties / shader / apply / selftest / ui / operators
 │   └── shaders/*.osl            # 随插件分发的 OSL 源文件（权威副本）
 ├── docs/                        # 架构、相机模型、路线图
-├── .github/workflows/           # ci（push/PR）+ release（打 tag 自动出包发 Release）
+├── .github/workflows/ci.yml     # 打 v* tag 自动测试+出包+发 Release（不依赖 Blender）
 ├── scripts/                     # dev_install / dev_uninstall / package(.sh|.py) /
 │                                # version.sh（npm version 风格）/ run_tests / make_icon
 └── tests/                       # 核心单测 + 无头 Blender 集成测试 + 发布工具测试
@@ -100,10 +100,12 @@ scripts/version.sh <patch|minor|major|X.Y.Z> [--push] [--dry-run]
 ```
 
 - `--dry-run` 只打印将要发生的版本变化；`--show` 打印当前版本；工作区不干净时拒绝执行（和 npm 一致）。
-- **只有一个工作流文件** `.github/workflows/ci.yml`，三个 job：`checks`（编译检查/核心单测/发布工具测试/打包+artifact）、`blender`（下载指定版本 Blender 跑无头集成测试 + 官方 builder 校验）、`release`（**仅 tag 触发**，`needs: [checks, blender]`，所以测试只跑一次就够门禁）。
-- **只有推送 `v*` tag 才会触发构建**（普通 commit / 分支推送不会跑 CI，避免重复任务）；`workflow_dispatch` 手动运行只跑 `checks` + `blender`，填了 `tag` 才会执行 release job。
-- 若想恢复"提交/PR 也先跑检查"，在 `on.push` 下加 `branches: ["**"]` 并加回 `pull_request:` 即可（release job 仍然只对 tag 生效）。
-- Blender 版本用 `BLENDER_VERSION` 环境变量固定（当前 4.5.3）；补发历史版本：`gh workflow run ci.yml -f tag=vX.Y.Z`。
+- **只有一个工作流文件** `.github/workflows/ci.yml`，只有一个 job `release`（**仅 `v*` tag 触发**，普通 commit / 分支推送完全不跑）：校验 tag ↔ manifest → 快速检查（编译/核心单测/发布工具测试）→ `package.py` 出包 → 发布 Release（zip + sha256）+ artifact。**CI 不需要 Blender**（打包是纯 Python）。
+- 手动运行（`workflow_dispatch`）：`tag` 留空 = 只打包不发布；填 `tag=vX.Y.Z` = 补发该 tag 的 Release。
+- **重跑已有 tag 不会触发**：tag 已存在时 `git push origin vX.Y.Z` 是空操作。要重新触发：
+  `git push origin :refs/tags/vX.Y.Z && git push origin vX.Y.Z`，或 `gh workflow run ci.yml -f tag=vX.Y.Z`（网页 Actions ▸ release ▸ Run workflow 同样可以）。
+- tag 必须推到 **origin（GitHub）**才会触发 Actions；推到 `gitlab` 不会（`scripts/version.sh --push` 推的是当前分支的远端，main → origin）。
+- 若想恢复"提交/PR 也先跑检查"，在 `on.push` 下加 `branches: ["**"]` 并加回 `pull_request:` 即可（release 仍然只对 tag 生效）。
 
 ### 目录结构
 
