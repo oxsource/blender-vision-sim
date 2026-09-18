@@ -133,6 +133,97 @@ def _replace_mesh(obj: bpy.types.Object, mesh: bpy.types.Mesh) -> None:
         bpy.data.meshes.remove(old)
 
 
+# ---------------------------------------------------------------------------
+# real ground mesh: the bowl the Falcon app projects the cameras onto
+# ---------------------------------------------------------------------------
+#: marker stored on the merged ground mesh, so a rebuild can tell a loaded model
+#: from the fallback quad and skip re-importing the file on every slider drag
+GROUND_MODEL_KEY = "avm_ground_model"
+
+
+def ground_model_path(settings) -> str:
+    """The ground model to load, or ``""`` for the flat plane.
+
+    ``use_ground_model`` off means the flat plane; an empty ``ground_model``
+    means the bowl bundled with the add-on (so a fresh scene works offline and
+    survives a Blender restart).
+    """
+    if not settings.use_ground_model:
+        return ""
+    return (settings.ground_model or "").strip() or paths.ground_model_file()
+
+
+def _import_model(path: str) -> None:
+    """Import a model by extension (raises on an unsupported / missing add-on)."""
+    suffix = os.path.splitext(path)[1].lower()
+    if suffix in (".glb", ".gltf"):
+        bpy.ops.import_scene.gltf(filepath=path)
+    elif suffix == ".fbx":
+        bpy.ops.import_scene.fbx(filepath=path)
+    elif suffix == ".obj":
+        bpy.ops.wm.obj_import(filepath=path)
+    else:
+        raise ValueError(f"unsupported ground model format {suffix!r}")
+
+
+def _merge_meshes(objects) -> Optional[bpy.types.Mesh]:
+    """Merge mesh objects into one mesh with their world transforms baked."""
+    verts: List = []
+    faces: List = []
+    for obj in objects:
+        if obj.type != "MESH" or obj.data is None:
+            continue
+        matrix = obj.matrix_world
+        base = len(verts)
+        verts.extend(matrix @ vertex.co for vertex in obj.data.vertices)
+        faces.extend(tuple(base + index for index in polygon.vertices)
+                     for polygon in obj.data.polygons)
+    if not faces:
+        return None
+    mesh = bpy.data.meshes.new("AVM_Ground")
+    mesh.from_pydata([tuple(vertex) for vertex in verts], [], faces)
+    for polygon in mesh.polygons:
+        polygon.use_smooth = True
+    mesh.update()
+    return mesh
+
+
+def _load_ground_model_mesh(path: str) -> Optional[bpy.types.Mesh]:
+    """Import ``path`` and merge its meshes into one ground mesh (or ``None``).
+
+    The importer links its objects into the active collection; they are merged
+    (world transform baked) and removed again, so only the single ground mesh is
+    left behind.  The user's selection is restored: a rebuild must never move it.
+    """
+    view_layer = bpy.context.view_layer
+    selected = list(bpy.context.selected_objects)
+    active = view_layer.objects.active
+    before = {obj.name for obj in bpy.data.objects}
+    imported: List = []
+    mesh: Optional[bpy.types.Mesh] = None
+    try:
+        _import_model(path)
+        imported = [obj for obj in bpy.data.objects if obj.name not in before]
+        mesh = _merge_meshes(imported)
+    except Exception:
+        mesh = None
+    for obj in imported:
+        data = obj.data
+        bpy.data.objects.remove(obj, do_unlink=True)
+        if data is not None and data.users == 0:
+            bpy.data.meshes.remove(data)
+    try:
+        for obj in selected:
+            if obj.name in bpy.data.objects:
+                obj.select_set(True)
+        view_layer.objects.active = active
+    except Exception:
+        pass
+    if mesh is not None:
+        mesh[GROUND_MODEL_KEY] = path
+    return mesh
+
+
 #: object name prefix -> the setting that shows/hides it (one place to rule them
 #: all: the panels only flip the flags, :func:`apply_visibility` does the work)
 VISIBILITY = (
@@ -917,11 +1008,35 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
         "AVM_Block_Border_Mat", (0.95, 0.95, 0.95, 1.0), 0.9)
 
     # ground ---------------------------------------------------------------
+    # The real Falcon ground is a 30 m bowl the app projects the four camera
+    # images onto, so by default the simulated cameras see the same mesh; a
+    # flat plane remains the fallback (toggle off, or a model that will not load).
     ground = bpy.data.objects.get(GROUND_NAME)
     if ground is None:
         ground = _new_mesh_object(GROUND_NAME, _quad_mesh("AVM_Ground", 1.0, 1.0), target)
-    _replace_mesh(ground, _quad_mesh("AVM_Ground", settings.ground_w, settings.ground_d))
-    ground.location = (0.0, 0.0, -GROUND_DROP)
+    model_path = ground_model_path(settings)
+    loaded = ground.data.get(GROUND_MODEL_KEY) if ground.data is not None else None
+    if not model_path:
+        loaded = None
+    elif loaded != model_path:
+        if not os.path.isfile(model_path):
+            messages.append(f"ground model {os.path.basename(model_path)!r} not found; "
+                            "using the flat plane")
+            loaded = None
+        else:
+            mesh = _load_ground_model_mesh(model_path)
+            if mesh is not None:
+                _replace_mesh(ground, mesh)
+                loaded = model_path
+            else:
+                messages.append(f"ground model {os.path.basename(model_path)!r} could not "
+                                "be imported; using the flat plane")
+                loaded = None
+    if loaded is not None:
+        ground.location = (0.0, 0.0, 0.0)
+    else:
+        _replace_mesh(ground, _quad_mesh("AVM_Ground", settings.ground_w, settings.ground_d))
+        ground.location = (0.0, 0.0, -GROUND_DROP)
     _assign(ground, ground_material)
     _parent(ground, root)
     ground.hide_render = not settings.show_ground

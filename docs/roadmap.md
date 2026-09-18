@@ -27,6 +27,8 @@
 - [ ] 标定文件 XML（OpenCV FileStorage XML）读写。
 - [x] fisheye 模型的正/反解与着色器（θ 多项式 + Newton 反解）—— 已完成（`shaders/opencv_fisheye.osl`）。
 - [ ] fisheye 的 `cv2.fisheye.calibrate` 端到端回环（M5）与超 180° 的 EUCM/DS 模型。
+- [x] AVM Scene 真实地面 mesh：内置 Falcon 碗形 `unlit_round_bowls.glb` 作为 `AVM_Ground`
+  （`use_ground_model` / `ground_model`，P5d）。
 - [ ] **AVM Scene 后续**（见 [`avm-scene.md`](avm-scene.md) P7）：真实 GLB 车模、BEV 拼图、
   与外部角点检测/反标定工具的回环对接、以及按 `bl/scenes/` 框架新增 **DMS** 等场景。
 - [ ] 渲染农场场景：支持 EXTERNAL 模式（`.osl`/`.oso` 落盘 + 相对路径），避免依赖 Text 数据块。

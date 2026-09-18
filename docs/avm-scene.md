@@ -68,7 +68,7 @@
 
 | # | 元素 | 数量 | 说明 |
 | --- | --- | --- | --- |
-| 1 | 地面 ground | 1 | 大平面，承载车模与标定块 |
+| 1 | 地面 ground | 1 | **真实 AVM 碗形地面**（内置 `models/unlit_round_bowls.glb`：30 m 见方、中心平坦、边缘抬起 5 m，即 Falcon app 把 4 路图像投影上去的同一张 mesh），可切回大平面 |
 | 2 | 车模 car | 1 | **程序化迷你巴士**（单 mesh、5 个材质槽：车身/玻璃/轮胎/前灯/尾灯），长宽 = `core`，高默认由相机安装高度推出 |
 | 3 | 鱼眼相机 fisheye camera | 4 | front / back / left / right，复用 `opencv_camera` fisheye 模型，**每台独立内外参** |
 | 4 | 标定布 / 标定块 cloth=block | 4 | **规格相同的黑方块**（黑面边长 `corner`，四周 `0.2 m` 白色边框），放在车四周四对角，位置由场地方程决定 |
@@ -197,7 +197,8 @@ hy     = cOutY  + borderH/100 # 场地半长
 | 车辆 | `car_length` / `car_width` | 跟随 `core_h` / `core_w` | 可覆盖 | HTML 的 `car ≡ core` |
 | | `car_height` | 2.88 m | 0.05–10.0 | —（HTML 无高度；载入预设时按 `max(相机 z) + 0.05` 推导） |
 | | `car_clearance` | 0.00 m | 0–0.5 | — |
-| 地面 | `ground_w` / `ground_d` | 30 / 30 m | 2–200 | — |
+| 地面 | `ground_w` / `ground_d` | 30 / 30 m | 2–200 | —（仅**平面**地面用；真实碗形 mesh 尺寸固定） |
+| | `use_ground_model` / `ground_model` | 开 / 空（内置 bowl） | 开关 / 模型文件 | —（开=用真实碗形 mesh 模拟最终 3D 环境；关=平面。`ground_model` 留空用内置 `models/unlit_round_bowls.glb`，也可指向自己的 `.glb/.gltf/.fbx/.obj`；文件缺失或导入失败自动回退平面并在状态栏提示） |
 | 标定块 | `block_lift` | 0.001 m | 0–0.05 | —（离地抬升） |
 | | `sun_energy` | 3.0 | 0–100 | —（主光强度；另有一盏 0.4× 的**无影补光**） |
 | | `sun_shadow` | **关** | on/off | —（主光是否投影，默认关，避免阴影被当成黑块） |
@@ -497,7 +498,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 
 | 对象 | 网格 | 材质 |
 | --- | --- | --- |
-| 地面 | 大 plane（1 面，z = −2 mm） | **纯色浅灰**（无网格/贴图：任何印刷网格都会干扰黑块检测，且浅灰与黑块对比度高） |
+| 地面 | **真实碗形 mesh**（`use_ground_model` 默认开）：导入内置 `models/unlit_round_bowls.glb`，4 个象限合并成单个 `AVM_Ground`（≈11k 顶点、z = 0 落在真实地面）；关掉或用平面时是 1 面 plane（z = −2 mm） | **纯色浅灰**（无网格/贴图：任何印刷网格都会干扰黑块检测，且浅灰与黑块对比度高） |
 | 车模 | 单 mesh：车身 + 斜挡风 + 车顶盖 + 侧/后车窗 + 4 车轮 + 前/尾灯 | 5 个材质槽：车身**青绿**（对齐真实 minibus）、玻璃深灰、轮胎近黑、前灯米白、尾灯红 |
 | 标定块 ×4 | 单 mesh：**黑面 1 个四边形 + 白框 4 个四边形**（抬高 `block_lift`） | 黑面纯黑（对照 `--cloth-ink`）+ 白框浅白；白框向外扩 `0.2 m`，**黑面尺寸与角点不变**，两个区域共边不重叠、不会 z-fighting |
 | 太阳 `AVM_Sun` + `AVM_Sun_Fill` | — | 随场景创建的主光 + 对侧补光（`0.4 × sun_energy`），**默认都不投影阴影**：投影会被黑色区域检测器误判为标定块。补光让画面不依赖场景里其它灯（重启后新场景只剩这两盏也能正常出图）；`show_sun` 一个开关同时隐藏两盏 |
@@ -511,6 +512,16 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 **只向外扩、不改变黑面与 `points_3d` 的角点**。
 因为不再有单独布面，**浅色布面**由地面材质承担：地面是**纯色浅灰**（≈0.62），
 黑块（≈0.02）与它的对比度足够高，且没有任何网格/纹理会被黑色区域检测器误检。
+
+**真实地面 mesh（默认开）**：`use_ground_model` 开时，`AVM_Ground` 不是平面，而是导入
+`models/unlit_round_bowls.glb`（`core/paths.ground_model_file()`）后把 4 个象限
+（`NurbsPath.001..004`）按世界变换合并成的单 mesh——它正是 Falcon app 里 `glb_file` 指向、
+`bowl_material` 把 4 路相机图像投影上去的那张碗形地面，所以仿真的 4 路相机看到的边界/遮挡
+与最终真机一致。中心 10 m 内是平的（标定块、`points_3d`、覆盖曲线全部落在 z = 0 上，不受影响），
+边缘 2 m 内抬起约 5 m 形成围壁。导入只在首次重建或路径变化时发生（mesh 上打 `avm_ground_model`
+标记缓存，拖动滑杆不会重复导入）；导入过程会保存并恢复用户选择。`ground_model` 可指向
+自定义模型（`.glb/.gltf/.fbx/.obj`），为空即内置 bowl；文件缺失/导入失败时回退平面并在
+`messages` / 状态栏给出提示。
 
 ---
 
@@ -665,6 +676,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | **P5 ✅** | **覆盖评估与素材导出**（§16）：覆盖曲线 + 可见性矩阵 + `avm_export_materials` | ✅ `avm_analyze_coverage` 出 4 条贴地 POLY 曲线 + 摘要/矩阵；`avm_export_materials` 产出 4 PNG + `plane_scene.json` + `avm_scene.json` + `coverage.json` + `vehicle_avm_scene.json` + `scene_spec.md`；`test_avm_coverage_and_export` 覆盖 |
 | **P5b ✅** | **角点检测**（§16.7，决议 #13 更新）：`avm_detect_camera`（单相机，面板）+ `corners.py` | ✅ numpy 亚像素黑块角点，4 台各 8 点写入 `points_2d`（rms < 1 px）；单相机标注图 + revision 缓存；`export_materials` 复用渲染结果回填 filament config；`test_avm_corner_detection` / `test_avm_corner_single_and_cache` 覆盖 |
 | **P5c ✅** | **Export Falcon**（§16.8）：4 张原始图 + `vehicle_avm.json`（对齐 `JsonGenerator`） | ✅ `core/scenes/avm_falcon.py` 纯 Python 复刻字段/顺序；`avm_export_falcon` 渲染 4 图 + 检测 + 写配置；`test_avm_falcon_config` / `test_avm_export_falcon` 覆盖 |
+| **P5d ✅** | **真实地面 mesh**（§7）：内置 `models/unlit_round_bowls.glb` 作为 `AVM_Ground` | ✅ `use_ground_model`（默认开）+ `ground_model` 自定义路径；4 象限合并为单 mesh、`avm_ground_model` 标记缓存；缺失/导入失败回退平面；`test_avm_ground_model` 覆盖 |
 | **P6 ✅** | 文档（含 `docs/architecture.md` 目录树）、README、roadmap、版本号 | ✅ README（插件表/图标表/目录树/AVM Scene 用法）、roadmap M5c、`blender_manifest.toml` → 0.17.0；`scripts/run_tests.sh` 全绿 |
 | P7（后续，可选） | 真实 GLB 车模、BEV 拼图、外部标定回环对接、**DMS Scene**（走 §17 的框架） | — |
 
@@ -967,6 +979,8 @@ P = C + t · d_world
   `model_scene`（`NurbsPath.001..004`）/ `bev_bound`（`±15 m` 的半个 bowl）/
   `orbit` / `enable`（有 `points_2d` 才 true）/ `ba_opt`（仅 left/right true）；
 - 资源 / 轨道 / 遮罩 / 转向线默认值取自 app 的 `res/values/bowl.xml` / `steering.xml`；
+- `glb_file` 指向的正是 AVM Scene 默认用作地面的那张碗形 mesh（`models/unlit_round_bowls.glb`），
+  所以仿真的相机图像与 app 的投影面来自同一张几何；
 - `K` 用**渲染尺寸下的有效内参**、`input_size` 是**实际图像尺寸**、`points_2d` 是同一张图里
   检测到的像素，三者自洽（默认输出为标定尺寸时即为原始 K）。
 

@@ -56,6 +56,7 @@ blender-vision-sim/
 │   │       ├── camera_scene.py          # 原 bl/scene_builder.py
 │   │       └── avm_scene/               # AVM Scene（properties/builder/controller/io/coverage/corners/falcon/operators/ui）
 │   ├── presets/avm_scene/default.json   # AVM 内置默认参数（离线反算产物）
+│   ├── models/unlit_round_bowls.glb     # AVM 真实碗形地面（app 投影面，AVM_Ground 默认用它）
 │   └── shaders/*.osl            # 随插件分发的 OSL 源文件（权威副本）
 ├── docs/                        # 架构、相机模型、路线图
 ├── .github/workflows/ci.yml     # 打 v* tag 自动测试+出包+发 Release（不依赖 Blender）
@@ -226,6 +227,10 @@ Object Data Properties
 - **面板**：`AVM Scene` 在 Scene Properties（全部参数 + 覆盖评估 + 导入导出）；
   3D 视口 N 侧栏 `VisionSim ▸ AVM Scene` 只放**布局**（尺寸/位姿/图层）。
   相机内参不在这里，继续用既有的 `CV Intrinsics` / `CV Presets` / `CV Output`。
+- **真实地面**：`AVM_Ground` 默认不是平面，而是内置的 **Falcon 真实碗形 mesh**
+  （`models/unlit_round_bowls.glb`：30 m 见方、中心平坦、边缘抬起 5 m，正是 app 的投影面），
+  让仿真的 4 路相机看到与真机一致的边界/遮挡；`Real Ground Mesh` 可关掉切回平面，
+  `Model` 可换自定义 `.glb/.gltf/.fbx/.obj`（缺失/导入失败自动回退平面）。
 - **默认视角**：建场景时视口自动摆到标准 **3/4 视角**（方位 135°、仰角 30°，看车头 + 右侧 +
   四块 + 四台相机）并自动取景，两个面板里的 `Frame View` 可随时复位（拖滑杆重建时不抢镜头）。
 - **本场景不做位姿解算**：只摆放、渲染、导出；PnP 只在离线脚本里跑一次用来产出默认预设。

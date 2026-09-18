@@ -35,6 +35,7 @@ addons/opencv_camera/
 │   └── scene_builder.py   兼容转发 → scenes.camera_scene（保留一个版本）
 ├── shaders/opencv_camera.osl   权威着色器源文件
 ├── presets/avm_scene/default.json    AVM 内置默认参数（离线反算产物）
+├── models/unlit_round_bowls.glb     AVM 真实碗形地面（Falcon app 的投影面，AVM_Ground 默认用它）
 └── icons/                     菜单/场景图标 PNG
 ```
 

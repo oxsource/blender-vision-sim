@@ -57,8 +57,16 @@ def _ground_and_blocks(layout, settings) -> None:
     column = layout.column(align=True)
     column.use_property_split = True
     column.label(text="Ground / Blocks / Sun")
-    column.prop(settings, "ground_w")
-    column.prop(settings, "ground_d")
+    column.prop(settings, "use_ground_model")
+    row = column.row()
+    row.enabled = settings.use_ground_model
+    row.prop(settings, "ground_model", text="Model")
+    if settings.use_ground_model and not (settings.ground_model or "").strip():
+        column.label(text="Bundled: unlit_round_bowls.glb", icon="MESH_DATA")
+    plane = column.column(align=True)
+    plane.enabled = not settings.use_ground_model
+    plane.prop(settings, "ground_w")
+    plane.prop(settings, "ground_d")
     column.prop(settings, "block_lift")
     column.prop(settings, "sun_energy")
     column.prop(settings, "sun_shadow")

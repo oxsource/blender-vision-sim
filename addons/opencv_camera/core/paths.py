@@ -13,12 +13,18 @@ from typing import List
 ADDON_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHADERS_DIR = os.path.join(ADDON_ROOT, "shaders")
 LOGOS_DIR = os.path.join(ADDON_ROOT, "logos")
+MODELS_DIR = os.path.join(ADDON_ROOT, "models")
 #: bundled camera calibration presets (scanned by :mod:`core.presets`)
 PRESETS_DIR = os.path.join(ADDON_ROOT, "presets")
 
 #: logo shipped with the add-on, used by the AVM Scene ground decal when no
 #: custom image is chosen (so it survives a Blender restart and ships in the zip)
 DEFAULT_LOGO = "avm_logo"
+
+#: the real AVM bowl ground shipped with the add-on, used by the AVM Scene when
+#: no custom ground model is chosen (it is the mesh the Falcon app projects the
+#: four camera images onto, so the simulated cameras see the same environment)
+DEFAULT_GROUND_MODEL = "unlit_round_bowls"
 
 
 def logo_file(name: str = DEFAULT_LOGO) -> str:
@@ -30,6 +36,19 @@ def bundled_logos() -> List[str]:
     """Names of the bundled logos (sorted, without extension)."""
     try:
         return sorted(n[:-4] for n in os.listdir(LOGOS_DIR) if n.endswith(".png"))
+    except OSError:
+        return []
+
+
+def ground_model_file(name: str = DEFAULT_GROUND_MODEL) -> str:
+    """Absolute path of a bundled ground model (``.glb``)."""
+    return os.path.join(MODELS_DIR, f"{name}.glb")
+
+
+def bundled_ground_models() -> List[str]:
+    """Names of the bundled ground models (sorted, without extension)."""
+    try:
+        return sorted(n[:-4] for n in os.listdir(MODELS_DIR) if n.endswith(".glb"))
     except OSError:
         return []
 

@@ -1426,6 +1426,51 @@ def test_avm_visibility_and_logo():
           bpy.data.objects.get("AVM_Label_Logo") is not None)
 
 
+def test_avm_ground_model():
+    """The real AVM bowl ground loads by default, toggles to a plane and back."""
+    from opencv_camera.bl.scenes.avm_scene import builder
+
+    scene = setup_scene(resolution=64, samples=1)
+    clear_scene()
+    scene = setup_scene(resolution=64, samples=1)
+    check("add AVM scene", bpy.ops.opencv_cam.avm_add_scene() == {"FINISHED"})
+    settings = scene.avm_scene
+
+    check("the bundled ground model ships", os.path.exists(paths.ground_model_file()),
+          paths.ground_model_file())
+    check("the real ground mesh is used by default", settings.use_ground_model)
+    ground = bpy.data.objects["AVM_Ground"]
+    check("the ground is the merged bowl mesh",
+          len(ground.data.vertices) > 1000
+          and ground.data.get(builder.GROUND_MODEL_KEY) == paths.ground_model_file(),
+          f"{len(ground.data.vertices)} verts")
+    check("the bowl sits on z = 0", abs(ground.location.z) < 1e-9, f"{ground.location.z}")
+    check("the bowl keeps the real 30 m footprint",
+          abs(ground.dimensions.x - 30.0) < 1e-3 and abs(ground.dimensions.y - 30.0) < 1e-3,
+          f"{tuple(round(v, 3) for v in ground.dimensions)}")
+
+    settings.use_ground_model = False
+    bpy.ops.opencv_cam.avm_rebuild()
+    ground = bpy.data.objects["AVM_Ground"]
+    check("turning the model off restores the flat plane",
+          len(ground.data.vertices) == 4
+          and abs(ground.location.z + builder.GROUND_DROP) < 1e-9,
+          f"{len(ground.data.vertices)} verts z={ground.location.z:.4f}")
+
+    settings.use_ground_model = True
+    bpy.ops.opencv_cam.avm_rebuild()
+    ground = bpy.data.objects["AVM_Ground"]
+    check("turning it back on reloads the bowl", len(ground.data.vertices) > 1000,
+          f"{len(ground.data.vertices)} verts")
+
+    settings.ground_model = os.path.join(TMPDL, "missing.glb")
+    bpy.ops.opencv_cam.avm_rebuild()
+    ground = bpy.data.objects["AVM_Ground"]
+    check("a missing model falls back to the flat plane", len(ground.data.vertices) == 4,
+          f"{len(ground.data.vertices)} verts")
+    settings.ground_model = ""
+
+
 def test_scene_default_view():
     """A fresh scene is framed from the standard 3/4 orbit, fitted to its subject.
 
@@ -1927,6 +1972,7 @@ def main():
         test_avm_corner_single_and_cache,
         test_avm_export_falcon,
         test_avm_visibility_and_logo,
+        test_avm_ground_model,
         test_scene_default_view,
         test_shader_force_compile,
         test_presets,

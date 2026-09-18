@@ -141,6 +141,18 @@ class AVMSceneSettings(bpy.types.PropertyGroup):
                                  unit="LENGTH", update=_schedule)
 
     # -- ground / blocks ----------------------------------------------------
+    use_ground_model: BoolProperty(
+        name="Real Ground Mesh", default=True,
+        description="Use the real AVM bowl mesh as the ground (the surface the "
+                    "Falcon app projects the cameras onto); off = a flat plane",
+        update=_schedule)
+    ground_model: StringProperty(
+        name="Ground Model",
+        description="Custom ground model (.glb/.gltf/.fbx/.obj); empty = the bundled "
+                    "real AVM bowl that ships with the add-on",
+        subtype="FILE_PATH",
+        default="",
+        update=_schedule)
     ground_w: FloatProperty(name="Ground W", default=30.0, min=1.0, max=500.0,
                             unit="LENGTH", update=_schedule)
     ground_d: FloatProperty(name="Ground D", default=30.0, min=1.0, max=500.0,

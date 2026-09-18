@@ -72,6 +72,8 @@ def validate(data: Dict) -> None:
     ground = avm.get("ground")
     if ground is not None and avm_layout.size_from(ground) is None:
         raise ValueError("'avm.ground' is not a size")
+    if avm.get("ground_model") is not None and not isinstance(avm["ground_model"], str):
+        raise ValueError("'avm.ground_model' must be a string")
     active = avm.get("active_camera")
     if active is not None and active not in avm_layout.CAMERAS:
         raise ValueError(f"'avm.active_camera' must be one of {avm_layout.CAMERAS}")
@@ -118,6 +120,8 @@ def to_full(settings) -> Dict:
         "car_height": float(settings.car_height),
         "car_clearance": float(settings.car_clearance),
         "ground": f"{settings.ground_w:g}x{settings.ground_d:g}",
+        "use_ground_model": bool(settings.use_ground_model),
+        "ground_model": settings.ground_model,
         "block_lift": float(settings.block_lift),
         "active_camera": settings.active_camera,
         "cameras": camera_records(settings),
@@ -196,6 +200,10 @@ def _apply_avm(settings, avm: Dict) -> None:
         size = avm_layout.size_from(ground)
         if size is not None:
             settings.ground_w, settings.ground_d = size
+    if "use_ground_model" in avm:
+        settings.use_ground_model = bool(avm["use_ground_model"])
+    if "ground_model" in avm:
+        settings.ground_model = str(avm["ground_model"])
     active = avm.get("active_camera")
     if active in avm_layout.CAMERAS:
         settings.active_camera = active
