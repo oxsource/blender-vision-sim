@@ -130,19 +130,26 @@ class OPENCV_CAM_PT_extrinsics(_CameraPanel, bpy.types.Panel):
         layout = self.layout
         layout.use_property_split = True
         obj = context.object
+        settings = context.camera.opencv_cam
 
-        # The camera object's own transform IS the pose - the panel edits the very
-        # same Location/Rotation as the 3D viewport's Item tab (N panel), so the
-        # two can never drift apart.
+        # The pose proxies read/write the camera object's own transform - the
+        # panel edits the very same Location/Rotation as the 3D viewport's Item
+        # tab (N panel), so the two can never drift apart.
         if obj is None or obj.type != "CAMERA":
             layout.label(text="Select the camera object to edit its pose", icon="INFO")
             return
         box = layout.box()
         box.label(text="Location (Blender world)")
-        box.prop(obj, "location")
+        row = box.row(align=True)
+        row.use_property_split = False
+        for index, axis in enumerate(("X", "Y", "Z")):
+            row.prop(settings, "location", index=index, text=axis)
         box = layout.box()
-        box.label(text="Rotation (XYZ Euler, degrees)")
-        box.prop(obj, "rotation_euler")
+        box.label(text="Rotation (XYZ Eulers)")
+        row = box.row(align=True)
+        row.use_property_split = False
+        for index, axis in enumerate(("X", "Y", "Z")):
+            row.prop(settings, "rotation", index=index, text=axis)
         if obj.rotation_mode != "XYZ":
             layout.label(text=f"rotation mode is {obj.rotation_mode}: "
                               "switch it to XYZ to edit the angles here", icon="INFO")

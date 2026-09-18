@@ -88,13 +88,14 @@ def _cameras(layout, settings) -> None:
         select.name = record.name
         column = box.column(align=True)
         column.use_property_split = True
-        # the pose is edited on the camera object itself (the single source,
-        # shared with CV Extrinsics), not on a scene-level copy
+        # the pose proxies read/write the camera object itself (the single
+        # source, shared with CV Extrinsics) with the same mm / 0.01 deg format
         camera = bpy.data.objects.get(
             f"{builder.CAMERA_PREFIX}{builder.CAMERA_SUFFIX.get(record.name, '')}")
         if camera is not None:
-            column.prop(camera, "location")
-            column.prop(camera, "rotation_euler")
+            cam_settings = camera.data.opencv_cam
+            column.prop(cam_settings, "location")
+            column.prop(cam_settings, "rotation", text="Rotation")
         else:
             column.label(text="camera object missing", icon="ERROR")
         detect = box.row(align=True)

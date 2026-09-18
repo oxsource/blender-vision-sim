@@ -16,6 +16,7 @@ from bpy.props import (
     BoolProperty,
     EnumProperty,
     FloatProperty,
+    FloatVectorProperty,
     IntProperty,
     PointerProperty,
     StringProperty,
@@ -63,6 +64,43 @@ def _update_values(self, context):
 
 def _update_model(self, context):
     _apply_live(self, context, full=True)
+
+
+# ---------------------------------------------------------------------------
+# pose proxies: read/write the camera *object's* transform (no copy), just with
+# a friendlier display precision than Object.location / rotation_euler (5)
+# ---------------------------------------------------------------------------
+def _owner_camera(settings):
+    """The camera object that uses this data-block, if any."""
+    scene = getattr(bpy.context, "scene", None)
+    if scene is None:
+        return None
+    for obj in scene.objects:
+        if obj.type == "CAMERA" and obj.data is settings.id_data:
+            return obj
+    return None
+
+
+def _get_pose_location(self):
+    obj = _owner_camera(self)
+    return tuple(obj.location) if obj is not None else (0.0, 0.0, 0.0)
+
+
+def _set_pose_location(self, value):
+    obj = _owner_camera(self)
+    if obj is not None:
+        obj.location = value
+
+
+def _get_pose_rotation(self):
+    obj = _owner_camera(self)
+    return tuple(obj.rotation_euler) if obj is not None else (0.0, 0.0, 0.0)
+
+
+def _set_pose_rotation(self, value):
+    obj = _owner_camera(self)
+    if obj is not None:
+        obj.rotation_euler = value
 
 
 #: defaults of the bundled reference camera (surround view front camera, 1280x960)
@@ -275,6 +313,29 @@ class OpenCVCameraSettings(bpy.types.PropertyGroup):
     distortion: PointerProperty(type=DistortionSettings)
     calibration: PointerProperty(type=CalibrationSettings)
     preview: PointerProperty(type=PreviewSettings)
+    #: pose proxies: these read/write the camera object's own transform (no copy,
+    #: so they always match the viewport Item tab) with a display precision that
+    #: suits the panel (mm / hundredths of a degree)
+    location: FloatVectorProperty(
+        name="Location",
+        description="Camera position - the camera object's own Location",
+        size=3,
+        subtype="TRANSLATION",
+        unit="LENGTH",
+        precision=3,
+        get=_get_pose_location,
+        set=_set_pose_location,
+    )
+    rotation: FloatVectorProperty(
+        name="Rotation",
+        description="Camera orientation (XYZ Euler) - the camera object's own Rotation",
+        size=3,
+        subtype="EULER",
+        unit="ROTATION",
+        precision=2,
+        get=_get_pose_rotation,
+        set=_set_pose_rotation,
+    )
     show_raw_params: BoolProperty(
         name="Show Cycles Raw Parameters",
         description="Show the raw parameter list that Cycles generates from the OSL shader "
