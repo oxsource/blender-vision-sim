@@ -153,6 +153,17 @@ class AVMSceneSettings(bpy.types.PropertyGroup):
         subtype="FILE_PATH",
         default="",
         update=_schedule)
+    ground_radius: FloatProperty(
+        name="Bowl Radius", default=15.0, min=2.0, max=100.0,
+        unit="LENGTH",
+        description="Radius of the real ground mesh [m]; the bowl is scaled around "
+                    "the vehicle and its floor stays flat at z = 0",
+        update=_schedule)
+    ground_rim_height: FloatProperty(
+        name="Rim Height", default=5.0, min=0.0, max=50.0,
+        unit="LENGTH",
+        description="Height of the ground mesh rim above the floor [m]",
+        update=_schedule)
     ground_w: FloatProperty(name="Ground W", default=30.0, min=1.0, max=500.0,
                             unit="LENGTH", update=_schedule)
     ground_d: FloatProperty(name="Ground D", default=30.0, min=1.0, max=500.0,

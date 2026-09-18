@@ -58,11 +58,13 @@ def _ground_and_blocks(layout, settings) -> None:
     column.use_property_split = True
     column.label(text="Ground / Blocks / Sun")
     column.prop(settings, "use_ground_model")
-    row = column.row()
-    row.enabled = settings.use_ground_model
-    row.prop(settings, "ground_model", text="Model")
+    model = column.column(align=True)
+    model.enabled = settings.use_ground_model
+    model.prop(settings, "ground_model", text="Model")
     if settings.use_ground_model and not (settings.ground_model or "").strip():
-        column.label(text="Bundled: unlit_round_bowls.glb", icon="MESH_DATA")
+        model.label(text="Bundled: unlit_round_bowls.glb", icon="MESH_DATA")
+    model.prop(settings, "ground_radius")
+    model.prop(settings, "ground_rim_height")
     plane = column.column(align=True)
     plane.enabled = not settings.use_ground_model
     plane.prop(settings, "ground_w")

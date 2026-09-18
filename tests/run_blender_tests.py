@@ -1427,7 +1427,7 @@ def test_avm_visibility_and_logo():
 
 
 def test_avm_ground_model():
-    """The real AVM bowl ground loads by default, toggles to a plane and back."""
+    """The real AVM bowl loads by default, scales by radius/height, and toggles."""
     from opencv_camera.bl.scenes.avm_scene import builder
 
     scene = setup_scene(resolution=64, samples=1)
@@ -1442,12 +1442,40 @@ def test_avm_ground_model():
     ground = bpy.data.objects["AVM_Ground"]
     check("the ground is the merged bowl mesh",
           len(ground.data.vertices) > 1000
-          and ground.data.get(builder.GROUND_MODEL_KEY) == paths.ground_model_file(),
+          and ground.data.get(builder.GROUND_MODEL_KEY) == builder.ground_model_key(settings),
           f"{len(ground.data.vertices)} verts")
     check("the bowl sits on z = 0", abs(ground.location.z) < 1e-9, f"{ground.location.z}")
     check("the bowl keeps the real 30 m footprint",
           abs(ground.dimensions.x - 30.0) < 1e-3 and abs(ground.dimensions.y - 30.0) < 1e-3,
           f"{tuple(round(v, 3) for v in ground.dimensions)}")
+    check("the rim reaches the real 5 m",
+          abs(max(v.co.z for v in ground.data.vertices) - 5.0) < 1e-3,
+          f"{max(v.co.z for v in ground.data.vertices):.3f}")
+
+    # radius: half the footprint; the floor stays flat at z = 0
+    settings.ground_radius = 10.0
+    bpy.ops.opencv_cam.avm_rebuild()
+    ground = bpy.data.objects["AVM_Ground"]
+    check("Bowl Radius rescales the footprint",
+          abs(ground.dimensions.x - 20.0) < 1e-3 and abs(ground.dimensions.y - 20.0) < 1e-3,
+          f"{tuple(round(v, 3) for v in ground.dimensions)}")
+    check("the floor still sits on z = 0",
+          abs(min(v.co.z for v in ground.data.vertices)) < 1e-6,
+          f"{min(v.co.z for v in ground.data.vertices):.5f}")
+    check("the rim is unchanged by the radius",
+          abs(max(v.co.z for v in ground.data.vertices) - 5.0) < 1e-3)
+
+    # rim height: the wall, independent of the radius
+    settings.ground_rim_height = 2.0
+    bpy.ops.opencv_cam.avm_rebuild()
+    ground = bpy.data.objects["AVM_Ground"]
+    check("Rim Height rescales the wall",
+          abs(max(v.co.z for v in ground.data.vertices) - 2.0) < 1e-3,
+          f"{max(v.co.z for v in ground.data.vertices):.3f}")
+    check("the radius survives the rim change",
+          abs(ground.dimensions.x - 20.0) < 1e-3, f"{ground.dimensions.x:.3f}")
+    settings.ground_radius = 15.0
+    settings.ground_rim_height = 5.0
 
     settings.use_ground_model = False
     bpy.ops.opencv_cam.avm_rebuild()

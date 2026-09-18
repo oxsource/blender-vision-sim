@@ -136,9 +136,14 @@ def _replace_mesh(obj: bpy.types.Object, mesh: bpy.types.Mesh) -> None:
 # ---------------------------------------------------------------------------
 # real ground mesh: the bowl the Falcon app projects the cameras onto
 # ---------------------------------------------------------------------------
-#: marker stored on the merged ground mesh, so a rebuild can tell a loaded model
-#: from the fallback quad and skip re-importing the file on every slider drag
+#: marker stored on the merged ground mesh: the model path plus the scale it was
+#: built with, so a rebuild can tell a loaded model from the fallback quad and
+#: skip re-importing the file on every slider drag
 GROUND_MODEL_KEY = "avm_ground_model"
+
+#: base (unscaled) geometry per model path, so changing the bowl size / rim
+#: height rescales from the cache instead of re-importing the file
+_MODEL_GEOMETRY: Dict[str, tuple] = {}
 
 
 def ground_model_path(settings) -> str:
@@ -151,6 +156,14 @@ def ground_model_path(settings) -> str:
     if not settings.use_ground_model:
         return ""
     return (settings.ground_model or "").strip() or paths.ground_model_file()
+
+
+def ground_model_key(settings) -> str:
+    """Cache key of the merged mesh: the file plus the two scale settings."""
+    path = ground_model_path(settings)
+    if not path:
+        return ""
+    return (f"{path}\x00{settings.ground_radius:g}\x00{settings.ground_rim_height:g}")
 
 
 def _import_model(path: str) -> None:
@@ -166,8 +179,8 @@ def _import_model(path: str) -> None:
         raise ValueError(f"unsupported ground model format {suffix!r}")
 
 
-def _merge_meshes(objects) -> Optional[bpy.types.Mesh]:
-    """Merge mesh objects into one mesh with their world transforms baked."""
+def _collect_meshes(objects) -> Optional[tuple]:
+    """Merge mesh objects into ``(verts, faces)`` with world transforms baked."""
     verts: List = []
     faces: List = []
     for obj in objects:
@@ -175,38 +188,36 @@ def _merge_meshes(objects) -> Optional[bpy.types.Mesh]:
             continue
         matrix = obj.matrix_world
         base = len(verts)
-        verts.extend(matrix @ vertex.co for vertex in obj.data.vertices)
+        verts.extend(tuple(matrix @ vertex.co) for vertex in obj.data.vertices)
         faces.extend(tuple(base + index for index in polygon.vertices)
                      for polygon in obj.data.polygons)
     if not faces:
         return None
-    mesh = bpy.data.meshes.new("AVM_Ground")
-    mesh.from_pydata([tuple(vertex) for vertex in verts], [], faces)
-    for polygon in mesh.polygons:
-        polygon.use_smooth = True
-    mesh.update()
-    return mesh
+    return verts, faces
 
 
-def _load_ground_model_mesh(path: str) -> Optional[bpy.types.Mesh]:
-    """Import ``path`` and merge its meshes into one ground mesh (or ``None``).
+def _model_geometry(path: str) -> Optional[tuple]:
+    """Import ``path`` once and return its cached ``(verts, faces)``.
 
     The importer links its objects into the active collection; they are merged
-    (world transform baked) and removed again, so only the single ground mesh is
+    (world transform baked) and removed again, so nothing but the geometry is
     left behind.  The user's selection is restored: a rebuild must never move it.
     """
+    cached = _MODEL_GEOMETRY.get(path)
+    if cached is not None:
+        return cached
     view_layer = bpy.context.view_layer
     selected = list(bpy.context.selected_objects)
     active = view_layer.objects.active
     before = {obj.name for obj in bpy.data.objects}
     imported: List = []
-    mesh: Optional[bpy.types.Mesh] = None
+    geometry: Optional[tuple] = None
     try:
         _import_model(path)
         imported = [obj for obj in bpy.data.objects if obj.name not in before]
-        mesh = _merge_meshes(imported)
+        geometry = _collect_meshes(imported)
     except Exception:
-        mesh = None
+        geometry = None
     for obj in imported:
         data = obj.data
         bpy.data.objects.remove(obj, do_unlink=True)
@@ -219,8 +230,46 @@ def _load_ground_model_mesh(path: str) -> Optional[bpy.types.Mesh]:
         view_layer.objects.active = active
     except Exception:
         pass
-    if mesh is not None:
-        mesh[GROUND_MODEL_KEY] = path
+    if geometry is not None:
+        _MODEL_GEOMETRY[path] = geometry
+    return geometry
+
+
+def _load_ground_model_mesh(path: str, radius: float,
+                            rim_height: float) -> Optional[bpy.types.Mesh]:
+    """Build the ground mesh from ``path``, scaled to ``radius`` x ``rim_height``.
+
+    The real bowl is a flat floor whose raised rim follows a rounded-square
+    boundary (~15 m radius on the axes, ~17.1 m at the corners) and climbs ~5 m
+    over the last ~4 m.  Scaling the whole mesh horizontally to ``radius`` (its
+    nominal half-extent) and vertically so the rim reaches ``rim_height`` keeps
+    that shape while letting the user grow/shrink the bowl and its wall height
+    independently.  The geometry is centred on the vehicle and its floor sits on
+    ``z = 0``, so the calibration blocks stay on the flat part.
+    """
+    geometry = _model_geometry(path)
+    if geometry is None:
+        return None
+    verts, faces = geometry
+    xs = [vertex[0] for vertex in verts]
+    ys = [vertex[1] for vertex in verts]
+    zs = [vertex[2] for vertex in verts]
+    width = max(xs) - min(xs)
+    depth = max(ys) - min(ys)
+    height = max(zs) - min(zs)
+    base_radius = 0.5 * max(width, depth)
+    scale_h = radius / base_radius if base_radius > 1e-9 else 1.0
+    scale_z = rim_height / height if height > 1e-9 else 1.0
+    centre_x = 0.5 * (max(xs) + min(xs))
+    centre_y = 0.5 * (max(ys) + min(ys))
+    floor = min(zs)
+    mesh = bpy.data.meshes.new("AVM_Ground")
+    mesh.from_pydata(
+        [((x - centre_x) * scale_h, (y - centre_y) * scale_h,
+          (z - floor) * scale_z) for x, y, z in verts], [], faces)
+    for polygon in mesh.polygons:
+        polygon.use_smooth = True
+    mesh.update()
     return mesh
 
 
@@ -1008,26 +1057,29 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
         "AVM_Block_Border_Mat", (0.95, 0.95, 0.95, 1.0), 0.9)
 
     # ground ---------------------------------------------------------------
-    # The real Falcon ground is a 30 m bowl the app projects the four camera
-    # images onto, so by default the simulated cameras see the same mesh; a
-    # flat plane remains the fallback (toggle off, or a model that will not load).
+    # The real Falcon ground is a bowl the app projects the four camera images
+    # onto, so by default the simulated cameras see the same mesh; a flat plane
+    # remains the fallback (toggle off, or a model that will not load).
     ground = bpy.data.objects.get(GROUND_NAME)
     if ground is None:
         ground = _new_mesh_object(GROUND_NAME, _quad_mesh("AVM_Ground", 1.0, 1.0), target)
     model_path = ground_model_path(settings)
+    model_key = ground_model_key(settings)
     loaded = ground.data.get(GROUND_MODEL_KEY) if ground.data is not None else None
-    if not model_path:
+    if not model_key:
         loaded = None
-    elif loaded != model_path:
+    elif loaded != model_key:
         if not os.path.isfile(model_path):
             messages.append(f"ground model {os.path.basename(model_path)!r} not found; "
                             "using the flat plane")
             loaded = None
         else:
-            mesh = _load_ground_model_mesh(model_path)
+            mesh = _load_ground_model_mesh(
+                model_path, settings.ground_radius, settings.ground_rim_height)
             if mesh is not None:
+                mesh[GROUND_MODEL_KEY] = model_key
                 _replace_mesh(ground, mesh)
-                loaded = model_path
+                loaded = model_key
             else:
                 messages.append(f"ground model {os.path.basename(model_path)!r} could not "
                                 "be imported; using the flat plane")

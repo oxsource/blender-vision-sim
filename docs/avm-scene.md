@@ -68,7 +68,7 @@
 
 | # | 元素 | 数量 | 说明 |
 | --- | --- | --- | --- |
-| 1 | 地面 ground | 1 | **真实 AVM 碗形地面**（内置 `models/unlit_round_bowls.glb`：30 m 见方、中心平坦、边缘抬起 5 m，即 Falcon app 把 4 路图像投影上去的同一张 mesh），可切回大平面 |
+| 1 | 地面 ground | 1 | **真实 AVM 碗形地面**（内置 `models/unlit_round_bowls.glb`：中心平坦、圆角方形围壁，轴向半径 15 m、碗边离地 5 m，即 Falcon app 把 4 路图像投影上去的同一张 mesh），**半径/碗边高度可调**，可切回大平面 |
 | 2 | 车模 car | 1 | **程序化迷你巴士**（单 mesh、5 个材质槽：车身/玻璃/轮胎/前灯/尾灯），长宽 = `core`，高默认由相机安装高度推出 |
 | 3 | 鱼眼相机 fisheye camera | 4 | front / back / left / right，复用 `opencv_camera` fisheye 模型，**每台独立内外参** |
 | 4 | 标定布 / 标定块 cloth=block | 4 | **规格相同的黑方块**（黑面边长 `corner`，四周 `0.2 m` 白色边框），放在车四周四对角，位置由场地方程决定 |
@@ -197,8 +197,9 @@ hy     = cOutY  + borderH/100 # 场地半长
 | 车辆 | `car_length` / `car_width` | 跟随 `core_h` / `core_w` | 可覆盖 | HTML 的 `car ≡ core` |
 | | `car_height` | 2.88 m | 0.05–10.0 | —（HTML 无高度；载入预设时按 `max(相机 z) + 0.05` 推导） |
 | | `car_clearance` | 0.00 m | 0–0.5 | — |
-| 地面 | `ground_w` / `ground_d` | 30 / 30 m | 2–200 | —（仅**平面**地面用；真实碗形 mesh 尺寸固定） |
+| 地面 | `ground_w` / `ground_d` | 30 / 30 m | 2–200 | —（仅**平面**地面用） |
 | | `use_ground_model` / `ground_model` | 开 / 空（内置 bowl） | 开关 / 模型文件 | —（开=用真实碗形 mesh 模拟最终 3D 环境；关=平面。`ground_model` 留空用内置 `models/unlit_round_bowls.glb`，也可指向自己的 `.glb/.gltf/.fbx/.obj`；文件缺失或导入失败自动回退平面并在状态栏提示） |
+| | `ground_radius` / `ground_rim_height` | 15 / 5 m | 2–100 / 0–50 | —（碗形 mesh 的**半径**与**碗边离地高度**：水平按半径等比缩放、竖直把碗边缩放到该高度；底面仍平放在 z=0，标定块不受影响） |
 | 标定块 | `block_lift` | 0.001 m | 0–0.05 | —（离地抬升） |
 | | `sun_energy` | 3.0 | 0–100 | —（主光强度；另有一盏 0.4× 的**无影补光**） |
 | | `sun_shadow` | **关** | on/off | —（主光是否投影，默认关，避免阴影被当成黑块） |
@@ -517,11 +518,26 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 `models/unlit_round_bowls.glb`（`core/paths.ground_model_file()`）后把 4 个象限
 （`NurbsPath.001..004`）按世界变换合并成的单 mesh——它正是 Falcon app 里 `glb_file` 指向、
 `bowl_material` 把 4 路相机图像投影上去的那张碗形地面，所以仿真的 4 路相机看到的边界/遮挡
-与最终真机一致。中心 10 m 内是平的（标定块、`points_3d`、覆盖曲线全部落在 z = 0 上，不受影响），
-边缘 2 m 内抬起约 5 m 形成围壁。导入只在首次重建或路径变化时发生（mesh 上打 `avm_ground_model`
-标记缓存，拖动滑杆不会重复导入）；导入过程会保存并恢复用户选择。`ground_model` 可指向
-自定义模型（`.glb/.gltf/.fbx/.obj`），为空即内置 bowl；文件缺失/导入失败时回退平面并在
-`messages` / 状态栏给出提示。
+与最终真机一致。
+
+**碗模型结构**（分析 `unlit_round_bowls.glb` 得到）：底面是平的（z = 0），围壁沿一个
+**圆角方形**边界抬起——轴向半径 15 m、对角 17.07 m（≈超椭圆 n≈3.2），围壁在最后约 4.2 m
+内从 0 平滑升到 5 m。所以 `AVM_Ground` 用两个参数缩放它：
+
+- `ground_radius`（默认 15 m）：水平**半径**，按 `radius / 15` 等比缩放整个 mesh
+  （轴向与对角一起缩放，形状不变）；
+- `ground_rim_height`（默认 5 m）：**碗边离地高度**，把 mesh 的 z 缩放到该值。
+
+缩放后 mesh 仍以车辆为中心、底面平放在 z = 0：中心平坦区半径 ≈ `0.72 × ground_radius`
+（默认约 10.8 m），标定块、`points_3d`、覆盖曲线都在其中，不受影响；`ground_radius` 缩得
+太小时标定块会落到斜坡上，面板的 2 m 只是硬下限，实用上要保证平坦区覆盖场地
+（本场地外沿 ≈ 4.4 m → `ground_radius` 建议 ≥ 6 m）。
+
+导入只在首次重建或 `(路径, 半径, 高度)` 变化时发生：基础几何按路径缓存在 `_MODEL_GEOMETRY`，
+改半径/高度只从缓存重新缩放、不重复导入；对象 mesh 上用 `avm_ground_model` 键记录
+`路径 + 半径 + 高度` 做缓存。导入过程会保存并恢复用户选择。`ground_model` 可指向自定义模型
+（`.glb/.gltf/.fbx/.obj`），为空即内置 bowl；文件缺失/导入失败时回退平面并在 `messages` /
+状态栏给出提示。
 
 ---
 
@@ -676,7 +692,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | **P5 ✅** | **覆盖评估与素材导出**（§16）：覆盖曲线 + 可见性矩阵 + `avm_export_materials` | ✅ `avm_analyze_coverage` 出 4 条贴地 POLY 曲线 + 摘要/矩阵；`avm_export_materials` 产出 4 PNG + `plane_scene.json` + `avm_scene.json` + `coverage.json` + `vehicle_avm_scene.json` + `scene_spec.md`；`test_avm_coverage_and_export` 覆盖 |
 | **P5b ✅** | **角点检测**（§16.7，决议 #13 更新）：`avm_detect_camera`（单相机，面板）+ `corners.py` | ✅ numpy 亚像素黑块角点，4 台各 8 点写入 `points_2d`（rms < 1 px）；单相机标注图 + revision 缓存；`export_materials` 复用渲染结果回填 filament config；`test_avm_corner_detection` / `test_avm_corner_single_and_cache` 覆盖 |
 | **P5c ✅** | **Export Falcon**（§16.8）：4 张原始图 + `vehicle_avm.json`（对齐 `JsonGenerator`） | ✅ `core/scenes/avm_falcon.py` 纯 Python 复刻字段/顺序；`avm_export_falcon` 渲染 4 图 + 检测 + 写配置；`test_avm_falcon_config` / `test_avm_export_falcon` 覆盖 |
-| **P5d ✅** | **真实地面 mesh**（§7）：内置 `models/unlit_round_bowls.glb` 作为 `AVM_Ground` | ✅ `use_ground_model`（默认开）+ `ground_model` 自定义路径；4 象限合并为单 mesh、`avm_ground_model` 标记缓存；缺失/导入失败回退平面；`test_avm_ground_model` 覆盖 |
+| **P5d ✅** | **真实地面 mesh**（§7）：内置 `models/unlit_round_bowls.glb` 作为 `AVM_Ground`，半径/碗边高度可调 | ✅ `use_ground_model`（默认开）+ `ground_model` 自定义路径 + `ground_radius` / `ground_rim_height`；4 象限合并为单 mesh、按 `(路径,半径,高度)` 缓存；缺失/导入失败回退平面；`test_avm_ground_model` 覆盖 |
 | **P6 ✅** | 文档（含 `docs/architecture.md` 目录树）、README、roadmap、版本号 | ✅ README（插件表/图标表/目录树/AVM Scene 用法）、roadmap M5c、`blender_manifest.toml` → 0.17.0；`scripts/run_tests.sh` 全绿 |
 | P7（后续，可选） | 真实 GLB 车模、BEV 拼图、外部标定回环对接、**DMS Scene**（走 §17 的框架） | — |
 

@@ -65,7 +65,8 @@ def validate(data: Dict) -> None:
         return
     if not isinstance(avm, dict):
         raise ValueError("'avm' must be an object")
-    for name in ("car_length", "car_width", "car_height", "car_clearance", "block_lift"):
+    for name in ("car_length", "car_width", "car_height", "car_clearance", "block_lift",
+                 "ground_radius", "ground_rim_height"):
         value = avm.get(name)
         if value is not None and not isinstance(value, (int, float)):
             raise ValueError(f"'avm.{name}' must be a number")
@@ -122,6 +123,8 @@ def to_full(settings) -> Dict:
         "ground": f"{settings.ground_w:g}x{settings.ground_d:g}",
         "use_ground_model": bool(settings.use_ground_model),
         "ground_model": settings.ground_model,
+        "ground_radius": float(settings.ground_radius),
+        "ground_rim_height": float(settings.ground_rim_height),
         "block_lift": float(settings.block_lift),
         "active_camera": settings.active_camera,
         "cameras": camera_records(settings),
@@ -204,6 +207,9 @@ def _apply_avm(settings, avm: Dict) -> None:
         settings.use_ground_model = bool(avm["use_ground_model"])
     if "ground_model" in avm:
         settings.ground_model = str(avm["ground_model"])
+    for name in ("ground_radius", "ground_rim_height"):
+        if name in avm:
+            setattr(settings, name, float(avm[name]))
     active = avm.get("active_camera")
     if active in avm_layout.CAMERAS:
         settings.active_camera = active
