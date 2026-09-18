@@ -2,8 +2,10 @@
 
 Two parameter formats (``docs/avm-scene.md`` §8):
 
-* **full** (``"avm_scene"``) - field + car + ground + blocks + the four cameras'
-  ``location`` / ``rotation`` / ``K`` / ``D``; JSON, byte-stable round trip;
+* **full** (``"avm_scene"``) - **every** editable scene setting (field, car,
+  ground, blocks, sun, props, ground text, layers) plus the four cameras'
+  ``enable`` / ``location`` / ``rotation`` / ``K`` / ``D`` / ``output`` and
+  ``active_camera``; JSON, byte-stable round trip;
 * **compact** (``"plane_scene"``) - the four HTML / App ``Store`` keys only
   (``border`` / ``corner`` / ``inner`` / ``car``, in cm).
 
@@ -15,6 +17,7 @@ written to ``camera.data.opencv_cam`` (the CV panels own them, §4.2).
 from __future__ import annotations
 
 import json
+import math
 import os
 from typing import Dict, List, Optional
 
@@ -28,6 +31,31 @@ from . import builder
 FORMAT_FULL = "avm_scene"
 FORMAT_PLANE = "plane_scene"
 VERSION = 1
+
+#: every other editable scene setting (name -> type), so the full format cannot
+#: silently drop one; :func:`to_full` / :func:`_apply_avm` / :func:`validate`
+#: all iterate this one list (the field / car / ground / camera keys that need
+#: special handling are not here)
+_SCENE_PARAMS = (
+    ("sun_energy", float),
+    ("sun_shadow", bool),
+    ("prop_pedestrians", int),
+    ("prop_boxes", int),
+    ("prop_carts", int),
+    ("ground_title", str),
+    ("label_font", str),
+    ("logo_enabled", bool),
+    ("logo_image", str),
+    ("logo_size", float),
+    ("show_ground", bool),
+    ("show_blocks", bool),
+    ("show_car", bool),
+    ("show_cameras", bool),
+    ("show_props", bool),
+    ("show_labels", bool),
+    ("show_coverage", bool),
+    ("show_sun", bool),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +103,16 @@ def validate(data: Dict) -> None:
         raise ValueError("'avm.ground' is not a size")
     if avm.get("ground_model") is not None and not isinstance(avm["ground_model"], str):
         raise ValueError("'avm.ground_model' must be a string")
+    for name, kind in _SCENE_PARAMS:
+        value = avm.get(name)
+        if value is None:
+            continue
+        if kind is bool and not isinstance(value, bool):
+            raise ValueError(f"'avm.{name}' must be a boolean")
+        if kind is str and not isinstance(value, str):
+            raise ValueError(f"'avm.{name}' must be a string")
+        if kind in (int, float) and not isinstance(value, (int, float)):
+            raise ValueError(f"'avm.{name}' must be a number")
     active = avm.get("active_camera")
     if active is not None and active not in avm_layout.CAMERAS:
         raise ValueError(f"'avm.active_camera' must be one of {avm_layout.CAMERAS}")
@@ -86,27 +124,51 @@ def validate(data: Dict) -> None:
     for record in cameras:
         if not isinstance(record, dict) or "name" not in record:
             raise ValueError("every camera needs a 'name'")
-        for key, length in (("location", 3), ("rotation", 3), ("K", 4), ("D", 4)):
+        for key, length in (("location", 3), ("rotation", 3), ("K", 4), ("D", 4),
+                            ("output", 2)):
             if key in record and len(record[key]) != length:
                 raise ValueError(f"camera {record['name']!r}: '{key}' needs {length} values")
 
 
 def camera_records(settings) -> List[Dict]:
-    """The four cameras as export records (K/D read from ``opencv_cam``)."""
+    """The four cameras as export records.
+
+    The mount pose is read from the camera object itself (its transform is the
+    single source, shared with ``CV Extrinsics``); K/D/output come from
+    ``opencv_cam``.
+    """
     records: List[Dict] = []
     for entry in settings.cameras:
         camera = bpy.data.objects.get(
             f"{builder.CAMERA_PREFIX}{builder.CAMERA_SUFFIX.get(entry.name, '')}")
         k, d = _read_intrinsics(camera)
+        location, rotation = _read_pose(camera)
         records.append({
             "name": entry.name,
             "enable": bool(entry.enable),
-            "location": [float(value) for value in entry.location],
-            "rotation": [float(value) for value in entry.rotation],
+            "location": location,
+            "rotation": rotation,
             "K": k,
             "D": d,
+            "output": _read_output(camera),
         })
     return records
+
+
+def _read_pose(camera) -> tuple:
+    """The camera's mount location + XYZ Euler (degrees); zeros if missing.
+
+    Reads the object's own ``location`` / ``rotation_euler`` (not
+    ``matrix_world``): the AVM cameras are parented to ``AVM_Root`` at the
+    origin, so the local transform *is* the vehicle-frame pose, and it is
+    available immediately after an edit without a depsgraph update.
+    """
+    if camera is None:
+        return [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]
+    return (
+        [float(value) for value in camera.location],
+        [math.degrees(float(value)) for value in camera.rotation_euler],
+    )
 
 
 def to_full(settings) -> Dict:
@@ -129,6 +191,8 @@ def to_full(settings) -> Dict:
         "active_camera": settings.active_camera,
         "cameras": camera_records(settings),
     }
+    for name, kind in _SCENE_PARAMS:
+        data["avm"][name] = kind(getattr(settings, name))
     return data
 
 
@@ -210,6 +274,9 @@ def _apply_avm(settings, avm: Dict) -> None:
     for name in ("ground_radius", "ground_rim_height"):
         if name in avm:
             setattr(settings, name, float(avm[name]))
+    for name, kind in _SCENE_PARAMS:
+        if name in avm:
+            setattr(settings, name, kind(avm[name]))
     active = avm.get("active_camera")
     if active in avm_layout.CAMERAS:
         settings.active_camera = active
@@ -223,14 +290,17 @@ def _apply_camera(settings, record: Dict) -> None:
         return
     if "enable" in record:
         entry.enable = bool(record["enable"])
-    if "location" in record:
-        entry.location = [float(value) for value in record["location"]]
-    if "rotation" in record:
-        entry.rotation = [float(value) for value in record["rotation"]]
     camera = bpy.data.objects.get(
         f"{builder.CAMERA_PREFIX}{builder.CAMERA_SUFFIX.get(entry.name, '')}")
     if camera is None:
         return
+    # the mount pose lives on the camera object (the single source)
+    if "location" in record or "rotation" in record:
+        location = record.get("location") or [float(v) for v in camera.location]
+        rotation = record.get("rotation") or [math.degrees(float(v))
+                                              for v in camera.rotation_euler]
+        builder.apply_camera_pose(camera, [float(v) for v in location],
+                                  [math.radians(float(v)) for v in rotation])
     cam_settings = camera.data.opencv_cam
     intrinsics = cam_settings.intrinsics
     if "K" in record:
@@ -245,6 +315,9 @@ def _apply_camera(settings, record: Dict) -> None:
         distortion.enabled = True
         (distortion.k1, distortion.k2, distortion.k3,
          distortion.k4) = coefficients[:4]
+    output = record.get("output")
+    if output is not None and len(output) == 2:
+        intrinsics.image_width, intrinsics.image_height = int(output[0]), int(output[1])
 
 
 def _read_intrinsics(camera) -> tuple:
@@ -261,17 +334,25 @@ def _read_intrinsics(camera) -> tuple:
     )
 
 
+def _read_output(camera) -> List[int]:
+    """The camera's OpenCV output size ``[width, height]`` (0,0 if missing)."""
+    if camera is None:
+        return [0, 0]
+    intrinsics = camera.data.opencv_cam.intrinsics
+    return [int(intrinsics.image_width), int(intrinsics.image_height)]
+
+
 # ---------------------------------------------------------------------------
 # four-camera render export
 # ---------------------------------------------------------------------------
 def render_cameras(context, settings, directory: str, samples: int = 64,
                    names=None) -> List[str]:
-    """Render every enabled camera to ``<directory>/<name>.png`` at its own size.
+    """Render every enabled camera to ``<directory>/<name>.png``.
 
     ``names`` limits the render to a subset (used by the per-camera corner
     detector); the default is all four.  Each camera is rendered with its own
-    ``K`` / ``D`` and output resolution; the scene render settings are saved and
-    restored, so the export never changes the user's setup.
+    ``K`` / ``D`` at the scene's render resolution; the scene render settings are
+    saved and restored, so the export never changes the user's setup.
 
     Shadows from any light *other* than ``AVM_Sun`` are muted for the duration:
     a cast shadow is a dark ground patch that a black-region corner detector can
@@ -282,9 +363,6 @@ def render_cameras(context, settings, directory: str, samples: int = 64,
     os.makedirs(directory, exist_ok=True)
     render = scene.render
     saved = {
-        "resolution_x": render.resolution_x,
-        "resolution_y": render.resolution_y,
-        "resolution_percentage": render.resolution_percentage,
         "filepath": render.filepath,
         "file_format": render.image_settings.file_format,
         "samples": scene.cycles.samples,
@@ -309,9 +387,6 @@ def render_cameras(context, settings, directory: str, samples: int = 64,
             if camera is None:
                 continue
             cam_settings = camera.data.opencv_cam
-            width, height = apply_mod.output_resolution(cam_settings, scene)
-            render.resolution_x, render.resolution_y = width, height
-            render.resolution_percentage = 100
             render.image_settings.file_format = "PNG"
             scene.camera = camera
             ok, messages = apply_mod.apply_settings(camera.data, cam_settings, scene)
@@ -324,9 +399,6 @@ def render_cameras(context, settings, directory: str, samples: int = 64,
     finally:
         for light, use_shadow in other_lights:
             light.data.use_shadow = use_shadow
-        render.resolution_x = saved["resolution_x"]
-        render.resolution_y = saved["resolution_y"]
-        render.resolution_percentage = saved["resolution_percentage"]
         render.filepath = saved["filepath"]
         render.image_settings.file_format = saved["file_format"]
         scene.cycles.samples = saved["samples"]

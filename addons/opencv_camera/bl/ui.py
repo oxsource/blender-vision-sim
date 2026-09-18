@@ -7,10 +7,12 @@ sorts *before* Blender's own panels (negative ``bl_order``):
 * ``CV Intrinsics``  - lens model, fx, fy, cx, cy, distortion coefficients,
                        calibration size, then Apply / Preview / Live Apply /
                        Recompile and the status box
-* ``CV Extrinsics``  - Euler / R / t, plus a collapsible *World Frame* sub-block
+* ``CV Extrinsics``  - Location + Euler (XYZ, degrees), edited live on the object
 * ``CV Presets``     - calibration files, presets, defaults
-* ``CV Preview``     - preview render settings and tools
-* ``CV Output``      - the image size the render should produce
+* ``CV Preview``     - preview render settings and the preview button
+
+The render size comes from Blender's own Render properties (there is no separate
+output-size panel); the calibration intrinsics are rescaled to it when needed.
 """
 
 from __future__ import annotations
@@ -83,7 +85,6 @@ class OPENCV_CAM_PT_main(_CameraPanel, bpy.types.Panel):
         column.prop(intrinsics, "image_width")
         column.prop(intrinsics, "image_height")
         column.prop(intrinsics, "scale_to_render")
-        layout.operator("opencv_cam.sync_from_lens", icon="DRIVER_ROTATIONAL_DIFFERENCE")
 
         effective = apply_mod.effective_intrinsics(
             settings, scene.render.resolution_x, scene.render.resolution_y
@@ -128,81 +129,23 @@ class OPENCV_CAM_PT_extrinsics(_CameraPanel, bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         layout.use_property_split = True
-        pose = context.camera.opencv_cam.pose
+        obj = context.object
 
-        # three angles first: the friendly way to dial in an orientation
+        # The camera object's own transform IS the pose - the panel edits the very
+        # same Location/Rotation as the 3D viewport's Item tab (N panel), so the
+        # two can never drift apart.
+        if obj is None or obj.type != "CAMERA":
+            layout.label(text="Select the camera object to edit its pose", icon="INFO")
+            return
         box = layout.box()
-        box.label(text="Euler (XYZ, Blender world)")
-        box.prop(pose, "euler")
-
-        # the OpenCV-native representation, visually separated from the angles
-        layout.separator()
-        layout.label(text="OpenCV Pose")
-        column = layout.column()
-        column.prop(pose, "rotation")
-        column.prop(pose, "translation")
-
-        row = layout.row(align=True)
-        row.operator("opencv_cam.apply_pose", icon="OBJECT_ORIGIN")
-        row.operator("opencv_cam.read_pose", icon="TRACKER")
-        layout.label(text="Euler and R describe the same rotation", icon="INFO")
-
-
-class OPENCV_CAM_PT_world_frame(_CameraPanel, bpy.types.Panel):
-    bl_idname = "OPENCV_CAM_PT_world_frame"
-    bl_label = "World Frame"
-    bl_parent_id = "OPENCV_CAM_PT_extrinsics"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    def draw(self, context):
-        layout = self.layout
-        layout.use_property_split = True
-        pose = context.camera.opencv_cam.pose
-
-        layout.prop(pose, "use_world_transform")
-        row = layout.row()
-        row.enabled = pose.use_world_transform
-        row.prop(pose, "world_matrix")
-        layout.label(text="Maps the calibration world frame to the Blender world", icon="INFO")
-
-
-class OPENCV_CAM_PT_output(_CameraPanel, bpy.types.Panel):
-    bl_idname = "OPENCV_CAM_PT_output"
-    bl_label = "CV Output"
-    bl_order = BASE_ORDER + 4
-
-    def draw(self, context):
-        layout = self.layout
-        layout.use_property_split = True
-        settings = context.camera.opencv_cam
-        intrinsics = settings.intrinsics
-        output = settings.output
-        scene = context.scene
-
-        layout.prop(output, "mode")
-        if output.mode == "custom":
-            layout.prop(output, "preset")
-            column = layout.column(align=True)
-            column.prop(output, "width")
-            column.prop(output, "height")
-        if output.mode != "scene":
-            layout.prop(output, "lock_scene_resolution")
-            row = layout.row(align=True)
-            row.operator("opencv_cam.set_render_resolution", icon="FULLSCREEN_ENTER")
-            row.operator("opencv_cam.read_scene_resolution", icon="FULLSCREEN_EXIT")
-
-        width, height = apply_mod.output_resolution(settings, scene)
+        box.label(text="Location (Blender world)")
+        box.prop(obj, "location")
         box = layout.box()
-        box.label(text=f"output {width}x{height}  |  scene "
-                       f"{scene.render.resolution_x}x{scene.render.resolution_y}")
-        box.label(text=f"calibrated {intrinsics.image_width}x{intrinsics.image_height}")
-        effective = apply_mod.effective_intrinsics(settings, width, height)
-        box.label(text=f"effective fx={effective.fx:.2f} fy={effective.fy:.2f}")
-        if (width, height) != (intrinsics.image_width, intrinsics.image_height):
-            same_aspect = (height > 0 and intrinsics.image_height > 0
-                           and abs(width / height - intrinsics.image_width / intrinsics.image_height) < 1e-3)
-            box.label(text="rescaled: same field of view" if same_aspect
-                      else "centre crop at the original pixel pitch", icon="INFO")
+        box.label(text="Rotation (XYZ Euler, degrees)")
+        box.prop(obj, "rotation_euler")
+        if obj.rotation_mode != "XYZ":
+            layout.label(text=f"rotation mode is {obj.rotation_mode}: "
+                              "switch it to XYZ to edit the angles here", icon="INFO")
 
 
 class OPENCV_CAM_PT_io(_CameraPanel, bpy.types.Panel):
@@ -256,18 +199,14 @@ class OPENCV_CAM_PT_preview(_CameraPanel, bpy.types.Panel):
         )
         column = layout.column(align=True)
         column.operator("opencv_cam.preview", icon="RENDER_STILL")
-        column.operator("opencv_cam.save_preview", icon="FILE_IMAGE")
-        column.operator("opencv_cam.self_test", icon="RESTRICT_RENDER_OFF")
 
 
 #: registration order does not matter (bl_order decides), sorted here for reading
 _CLASSES = (
     OPENCV_CAM_PT_main,
     OPENCV_CAM_PT_extrinsics,
-    OPENCV_CAM_PT_world_frame,
     OPENCV_CAM_PT_io,
     OPENCV_CAM_PT_preview,
-    OPENCV_CAM_PT_output,
 )
 
 

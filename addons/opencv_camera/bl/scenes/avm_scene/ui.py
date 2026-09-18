@@ -16,7 +16,7 @@ import bpy
 
 from ....core.scenes import avm_layout
 from ..base import ScenePanel
-from . import DEFINITION
+from . import DEFINITION, builder
 
 CATEGORY = "AVM Scene"
 
@@ -88,8 +88,15 @@ def _cameras(layout, settings) -> None:
         select.name = record.name
         column = box.column(align=True)
         column.use_property_split = True
-        column.prop(record, "location")
-        column.prop(record, "rotation")
+        # the pose is edited on the camera object itself (the single source,
+        # shared with CV Extrinsics), not on a scene-level copy
+        camera = bpy.data.objects.get(
+            f"{builder.CAMERA_PREFIX}{builder.CAMERA_SUFFIX.get(record.name, '')}")
+        if camera is not None:
+            column.prop(camera, "location")
+            column.prop(camera, "rotation_euler")
+        else:
+            column.label(text="camera object missing", icon="ERROR")
         detect = box.row(align=True)
         button = detect.operator("opencv_cam.avm_detect_camera",
                                  text="Detect Corners", icon="TRACKER")
@@ -144,22 +151,15 @@ def _actions(layout, context) -> None:
     row.operator("opencv_cam.avm_reset_defaults", icon="LOOP_BACK")
     layout.operator("opencv_cam.frame_view", text="Frame View",
                     icon="VIEW_PERSPECTIVE").scene_id = DEFINITION.id
-    layout.operator_menu_enum("opencv_cam.avm_apply_preset", "preset",
-                              text="Quick Preset", icon="PRESET")
     layout.operator("opencv_cam.avm_remove_scene", icon="TRASH")
 
 
 def _io_section(layout, settings) -> None:
     box = layout.box()
     box.label(text="Export / Import", icon="FILE_TEXT")
-    box.prop(settings, "io_text", text="")
-    row = box.row(align=True)
-    row.operator("opencv_cam.avm_export_json", icon="EXPORT")
-    row.operator("opencv_cam.avm_apply_json", icon="IMPORT")
     row = box.row(align=True)
     row.operator("opencv_cam.avm_export_params", icon="FILE_TICK")
     row.operator("opencv_cam.avm_import_params", icon="FILEBROWSER")
-    box.operator("opencv_cam.avm_render_cameras", icon="RENDER_STILL")
     box.operator("opencv_cam.avm_export_falcon", text="Export Falcon", icon="EXPORT")
     if settings.io_status:
         box.label(text=settings.io_status)
@@ -174,7 +174,6 @@ def _coverage_section(layout, settings) -> None:
     if settings.coverage_matrix:
         for part in settings.coverage_matrix.split(" | "):
             box.label(text=part, icon="CHECKMARK")
-    box.operator("opencv_cam.avm_export_materials", icon="PACKAGE")
 
 
 class _AVMPanel(ScenePanel):

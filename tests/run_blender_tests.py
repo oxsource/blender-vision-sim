@@ -384,12 +384,9 @@ def test_camera_scene_builder():
     check("scene builder: apply ok", ok, "; ".join(messages))
     created = camera_scene.build(camera, scene)
     check("scene builder creates objects", len(created) >= 6, f"{[o.name for o in created]}")
-    check("scene builder sets the resolution from the intrinsics",
-          (scene.render.resolution_x, scene.render.resolution_y) == (640, 480)
-          or True)  # prepare_render is only called by the operator path
     camera_scene.prepare_render(scene, settings, samples=8)
-    check("prepare_render uses the calibrated resolution",
-          (scene.render.resolution_x, scene.render.resolution_y) == (640, 480),
+    check("prepare_render leaves the scene resolution alone",
+          (scene.render.resolution_x, scene.render.resolution_y) == (128, 128),
           f"{scene.render.resolution_x}x{scene.render.resolution_y}")
     check("operator add_camera_scene",
           bpy.ops.opencv_cam.add_camera_scene(distance=4.0, samples=8) == {"FINISHED"})
@@ -475,11 +472,9 @@ def test_resolution_scaling():
     settings.intrinsics.image_height = 1080
     settings.intrinsics.auto_center = True
     settings.intrinsics.scale_to_render = True
-    output = settings.output
 
     # same aspect ratio (960x540 is 16:9) -> rescale, FOV preserved
-    output.mode = "custom"
-    output.width, output.height = 960, 540
+    scene.render.resolution_x, scene.render.resolution_y = 960, 540
     apply_mod.apply_settings(cam_data, settings, scene)
     check("same aspect: intrinsics rescaled",
           approx(cam_data.cycles_custom["fx"], 750.0, 1e-4)
@@ -489,7 +484,7 @@ def test_resolution_scaling():
           approx(apply_mod.effective_intrinsics(settings, 1920, 1080).fx, 1500.0, 1e-4))
 
     # different aspect ratio -> centre crop at the original pixel pitch
-    output.width = output.height = 1280
+    scene.render.resolution_x = scene.render.resolution_y = 1280
     apply_mod.apply_settings(cam_data, settings, scene)
     check("aspect mismatch: pixel pitch kept (crop)",
           approx(cam_data.cycles_custom["fx"], 1500.0, 1e-4)
@@ -508,76 +503,41 @@ def test_resolution_scaling():
           f"cx={effective.cx:.3f} cy={effective.cy:.3f}")
 
 
-def test_euler_extrinsics():
-    """The Euler input rotates the camera and stays in sync with R."""
+def test_extrinsics_is_object_transform():
+    """The camera object transform IS the pose - CV Extrinsics has no copy."""
     import math
+    from opencv_camera.bl.scenes.avm_scene import builder
+
     scene = setup_scene(resolution=128, samples=4)
     clear_scene()
     setup_scene(resolution=128, samples=4)
-    camera, cam_data = make_camera("EulerCam")
+    camera, cam_data = make_camera("ExtrCam")
     scene.camera = camera
     bpy.context.view_layer.objects.active = camera
     camera.select_set(True)
     settings = cam_data.opencv_cam
 
-    check("euler property is an EULER vector",
-          settings.pose.bl_rna.properties["euler"].subtype == "EULER"
-          and settings.pose.bl_rna.properties["euler"].array_length == 3)
+    check("opencv_cam has no separate pose group", not hasattr(settings, "pose"))
 
-    # dial in 30 deg around Y and 45 deg around Z
-    settings.pose.euler = (0.0, math.radians(30.0), math.radians(45.0))
-    rotation = apply_mod.read_euler_rotation(camera)
-    check("euler rotates the camera object",
-          all(abs(a - b) < 1e-6 for a, b in zip(rotation, (0.0, math.radians(30.0), math.radians(45.0)))),
-          f"{tuple(round(math.degrees(v), 3) for v in rotation)}")
+    # the AVM builder writes the object transform, so the object Location/Rotation
+    # (what CV Extrinsics edits) matches the record exactly
+    location = [-0.031, 2.4668, 2.6907]
+    rotation_deg = (20.4365, -1.1319, 1.7446)
+    builder.apply_camera_pose(camera, location, [math.radians(v) for v in rotation_deg])
+    check("pose lands on the object location",
+          all(abs(a - b) < 1e-4 for a, b in zip(camera.location, location)),
+          str(tuple(round(v, 4) for v in camera.location)))
+    check("pose lands on the object rotation_euler",
+          all(abs(math.degrees(a) - b) < 1e-3
+              for a, b in zip(camera.rotation_euler, rotation_deg)),
+          str(tuple(round(math.degrees(v), 3) for v in camera.rotation_euler)))
 
-    expected = apply_mod.read_opencv_pose(camera, settings)
-    check("R/t follow the euler input",
-          all(abs(a - b) < 1e-6 for a, b in zip(settings.pose.rotation, expected[0]))
-          and all(abs(a - b) < 1e-6 for a, b in zip(settings.pose.translation, expected[1])))
-
-    # editing R feeds the euler back.  Note the convention: an identity OpenCV pose
-    # (X right, Y down, Z forward) is the Blender camera local frame rotated by
-    # 180 degrees about X, so the Euler is (pi, 0, 0), not zero.
-    settings.pose.rotation = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
-    settings.pose.translation = (0.0, 0.0, 0.0)
-    rotation = apply_mod.read_euler_rotation(camera)
-    check("R edit updates the euler",
-          all(abs(a - b) < 1e-6 for a, b in zip(settings.pose.euler, rotation)),
-          str(tuple(round(math.degrees(v), 2) for v in settings.pose.euler)))
-    check("identity OpenCV pose is 180 deg about X in Blender",
-          abs(abs(rotation[0]) - math.pi) < 1e-6
-          and abs(rotation[1]) < 1e-6 and abs(rotation[2]) < 1e-6,
-          str(tuple(round(math.degrees(v), 2) for v in rotation)))
-
-    # the operators keep both in sync, and the loop is guarded
-    settings.pose.euler = (math.radians(10.0), 0.0, 0.0)
-    check("apply_pose keeps the euler", bpy.ops.opencv_cam.apply_pose() == {"FINISHED"}
-          and abs(settings.pose.euler[0] - math.radians(10.0)) < 1e-6)
-    camera.rotation_mode = "QUATERNION"     # matrix path must still work
-    settings.pose.euler = (0.0, math.radians(20.0), 0.0)
-    rotation = apply_mod.read_euler_rotation(camera)
-    check("euler works with a quaternion rotation mode",
-          abs(rotation[1] - math.radians(20.0)) < 1e-6,
-          f"{tuple(round(math.degrees(v), 3) for v in rotation)}")
-    check("read_pose keeps the euler",
-          bpy.ops.opencv_cam.read_pose() == {"FINISHED"}
-          and abs(settings.pose.euler[1] - math.radians(20.0)) < 1e-6)
-
-
-def test_pose_roundtrip():
-    scene = setup_scene()
-    camera, cam_data = make_camera("PoseCam")
-    settings = cam_data.opencv_cam
-    R_cv = (0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0)
-    t_cv = (0.4, -0.2, 2.5)
-    settings.pose.rotation = R_cv
-    settings.pose.translation = t_cv
-    apply_mod.apply_opencv_pose(camera, settings)
-    rotation, translation = apply_mod.read_opencv_pose(camera, settings)
-    error = max(abs(a - b) for a, b in zip(rotation, R_cv)) + max(
-        abs(a - b) for a, b in zip(translation, t_cv))
-    check("opencv pose round trip", error < 1e-6, f"max error {error:.3e}")
+    # editing the object directly (Item tab / gizmo) is the same pose
+    camera.rotation_euler = (math.radians(10.0), math.radians(20.0), math.radians(30.0))
+    check("the object rotation is the pose",
+          tuple(round(math.degrees(v), 3) for v in camera.rotation_euler)
+          == (10.0, 20.0, 30.0),
+          str(tuple(round(math.degrees(v), 3) for v in camera.rotation_euler)))
 
 
 def test_calibration_roundtrip():
@@ -644,10 +604,6 @@ def test_operator_end_to_end():
     check("operator import_calibration",
           bpy.ops.opencv_cam.import_calibration(filepath=export_path) == {"FINISHED"})
 
-    settings.pose.translation = (0.1, 0.2, 3.0)
-    check("operator apply_pose", bpy.ops.opencv_cam.apply_pose() == {"FINISHED"})
-    check("operator read_pose", bpy.ops.opencv_cam.read_pose() == {"FINISHED"})
-
 
 def test_add_camera_operator():
     """Add  Camera entries create ready to use custom cameras."""
@@ -676,19 +632,13 @@ def test_add_camera_operator():
     check("Add Camera menu entry", hasattr(bpy.types, "VIEW3D_MT_camera_add"))
 
 
-def settings_pose_props():
-    from opencv_camera.bl import properties as props
-    return props.PoseSettings.bl_rna.properties
-
-
 def test_panel_layout():
-    """Five top level CV panels, sorted before Blender's own, none under Lens."""
+    """Four top level CV panels, sorted before Blender's own, none under Lens."""
     expected = {
         "OPENCV_CAM_PT_main": "CV Intrinsics",
         "OPENCV_CAM_PT_extrinsics": "CV Extrinsics",
         "OPENCV_CAM_PT_io": "CV Presets",
         "OPENCV_CAM_PT_preview": "CV Preview",
-        "OPENCV_CAM_PT_output": "CV Output",
     }
     for name, label in expected.items():
         panel = getattr(bpy.types, name, None)
@@ -702,11 +652,11 @@ def test_panel_layout():
         check(f"{name} sorts before Blender's panels", panel.bl_order < 0,
               f"bl_order={getattr(panel, 'bl_order', None)}")
     check("no separate CV Camera panel any more", not hasattr(bpy.types, "OPENCV_CAM_PT_camera"))
+    check("no CV Output panel any more", not hasattr(bpy.types, "OPENCV_CAM_PT_output"))
     order = {name: getattr(bpy.types, name).bl_order for name in expected}
-    check("panel order: Intrinsics, Extrinsics, Presets, Preview, Output",
+    check("panel order: Intrinsics, Extrinsics, Presets, Preview",
           order["OPENCV_CAM_PT_main"] < order["OPENCV_CAM_PT_extrinsics"]
-          < order["OPENCV_CAM_PT_io"] < order["OPENCV_CAM_PT_preview"]
-          < order["OPENCV_CAM_PT_output"], str(order))
+          < order["OPENCV_CAM_PT_io"] < order["OPENCV_CAM_PT_preview"], str(order))
     from opencv_camera.bl import operators as operators_mod
     check("Import/Export labels",
           operators_mod.OPENCV_CAM_OT_import_calibration.bl_label == "Import"
@@ -726,8 +676,8 @@ def test_panel_layout():
         check(f"intrinsics property {prop}", prop in settings.intrinsics.bl_rna.properties)
     for prop in ("model", "enabled", "k1", "k2", "k3", "k4", "iterations"):
         check(f"distortion property {prop}", prop in settings.distortion.bl_rna.properties)
-    check("extrinsics properties", all(p in settings.pose.bl_rna.properties
-                                       for p in ("rotation", "translation")))
+    check("extrinsics live on the object (no pose group on opencv_cam)",
+          not hasattr(settings, "pose"))
     from opencv_camera.bl import operators as operators_mod
     check("Apply operator label", operators_mod.OPENCV_CAM_OT_apply.bl_label == "Apply",
           operators_mod.OPENCV_CAM_OT_apply.bl_label)
@@ -913,9 +863,9 @@ def test_avm_scene_builder():
           and approx(camera.location.y, 2.466796, 1e-4)
           and approx(camera.location.z, 2.69068, 1e-4),
           f"{tuple(round(v, 4) for v in camera.location)}")
-    check("CV Extrinsics synced from the pose",
-          abs(camera.data.opencv_cam.pose.euler[0] - math.radians(20.4365)) < 1e-3,
-          str(camera.data.opencv_cam.pose.euler))
+    check("the AVM rotation lands on the object (CV Extrinsics)",
+          abs(math.degrees(camera.rotation_euler[0]) - 20.4365) < 1e-2,
+          str(tuple(round(math.degrees(v), 3) for v in camera.rotation_euler)))
 
     block = bpy.data.objects["AVM_Block_FrontLeft"]
     check("front-left block centre",
@@ -1022,7 +972,7 @@ def test_avm_panels():
 
 
 def test_avm_io():
-    """Parameter import/export, presets and the four-camera render export."""
+    """Parameter import/export and the four-camera render helper."""
     from opencv_camera.bl.scenes.avm_scene import io as io_mod
 
     scene = setup_scene(resolution=64, samples=1)
@@ -1048,62 +998,52 @@ def test_avm_io():
           compact["format"] == "plane_scene"
           and {"border", "corner", "inner", "car"} <= set(compact))
 
-    settings.io_text = io_mod.dumps(full)
-    check("apply JSON operator", bpy.ops.opencv_cam.avm_apply_json() == {"FINISHED"})
-    check("full round trip is stable", io_mod.to_full(settings) == full)
+    tmp = tempfile.mkdtemp(prefix="avm_io_")
+    path = os.path.join(tmp, "params.json")
+    check("export full parameters to file",
+          bpy.ops.opencv_cam.avm_export_params(filepath=path) == {"FINISHED"}
+          and os.path.exists(path))
+    check("full round trip is stable", io_mod.read(path) == full)
 
     settings.core_w = 999.0
     bpy.ops.opencv_cam.avm_rebuild()
-    settings.io_text = io_mod.dumps(full)
-    bpy.ops.opencv_cam.avm_apply_json()
-    check("import restored the field", approx(settings.core_w, 240.0, 1e-6))
+    check("import full parameters from file",
+          bpy.ops.opencv_cam.avm_import_params(filepath=path) == {"FINISHED"})
+    check("file import restored the field", approx(settings.core_w, 240.0, 1e-6))
 
+    # the compact (plane_scene) format keeps the car alone
+    compact_path = os.path.join(tmp, "plane.json")
+    check("export compact parameters",
+          bpy.ops.opencv_cam.avm_export_params(
+              filepath=compact_path, format="plane") == {"FINISHED"})
     height_before = settings.car_height
-    settings.io_text = io_mod.dumps({"border": "10x10", "corner": 50,
-                                     "inner": "0x0", "car": "262x474"})
-    check("apply compact JSON", bpy.ops.opencv_cam.avm_apply_json() == {"FINISHED"})
+    settings.corner = 123.0
+    bpy.ops.opencv_cam.avm_rebuild()
+    check("import compact parameters",
+          bpy.ops.opencv_cam.avm_import_params(filepath=compact_path) == {"FINISHED"})
     check("compact changed the field",
-          approx(settings.corner, 50.0, 1e-6) and approx(settings.core_w, 262.0, 1e-6))
-    check("compact left the car alone",
-          approx(settings.car_height, height_before, 1e-6))
+          approx(settings.corner, 100.0, 1e-6) and approx(settings.core_w, 240.0, 1e-6))
+    check("compact left the car alone", approx(settings.car_height, height_before, 1e-6))
 
     before = io_mod.to_full(settings)
-    settings.io_text = '{"car": "not-a-size"}'
+    bad_path = os.path.join(tmp, "bad.json")
+    with open(bad_path, "w", encoding="utf-8") as handle:
+        handle.write('{"car": "not-a-size"}')
     rejected = False
     try:  # an ERROR report surfaces as a RuntimeError from bpy.ops
-        rejected = bpy.ops.opencv_cam.avm_apply_json() == {"CANCELLED"}
+        rejected = bpy.ops.opencv_cam.avm_import_params(filepath=bad_path) == {"CANCELLED"}
     except RuntimeError:
         rejected = True
     check("malformed input is rejected", rejected)
     check("malformed input changes nothing", io_mod.to_full(settings) == before)
 
-    check("apply quick preset",
-          bpy.ops.opencv_cam.avm_apply_preset(preset="suv") == {"FINISHED"})
-    check("preset applied",
-          approx(settings.core_w, 300.0, 1e-6) and approx(settings.corner, 60.0, 1e-6))
-
-    tmp = tempfile.mkdtemp(prefix="avm_io_")
-    path = os.path.join(tmp, "params.json")
-    check("export to file",
-          bpy.ops.opencv_cam.avm_export_params(filepath=path) == {"FINISHED"}
-          and os.path.exists(path))
-    settings.core_w = 111.0
-    bpy.ops.opencv_cam.avm_rebuild()
-    check("import from file",
-          bpy.ops.opencv_cam.avm_import_params(filepath=path) == {"FINISHED"})
-    check("file import restored the field", approx(settings.core_w, 300.0, 1e-6))
-
-    # the four-camera export at a small size, so the test stays quick
-    for name in ("front", "back", "left", "right"):
-        cam_settings = bpy.data.objects[f"AVM_Cam_{name.capitalize()}"].data.opencv_cam
-        cam_settings.output.mode = "custom"
-        cam_settings.output.width, cam_settings.output.height = 64, 48
+    # the four-camera render helper (used by Export Falcon) at a small size
+    scene.render.resolution_x, scene.render.resolution_y = 64, 48
     out = os.path.join(tmp, "views")
     before_render = (scene.render.resolution_x, scene.render.resolution_y,
                      scene.render.image_settings.file_format)
-    check("render the four cameras",
-          bpy.ops.opencv_cam.avm_render_cameras(
-              filepath=os.path.join(out, "avm.png"), samples=1) == {"FINISHED"})
+    written = io_mod.render_cameras(bpy.context, settings, out, samples=1)
+    check("render the four cameras", len(written) == 4, str(written))
     check("four PNGs written",
           all(os.path.exists(os.path.join(out, f"{name}.png"))
               for name in ("front", "back", "left", "right")),
@@ -1114,8 +1054,146 @@ def test_avm_io():
           f"{scene.render.resolution_x}x{scene.render.resolution_y}")
 
 
-def test_avm_coverage_and_export():
-    """Coverage curves + report, and the raw-material export."""
+def test_avm_io_covers_every_setting():
+    """The full JSON round-trips every editable AVM Scene setting (no silent drops)."""
+    from opencv_camera.bl.scenes.avm_scene import io as io_mod
+
+    scene = setup_scene(resolution=64, samples=1)
+    clear_scene()
+    scene = setup_scene(resolution=64, samples=1)
+    check("add AVM scene", bpy.ops.opencv_cam.avm_add_scene() == {"FINISHED"})
+    settings = scene.avm_scene
+
+    # PropertyGroup's own `name` plus the state / UI / detection fields are not
+    # parameters, so they are expected to stay out of the JSON
+    skip = {"name", "root", "revision", "io_status",
+            "coverage_status", "coverage_matrix", "corners_status",
+            "points_2d", "points_2d_ok", "points_2d_error",
+            "points_2d_revision", "points_2d_signature"}
+    props = [prop for prop in settings.bl_rna.properties
+             if prop.identifier not in skip and not prop.is_readonly]
+
+    def is_array(prop):
+        return bool(getattr(prop, "is_array", False))
+
+    def target(prop, current):
+        if prop.identifier == "corner":  # the HTML key is an integer (cm)
+            return float(int(round(current)) + 1)
+        if prop.type == "BOOLEAN":
+            return not bool(current)
+        if prop.type == "INT":
+            value = int(current) + 3
+            if prop.hard_max is not None:
+                value = min(value, int(prop.hard_max))
+            if prop.hard_min is not None:
+                value = max(value, int(prop.hard_min))
+            return value
+        if prop.type == "FLOAT":
+            if is_array(prop):
+                return [float(value) + 0.5 for value in current]
+            value = float(current) + 0.5
+            if prop.hard_max is not None:
+                value = min(value, prop.hard_max)
+            if prop.hard_min is not None:
+                value = max(value, prop.hard_min)
+            return value
+        if prop.type == "STRING":
+            return f"probe-{prop.identifier}"
+        if prop.type == "ENUM":
+            ids = [item.identifier for item in prop.enum_items]
+            return next((item for item in ids if item != current), current)
+        return current
+
+    # the scene settings live on the Scene and survive clear_scene(), so capture
+    # the pre-test values and restore them afterwards, or every later test
+    # inherits the probe values
+    original = {prop.identifier: (list(getattr(settings, prop.identifier))
+                                 if is_array(prop) else getattr(settings, prop.identifier),
+                                 is_array(prop))
+                for prop in props}
+
+    wanted = {}
+    for prop in props:
+        current = getattr(settings, prop.identifier)
+        if prop.type in ("FLOAT", "INT") and is_array(prop):
+            current = list(current)
+        value = target(prop, current)
+        wanted[prop.identifier] = (value, prop.type, is_array(prop))
+        setattr(settings, prop.identifier, value)
+
+    try:
+        full = io_mod.to_full(settings)
+
+        # disturb every setting, then apply the JSON and compare
+        for prop in props:
+            if prop.type == "BOOLEAN":
+                setattr(settings, prop.identifier, False)
+            elif prop.type == "INT":
+                setattr(settings, prop.identifier, int(prop.hard_min or 0))
+            elif prop.type == "FLOAT":
+                if is_array(prop):
+                    setattr(settings, prop.identifier,
+                            [0.0] * len(wanted[prop.identifier][0]))
+                else:
+                    setattr(settings, prop.identifier, float(prop.hard_min or 0.0))
+            elif prop.type == "STRING":
+                setattr(settings, prop.identifier, "")
+            elif prop.type == "ENUM":
+                ids = [item.identifier for item in prop.enum_items]
+                setattr(settings, prop.identifier, ids[-1])
+        io_mod.apply(settings, full)
+
+        dropped = []
+        for name, (expected, prop_type, array) in wanted.items():
+            got = getattr(settings, name)
+            if prop_type in ("FLOAT", "INT") and array:
+                ok = all(abs(float(a) - float(b)) < 1e-6 for a, b in zip(got, expected))
+            elif prop_type == "FLOAT":
+                ok = abs(float(got) - float(expected)) < 1e-6
+            else:
+                ok = got == expected
+            if not ok:
+                dropped.append(f"{name}={got!r} (want {expected!r})")
+        check(f"all {len(wanted)} editable settings round-trip through the full JSON",
+              not dropped, "; ".join(dropped))
+
+        # the camera records carry the mount pose, K, D and the OpenCV output
+        # size; the pose is read from / written to the camera object itself (the
+        # single source), so the round trip goes through the object transform
+        record = full["avm"]["cameras"][0]
+        check("camera records carry K/D/output", {"K", "D", "output"} <= set(record),
+              str(sorted(record)))
+        camera_object = bpy.data.objects["AVM_Cam_Front"]
+        camera_object.location = [1.0, 2.0, 3.0]
+        camera_object.rotation_euler = [math.radians(4.0), math.radians(5.0), math.radians(6.0)]
+        cam_data = camera_object.data.opencv_cam
+        cam_data.intrinsics.fx = 111.0
+        cam_data.intrinsics.image_width, cam_data.intrinsics.image_height = 111, 222
+        full = io_mod.to_full(settings)
+        camera_object.location = [0.0, 0.0, 0.0]
+        camera_object.rotation_euler = [0.0, 0.0, 0.0]
+        cam_data.intrinsics.fx = 0.0
+        cam_data.intrinsics.image_width, cam_data.intrinsics.image_height = 1, 1
+        io_mod.apply(settings, full)
+        camera_object = bpy.data.objects["AVM_Cam_Front"]
+        cam_data = camera_object.data.opencv_cam
+        check("camera pose / K / output round-trip",
+              all(abs(a - b) < 1e-4 for a, b in zip(camera_object.location, (1.0, 2.0, 3.0)))
+              and all(abs(math.degrees(a) - b) < 1e-3
+                      for a, b in zip(camera_object.rotation_euler, (4.0, 5.0, 6.0)))
+              and abs(cam_data.intrinsics.fx - 111.0) < 1e-6
+              and (cam_data.intrinsics.image_width, cam_data.intrinsics.image_height) == (111, 222),
+              f"loc={list(camera_object.location)} "
+              f"rot={[round(math.degrees(v), 3) for v in camera_object.rotation_euler]} "
+              f"fx={cam_data.intrinsics.fx} "
+              f"out={cam_data.intrinsics.image_width}x{cam_data.intrinsics.image_height}")
+    finally:
+        for name, (value, array) in original.items():
+            setattr(settings, name, list(value) if array else value)
+
+
+def test_avm_coverage():
+    """Coverage curves and the report (footprints, blind/overlap, visibility)."""
     from opencv_camera.bl.scenes.avm_scene import coverage as coverage_mod
 
     scene = setup_scene(resolution=64, samples=1)
@@ -1141,33 +1219,11 @@ def test_avm_coverage_and_export():
     check("hiding the layer hides the curves",
           all(obj.hide_render for obj in curves))
 
-    for name in ("front", "back", "left", "right"):
-        cam_settings = bpy.data.objects[f"AVM_Cam_{name.capitalize()}"].data.opencv_cam
-        cam_settings.output.mode = "custom"
-        cam_settings.output.width, cam_settings.output.height = 256, 192
-    tmp = tempfile.mkdtemp(prefix="avm_mat_")
-    check("export materials",
-          bpy.ops.opencv_cam.avm_export_materials(
-              filepath=os.path.join(tmp, "avm_scene.json"), samples=4) == {"FINISHED"})
-    for expected in ("front.png", "back.png", "left.png", "right.png",
-                     "plane_scene.json", "avm_scene.json", "coverage.json",
-                     "vehicle_avm_scene.json", "scene_spec.md"):
-        check(f"material file {expected}", os.path.exists(os.path.join(tmp, expected)))
-
-    with open(os.path.join(tmp, "vehicle_avm_scene.json"), encoding="utf-8") as handle:
-        skeleton = json.load(handle)
-    check("filament skeleton has points_3d and detected points_2d",
-          len(skeleton["cameras"]) == 4
-          and len(skeleton["cameras"][0]["points_3d"]) == 8
-          and len(skeleton["cameras"][0]["points_2d"]) == 8)
-    with open(os.path.join(tmp, "coverage.json"), encoding="utf-8") as handle:
-        report = json.load(handle)
-    check("coverage report has footprints and visibility",
-          len(report["footprints"]) == 4 and len(report["visibility"]) == 4
-          and report["field_ok"] is True)
-    check("spec mentions the field",
-          "AVM Scene specification" in open(os.path.join(tmp, "scene_spec.md"),
-                                           encoding="utf-8").read())
+    report = coverage_mod.analyze(settings, step=0.2)
+    check("report has footprints and visibility",
+          len(report.footprints) == 4 and len(report.visibility) == 4
+          and report.field_ok is True,
+          f"footprints={len(report.footprints)} field_ok={report.field_ok}")
 
 
 def test_avm_corner_detection():
@@ -1181,10 +1237,7 @@ def test_avm_corner_detection():
     check("add AVM scene", bpy.ops.opencv_cam.avm_add_scene() == {"FINISHED"})
     settings = scene.avm_scene
 
-    for name in ("front", "back", "left", "right"):
-        cam_settings = bpy.data.objects[f"AVM_Cam_{name.capitalize()}"].data.opencv_cam
-        cam_settings.output.mode = "custom"
-        cam_settings.output.width, cam_settings.output.height = 256, 192
+    scene.render.resolution_x, scene.render.resolution_y = 256, 192
 
     check("detect corners operator",
           bpy.ops.opencv_cam.avm_detect_corners(samples=16) == {"FINISHED"})
@@ -1212,14 +1265,10 @@ def test_avm_corner_detection():
         check(f"{name}: points_2d match the render projection",
               float(error.max()) < 3.0, f"max {float(error.max()):.2f} px")
 
-    tmp = tempfile.mkdtemp(prefix="avm_corners_")
-    check("export materials detects corners",
-          bpy.ops.opencv_cam.avm_export_materials(
-              filepath=os.path.join(tmp, "avm_scene.json"), samples=4) == {"FINISHED"})
-    with open(os.path.join(tmp, "vehicle_avm_scene.json"), encoding="utf-8") as handle:
-        skeleton = json.load(handle)
-    check("exported points_2d are filled",
-          all(len(camera["points_2d"]) == 8 for camera in skeleton["cameras"]))
+    from opencv_camera.bl.scenes.avm_scene import falcon
+    config = falcon.build(settings)
+    check("the Falcon config carries the detected points_2d",
+          all(len(camera["points_2d"]) == 8 for camera in config["cameras"]))
 
 
 def test_avm_corner_single_and_cache():
@@ -1231,10 +1280,7 @@ def test_avm_corner_single_and_cache():
     scene = setup_scene(resolution=256, samples=8)
     check("add AVM scene", bpy.ops.opencv_cam.avm_add_scene() == {"FINISHED"})
     settings = scene.avm_scene
-    for name in ("front", "back", "left", "right"):
-        cam_settings = bpy.data.objects[f"AVM_Cam_{name.capitalize()}"].data.opencv_cam
-        cam_settings.output.mode = "custom"
-        cam_settings.output.width, cam_settings.output.height = 256, 192
+    scene.render.resolution_x, scene.render.resolution_y = 256, 192
 
     check("detect one camera",
           bpy.ops.opencv_cam.avm_detect_camera(name="front", samples=8) == {"FINISHED"})
@@ -1285,10 +1331,7 @@ def test_avm_export_falcon():
     scene = setup_scene(resolution=256, samples=8)
     check("add AVM scene", bpy.ops.opencv_cam.avm_add_scene() == {"FINISHED"})
     settings = scene.avm_scene
-    for name in ("front", "back", "left", "right"):
-        cam_settings = bpy.data.objects[f"AVM_Cam_{name.capitalize()}"].data.opencv_cam
-        cam_settings.output.mode = "custom"
-        cam_settings.output.width, cam_settings.output.height = 256, 192
+    scene.render.resolution_x, scene.render.resolution_y = 256, 192
 
     tmp = tempfile.mkdtemp(prefix="avm_falcon_")
     path = os.path.join(tmp, "vehicle_avm.zip")
@@ -1900,8 +1943,8 @@ def test_live_apply():
           str(cam_data.custom_shader.name))
 
 
-def test_output_resolution():
-    """The output size must drive the scene resolution and the intrinsics."""
+def test_render_resolution_drives_intrinsics():
+    """The scene render resolution (Blender's Render tab) drives the intrinsics."""
     scene = setup_scene(resolution=128, samples=4)
     clear_scene()
     setup_scene(resolution=128, samples=4)
@@ -1913,72 +1956,23 @@ def test_output_resolution():
     settings.intrinsics.image_width = 1920
     settings.intrinsics.image_height = 1080
     settings.intrinsics.auto_center = True
-    output = settings.output
 
-    # default: the output size *is* the calibration size (real camera output)
-    check("output defaults to the calibration size", output.mode == "calibration")
+    # same aspect (16:9) -> FOV preserving rescale to the scene resolution
+    scene.render.resolution_x, scene.render.resolution_y = 640, 360
     apply_mod.apply_settings(cam_data, settings, scene)
-    check("calibration size drives the scene",
-          (scene.render.resolution_x, scene.render.resolution_y) == (1920, 1080),
-          f"{scene.render.resolution_x}x{scene.render.resolution_y}")
-    check("intrinsics untouched at the calibration size",
-          approx(cam_data.cycles_custom["fx"], 1500.0, 1e-4))
-
-    # custom output at the same aspect (16:9) -> FOV preserving rescale
-    output.mode = "custom"
-    output.preset = "640x480"
-    check("preset fills width/height", (output.width, output.height) == (640, 480))
-    output.width, output.height = 640, 360
-    output.preset = "custom"
-    check("custom output drives the scene",
-          (scene.render.resolution_x, scene.render.resolution_y) == (640, 360),
-          f"{scene.render.resolution_x}x{scene.render.resolution_y}")
-    check("intrinsics rescaled for the output size",
+    check("scene resolution drives the intrinsics",
           approx(cam_data.cycles_custom["fx"], 1500.0 * 640 / 1920, 1e-3),
           f"fx={cam_data.cycles_custom['fx']:.4f}")
-    check("preview aspect follows the output size",
+    check("preview aspect follows the scene resolution",
           preview.preview_resolution(settings, "256") == (256, 144),
           str(preview.preview_resolution(settings, "256")))
 
-    # custom output with a different aspect -> centre crop, pixel pitch kept
-    output.width = output.height = 640
-    output.preset = "custom"
-    check("square output drives the scene",
-          (scene.render.resolution_x, scene.render.resolution_y) == (640, 640))
-    check("square output keeps the pixel pitch (crop)",
+    # different aspect -> centre crop, pixel pitch kept
+    scene.render.resolution_x = scene.render.resolution_y = 640
+    apply_mod.apply_settings(cam_data, settings, scene)
+    check("aspect mismatch keeps the pixel pitch (crop)",
           approx(cam_data.cycles_custom["fx"], 1500.0, 1e-3),
           f"fx={cam_data.cycles_custom['fx']:.4f}")
-
-    # scene mode leaves Blender's resolution alone
-    output.mode = "scene"
-    scene.render.resolution_x, scene.render.resolution_y = 640, 360
-    apply_mod.apply_settings(cam_data, settings, scene)
-    check("scene mode does not touch the scene",
-          (scene.render.resolution_x, scene.render.resolution_y) == (640, 360))
-    check("scene mode scales to the scene size",
-          approx(cam_data.cycles_custom["fx"], 1500.0 * 640 / 1920, 1e-3),
-          f"fx={cam_data.cycles_custom['fx']:.4f}")
-
-    # operators
-    bpy.context.view_layer.objects.active = camera
-    scene.camera = camera
-    output.mode = "custom"
-    output.width, output.height = 1280, 720
-    check("set_render_resolution operator",
-          bpy.ops.opencv_cam.set_render_resolution() == {"FINISHED"}
-          and (scene.render.resolution_x, scene.render.resolution_y) == (1280, 720))
-    scene.render.resolution_x, scene.render.resolution_y = 800, 600
-    check("read_scene_resolution operator",
-          bpy.ops.opencv_cam.read_scene_resolution() == {"FINISHED"}
-          and (output.width, output.height) == (800, 600))
-    check("output read switched the mode to custom", output.mode == "custom")
-    check("lock can be switched off",
-          output.lock_scene_resolution is True)
-    output.lock_scene_resolution = False
-    output.width, output.height = 1024, 768
-    check("unlocked output leaves the scene alone",
-          (scene.render.resolution_x, scene.render.resolution_y) == (800, 600))
-    output.lock_scene_resolution = True
 
 
 def test_preview():
@@ -1992,7 +1986,6 @@ def test_preview():
     settings = cam_data.opencv_cam
     settings.intrinsics.image_width = 1280
     settings.intrinsics.image_height = 960
-    settings.output.mode = "scene"   # keep the test's small scene resolution
     before = (scene.render.resolution_x, scene.render.resolution_y, scene.cycles.samples)
     result = preview.render_preview(cam_data, settings, scene, size_key="256", samples=2, show=False)
     check("preview renders", result["ok"] and result["resolution"][1] > 0,
@@ -2024,8 +2017,7 @@ def main():
         test_builtin_camera_equivalence,
         test_shift_equivalence,
         test_resolution_scaling,
-        test_euler_extrinsics,
-        test_pose_roundtrip,
+        test_extrinsics_is_object_transform,
         test_calibration_roundtrip,
         test_sync_from_lens,
         test_operator_end_to_end,
@@ -2037,7 +2029,8 @@ def main():
         test_avm_scene_builder,
         test_avm_panels,
         test_avm_io,
-        test_avm_coverage_and_export,
+        test_avm_io_covers_every_setting,
+        test_avm_coverage,
         test_avm_corner_detection,
         test_avm_corner_single_and_cache,
         test_avm_export_falcon,
@@ -2049,7 +2042,7 @@ def main():
         test_presets,
         test_shader_text_upgrade_recompiles,
         test_live_apply,
-        test_output_resolution,
+        test_render_resolution_drives_intrinsics,
         test_preview,
     )
     opencv_camera.register()

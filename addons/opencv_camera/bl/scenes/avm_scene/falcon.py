@@ -28,12 +28,9 @@ from . import builder, corners, io as io_mod
 DEFAULT_NAME = "vehicle_avm"
 
 
-def _input_size(name: str) -> Tuple[int, int]:
-    camera = bpy.data.objects.get(
-        f"{builder.CAMERA_PREFIX}{builder.CAMERA_SUFFIX.get(name, '')}")
-    if camera is None:
-        return 1280, 960
-    return apply_mod.output_resolution(camera.data.opencv_cam, bpy.context.scene)
+def _input_size() -> Tuple[int, int]:
+    """The size the camera images are rendered at (the scene render resolution)."""
+    return apply_mod.render_resolution(bpy.context.scene)
 
 
 def build(settings) -> Dict:
@@ -52,7 +49,7 @@ def build(settings) -> Dict:
             values = list(entry.points_2d)
             points_2d[name] = [[values[2 * index], values[2 * index + 1]]
                                for index in range(8)]
-        width, height = _input_size(name)
+        width, height = _input_size()
         input_sizes[name] = (width, height)
         camera = bpy.data.objects.get(
             f"{builder.CAMERA_PREFIX}{builder.CAMERA_SUFFIX.get(name, '')}")

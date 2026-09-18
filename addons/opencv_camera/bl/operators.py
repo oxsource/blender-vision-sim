@@ -212,42 +212,6 @@ class OPENCV_CAM_OT_sync_from_lens(_CameraOperator, bpy.types.Operator):
         return {"FINISHED"}
 
 
-class OPENCV_CAM_OT_apply_pose(_CameraOperator, bpy.types.Operator):
-    bl_idname = "opencv_cam.apply_pose"
-    bl_label = "Apply Pose to Object"
-    bl_description = "Set the camera object transform from the OpenCV world-to-camera pose"
-    bl_options = {"REGISTER", "UNDO"}
-
-    def execute(self, context):
-        obj, cam_data = self.camera(context)
-        settings = cam_data.opencv_cam
-        apply_mod.apply_opencv_pose(obj, settings)
-        euler = apply_mod.read_euler_rotation(obj)
-        if euler is not None:
-            settings.pose.euler = euler
-        self.report({"INFO"}, f"{obj.name}: transform set from OpenCV R/t")
-        return {"FINISHED"}
-
-
-class OPENCV_CAM_OT_read_pose(_CameraOperator, bpy.types.Operator):
-    bl_idname = "opencv_cam.read_pose"
-    bl_label = "Read Pose from Object"
-    bl_description = "Store the current camera transform as an OpenCV world-to-camera pose"
-    bl_options = {"REGISTER", "UNDO"}
-
-    def execute(self, context):
-        obj, cam_data = self.camera(context)
-        settings = cam_data.opencv_cam
-        rotation, translation = apply_mod.read_opencv_pose(obj, settings)
-        settings.pose.rotation = rotation
-        settings.pose.translation = translation
-        euler = apply_mod.read_euler_rotation(obj)
-        if euler is not None:
-            settings.pose.euler = euler
-        self.report({"INFO"}, "pose read from the camera object")
-        return {"FINISHED"}
-
-
 class OPENCV_CAM_OT_add_camera(bpy.types.Operator):
     """Create a camera that already uses the OpenCV lens model"""
 
@@ -347,57 +311,6 @@ class OPENCV_CAM_OT_reset_defaults(_CameraOperator, bpy.types.Operator):
         if not ok:
             return {"CANCELLED"}
         self.report({"INFO"}, "defaults restored (bundled reference camera)")
-        return {"FINISHED"}
-
-
-class OPENCV_CAM_OT_set_render_resolution(_CameraOperator, bpy.types.Operator):
-    bl_idname = "opencv_cam.set_render_resolution"
-    bl_label = "Set Render Resolution"
-    bl_description = "Write the output size into Blender's render resolution now"
-    bl_options = {"REGISTER", "UNDO"}
-
-    def execute(self, context):
-        _, cam_data = self.camera(context)
-        settings = cam_data.opencv_cam
-        changed, messages = apply_mod.apply_render_resolution(context.scene, settings)
-        _report_messages(self, messages)
-        width, height = apply_mod.output_resolution(settings, context.scene)
-        if settings.auto_apply:
-            ok, apply_messages = apply_mod.apply_values(cam_data, settings, context.scene)
-            _report_messages(self, apply_messages, "INFO" if ok else "ERROR")
-            if not ok:
-                return {"CANCELLED"}
-        self.report(
-            {"INFO"},
-            f"render resolution set to {context.scene.render.resolution_x}"
-            f"x{context.scene.render.resolution_y}"
-            + ("" if changed else " (already correct)")
-            + f"; output {width}x{height}",
-        )
-        return {"FINISHED"}
-
-
-class OPENCV_CAM_OT_read_scene_resolution(_CameraOperator, bpy.types.Operator):
-    bl_idname = "opencv_cam.read_scene_resolution"
-    bl_label = "From Scene"
-    bl_description = "Take Blender's current render resolution as the output size"
-    bl_options = {"REGISTER", "UNDO"}
-
-    def execute(self, context):
-        _, cam_data = self.camera(context)
-        settings = cam_data.opencv_cam
-        # read first: assigning width/height drives the scene resolution, so
-        # reading them between assignments would pick up the new value
-        width = context.scene.render.resolution_x
-        height = context.scene.render.resolution_y
-        settings.output.mode = "custom"
-        settings.output.width = width
-        settings.output.height = height
-        settings.output.preset = "custom"
-        self.report(
-            {"INFO"},
-            f"output size taken from the scene: {settings.output.width}x{settings.output.height}",
-        )
         return {"FINISHED"}
 
 
@@ -534,8 +447,6 @@ _CLASSES = (
     OPENCV_CAM_OT_add_camera,
     OPENCV_CAM_OT_load_preset,
     OPENCV_CAM_OT_reset_defaults,
-    OPENCV_CAM_OT_set_render_resolution,
-    OPENCV_CAM_OT_read_scene_resolution,
     OPENCV_CAM_OT_recompile,
     OPENCV_CAM_OT_preview,
     OPENCV_CAM_OT_save_preview,
@@ -543,8 +454,6 @@ _CLASSES = (
     OPENCV_CAM_OT_import_calibration,
     OPENCV_CAM_OT_export_calibration,
     OPENCV_CAM_OT_sync_from_lens,
-    OPENCV_CAM_OT_apply_pose,
-    OPENCV_CAM_OT_read_pose,
     OPENCV_CAM_OT_selftest,
 )
 

@@ -37,7 +37,7 @@ def preview_resolution(settings, size_key: str = "384") -> tuple:
     """Aspect ratio of the output image, long side from the UI option."""
     long_side = PREVIEW_SIZES.get(str(size_key), 384)
     try:  # what the final render will produce
-        width, height = apply_mod.output_resolution(settings)
+        width, height = apply_mod.render_resolution()
     except Exception:
         width = height = 0
     if width <= 0 or height <= 0:

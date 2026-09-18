@@ -8,7 +8,7 @@ Blender 视觉算法仿真插件集合：用 Blender/Cycles 生成**与真实相
 
 | 插件 | 状态 | 说明 |
 | --- | --- | --- |
-| [`opencv_camera`](addons/opencv_camera) | 0.17.0 可用 | Cycles 自定义相机，支持 OpenCV 内参（fx/fy/cx/cy）与畸变（**fisheye / Brown-Conrady / rational**），可导入导出标定文件、设置 OpenCV 外参、渲染自检；**算法场景**（`Camera Scene`、`AVM Scene`）统一在 `bl/scenes/` 注册，见 [`docs/avm-scene.md`](docs/avm-scene.md) |
+| [`opencv_camera`](addons/opencv_camera) | 0.17.0 可用 | Cycles 自定义相机，支持 OpenCV 内参（fx/fy/cx/cy）与畸变（**fisheye / Brown-Conrady / rational**），可导入导出标定文件、设置相机外参（Location + Euler）、渲染自检；**算法场景**（`Camera Scene`、`AVM Scene`）统一在 `bl/scenes/` 注册，见 [`docs/avm-scene.md`](docs/avm-scene.md) |
 | `camera_rig` | 规划中 | 多相机刚体（外参）、同步渲染、标定数据集导出 |
 | `sensor_sim` | 规划中 | IMU / GNSS / LiDAR 轨迹与噪声仿真 |
 | `dataset_export` | 规划中 | 渲染 + 真值导出（位姿/内参/深度/分割），KITTI / COLMAP / EuRoC 布局 |
@@ -127,7 +127,7 @@ Blender 中使用：
    （场景里没有相机时会自动先建一台鱼眼相机）。地面是水平面（和 AVM Scene 同一套约定），
    方块落在相机视线的着地点上；视口会自动摆到标准 **3/4 视角**（方位 135°、仰角 30°），
    转飞了用面板里的 `Frame View` 复位；
-5. 点 `Run Self Test` —— 渲染目标并与 OpenCV 模型比对，报出像素误差（参考相机实测 0.03–0.08 px）。
+5. F12 渲染（**输出尺寸/格式用 Blender 自带的 `Render ▸ Output`**，插件会按当前渲染分辨率自动换算内参）。
 
 > 自定义相机只在 **Cycles** 下生效，且只能使用 **CPU 或 OptiX** 后端（macOS 无 OptiX ⇒ 只能 CPU）。
 > 默认参数取真实 AVM 前相机（1280×960 鱼眼），直接可用；换成自己的标定即可。
@@ -146,33 +146,27 @@ Blender 中使用：
 
 ### 输出图像尺寸
 
-`Output Image` 面板专门管"模拟真实摄像头的输出尺寸"：
+插件**没有**单独的输出尺寸面板：**渲染分辨率、格式、保存路径都用 Blender 自带的
+`Render ▸ Output`**。内参属于**标定分辨率**（`intrinsics.image_width/height`），渲染时按当前
+`scene.render.resolution_*` 换算：
 
-| Output Size | 含义 |
-| --- | --- |
-| `Calibration Size`（默认） | 直接按内参标定时的那套分辨率输出（例如参考相机 1280×960） |
-| `Custom` | 从预设选（1280×960 / 1920×1080 / 1280×720 / 640×480 / 3840×2160 / 1920×1200）或手填宽高 |
-| `Scene Settings` | 不动 Blender 的渲染分辨率，跟随场景 |
+- 宽高比一致 → **等比缩放**（FOV 不变）；
+- 宽高比不一致 → **保持像素尺度的中心裁剪**，避免把图像拉伸。
 
-- `Drive Scene Resolution`（默认开）：每次应用参数时把输出尺寸写进 `scene.render.resolution_*`，
-  所以 **F12 出来的就是相机原生尺寸**；关掉则只在插件里记录。
-- `Set Render Resolution` / `From Scene` 两个按钮用于双向同步。
-- 缩放策略（面板会实时提示）：**宽高比一致 → 等比缩放**（FOV 不变）；**宽高比不一致 → 保持像素尺度的中心裁剪**，
-  避免把图像拉伸。预览与自检也按输出尺寸的宽高比走。
-- `Add Camera` / `Load Preset` / `Reset Defaults` 都会顺带把场景分辨率设成该相机的输出尺寸。
+`Scale Intrinsics to Render`（默认开）控制是否换算；关掉则内参按标定值原样使用。
+预览也按当前渲染分辨率的宽高比走。
 
 ### 参数面板与预览
 
 - **Live Apply**（默认开）：面板上改任意内参/畸变/外参即时写入 Cycles，不需要再点 Apply；
-  外参面板改 `R`/`t` 会同步移动相机物体；`Model` 切换会自动换着色器并重编译。
-- **Preview**：按**输出宽高比**快速渲染并显示在 Blender 的 Image Editor 里（与 F12 同一位置），
+  外参面板改 Rotation（欧拉角）会即时转动相机物体；`Model` 切换会自动换着色器并重编译。
+- **Preview**：按**渲染分辨率的宽高比**快速渲染并显示在 Blender 的 Image Editor 里（与 F12 同一位置），
   **渲染设置用完即还原**，Preview 不会改动你的场景设置；其中
-  `Preview Size`（256/384/512/720）是**预览图的分辨率长边**（短边按输出宽高比推导，面板会显示实际
-  预览尺寸），`Preview Samples`/`Denoise Preview` 控制预览的噪声与速度 —— 这三项只作用于
-  **预览与 Save Preview Image**，F12 的最终尺寸由 `Output Image` 决定、采样数用场景自己的设置；
-  `Save Preview Image` 可落盘 PNG；`Preview On Change` 打开后停止拖动约 0.6 s 自动重渲染。
-- 面板同时显示：当前生效的着色器/字节码长度、分辨率与宽高比提示、自检结果。
-- 用 `Save Preview Image` 落盘的预览图示例：`docs/images/preview_example.png`（384×288，16 采样）。
+  `Preview Size`（256/384/512/720）是**预览图的分辨率长边**（短边按渲染宽高比推导，面板会显示实际
+  预览尺寸），`Preview Samples`/`Denoise Preview` 控制预览的噪声与速度；F12 的尺寸用
+  Blender 的 `Render ▸ Output`、采样数用场景自己的设置。`Preview On Change` 打开后停止拖动约 0.6 s 自动重渲染。
+- 面板同时显示：当前生效的着色器/字节码长度、分辨率与宽高比提示。
+- 预览图示例：`docs/images/preview_example.png`（384×288，16 采样）。
 - 注意：Blender 4.x 已移除 `UILayout.template_preview` / `Image.preview`，插件无法在面板里内嵌图片，
   因此预览走 Image Editor；3D 视口是否支持自定义相机**尚未实测确认**（视口渲染需要交互式刷新），
   所以暂不作为预览方案（见 `docs/roadmap.md` 待办）。
@@ -185,14 +179,11 @@ Blender 中使用：
 ```
 Object Data Properties
 ├── CV Intrinsics   模型、fx fy cx cy、畸变（模型 + 系数 + 迭代 + Discard Invalid Rays）、
-│                   标定分辨率 + From Blender Lens、生效值只读框，
+│                   标定分辨率 + Scale Intrinsics to Render、生效值只读框，
 │                   然后才是 [Apply] [Preview] [Live Apply] [Recompile] 与状态框
-├── CV Extrinsics   Euler（XYZ 三轴角度）/ R / t、Apply Pose / Read Pose
-│                   ├── OpenCV Pose：R / t（与上面的角度分开成两组）
-│                   └── World Frame（可折叠）：自定义世界系开关 + 4×4 矩阵
+├── CV Extrinsics   Location + Rotation（XYZ 欧拉，度）；改角度即时转动相机物体
 ├── CV Presets      标定文件 [Import] / [Export]、Load Preset、Reset Defaults（默认折叠）
-├── CV Preview      预览尺寸/采样/去噪/自动预览、Save Preview、Self Test（默认折叠）
-├── CV Output       输出尺寸（标定/自定义/跟随场景）、驱动场景分辨率、Set/From Scene
+├── CV Preview      预览尺寸/采样/去噪/自动预览、Preview 按钮（默认折叠）
 ── Lens / Camera / Depth of Field ...      （Blender 自带面板排在后面）
 ```
 
@@ -226,7 +217,7 @@ Object Data Properties
 
 - **面板**：`AVM Scene` 在 Scene Properties（全部参数 + 覆盖评估 + 导入导出）；
   3D 视口 N 侧栏 `VisionSim ▸ AVM Scene` 只放**布局**（尺寸/位姿/图层）。
-  相机内参不在这里，继续用既有的 `CV Intrinsics` / `CV Presets` / `CV Output`。
+  相机内参不在这里，继续用既有的 `CV Intrinsics` / `CV Presets`。
 - **真实地面**：`AVM_Ground` 默认不是平面，而是内置的 **Falcon 真实碗形 mesh**
   （`models/unlit_round_bowls.glb`：中心平坦、圆角方形围壁，轴向半径 15 m、碗边离地 5 m，
   正是 app 的投影面），让仿真的 4 路相机看到与真机一致的边界/遮挡；
@@ -240,10 +231,9 @@ Object Data Properties
   场地覆盖率，以及「哪个标定块被哪几台相机看到」的可见性矩阵。
 - **角点检测**：每台相机的条目有 `[Detect Corners]`（单视图，numpy 亚像素，无 cv2 依赖），
   生成标注图（绿点=角点+序号，红点=投影）可用 `[Show Corners]` 在图像编辑器查看；
-  输入不变时自动命中缓存不重渲染。`Export Materials` 会自动带上 `points_2d`。
-- **素材导出**：`[Export Materials]` 一次产出 4 张相机图 + `plane_scene.json` +
-  `avm_scene.json` + `coverage.json` + `vehicle_avm_*.json`（含检测出的 `points_2d`）+
-  `scene_spec.md`。
+  输入不变时自动命中缓存不重渲染。
+- **参数导出 / 导入**：`[Export Parameters]` / `[Import Parameters]` 把整套场景参数写成 JSON
+  再还原（完整 `avm_scene` 或精简 `plane_scene` 两种格式）。
 - **Export Falcon**：`[Export Falcon]`（N 面板 / Scene 面板）导出最终标定配置——把 4 张原始图
   （`front/back/left/right.png`）、4 张角点标注图（`*_annotated.png`）和 `vehicle_avm.json`
   打包成一个 **zip**，字段/顺序对齐 `mediapipe_avm_calib` 的 `JsonGenerator`（数组尽量一行）；

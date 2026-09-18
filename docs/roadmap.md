@@ -11,7 +11,7 @@
 | M4b | 其余模型：thin-prism/tilted sensor（s1..s4）、双鱼眼/超广角（EUCM/DS） | 每个模型都有自检用例 |
 | M5 | 端到端回归：渲染 → 角点/ArUco 检测 → `cv2.calibrateCamera` 反标定回环 | 反标定内参相对误差 < 1%，畸变系数趋势一致 |
 | M5b ✅ | 交互补齐：`Add ▸ VisionSim`（Camera 四种模型 + Camera Scene）、预设加载、Live Apply、Euler 外参、Preview（Image Editor）、Recompile | 一键建相机 / 改参数即时生效 / 预览可看 |
-| M5c ✅ | **算法场景框架 + AVM Scene**：`bl/scenes/` 注册表（Camera Scene 收编）、AVM 平面场景（地面 / 车 / 4 标定块 / 4 鱼眼相机）、尺寸控制器、覆盖评估、参数与素材导出 | 见 [`avm-scene.md`](avm-scene.md)：4 路预览 + 覆盖/可见性矩阵 + 一键出素材 |
+| M5c ✅ | **算法场景框架 + AVM Scene**：`bl/scenes/` 注册表（Camera Scene 收编）、AVM 平面场景（地面 / 车 / 4 标定块 / 4 鱼眼相机）、尺寸控制器、覆盖评估、参数与 Falcon 配置导出 | 见 [`avm-scene.md`](avm-scene.md)：4 路预览 + 覆盖/可见性矩阵 + `Export Falcon` 打包 |
 | M6 | `camera_rig`：多相机刚体、同步渲染、多相机标定导出（含双目/HFOV 组合） | 双目极线几何验证通过；同步渲染输出可复现 |
 | M7 | `dataset_export`：渲染 + 真值（位姿/内参/深度/实例分割），KITTI / COLMAP / EuRoC 布局 | 导出的数据集能被参考工具链直接读取 |
 | M8 | `sensor_sim`：IMU/GNSS/LiDAR 轨迹与噪声（可选引入第三方仿真中间件） | 与视觉时间戳对齐；噪声参数可配置 |

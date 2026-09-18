@@ -7,6 +7,7 @@ debounced through :mod:`bl.scenes.debounce`.
 
 from __future__ import annotations
 
+import math
 from typing import Optional
 
 import bpy
@@ -41,18 +42,13 @@ def rebuild_now(context=None):
 
 
 def apply_active_camera(context=None) -> None:
-    """Give the active camera ownership of the render resolution."""
+    """Make the active camera the render camera (F12 uses ``scene.camera``)."""
     context = context or bpy.context
     scene = getattr(context, "scene", None)
     settings = settings_of(context)
     if scene is None or settings is None:
         return
-    for name in avm_layout.CAMERAS:
-        camera = bpy.data.objects.get(f"{builder.CAMERA_PREFIX}{builder.CAMERA_SUFFIX[name]}")
-        if camera is not None:
-            camera.data.opencv_cam.output.lock_scene_resolution = (
-                name == settings.active_camera)
-    builder._apply_active_resolution(scene, settings)
+    builder._apply_active_camera(scene, settings)
 
 
 def set_field(settings, field) -> None:
@@ -67,7 +63,12 @@ def set_field(settings, field) -> None:
 
 
 def load_preset_into(settings, preset) -> None:
-    """Copy a preset's field and camera records into the scene settings."""
+    """Copy a preset's field and camera records into the scene settings.
+
+    The mount pose itself is written straight onto the camera objects (the pose
+    has a single source: the object transform), so the AVM panel and
+    ``CV Extrinsics`` can never disagree.
+    """
     set_field(settings, avm_layout.field_from_preset(preset))
     settings.car_follow_core = True
 
@@ -77,11 +78,24 @@ def load_preset_into(settings, preset) -> None:
         entry = settings.cameras.add()
         entry.name = record["name"]
         entry.enable = record["enable"]
-        entry.location = record["location"]
-        entry.rotation = record["rotation"]
     settings.active_camera = "front"
 
     # the body has to be tall enough for the cameras to sit on it
     mount_heights = [record["location"][2] for record in records]
     if mount_heights:
         settings.car_height = round(max(mount_heights) + 0.05, 2)
+
+    apply_preset_poses(records)
+
+
+def apply_preset_poses(records) -> None:
+    """Write preset mount poses onto the camera objects that already exist."""
+    for record in records:
+        object_name = (f"{builder.CAMERA_PREFIX}"
+                       f"{builder.CAMERA_SUFFIX.get(record['name'], '')}")
+        camera = bpy.data.objects.get(object_name)
+        if camera is None:
+            continue  # not built yet; _ensure_cameras applies it on creation
+        builder.apply_camera_pose(
+            camera, record["location"],
+            [math.radians(value) for value in record["rotation"]])

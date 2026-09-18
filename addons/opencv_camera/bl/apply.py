@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Dict, List, Tuple
 
 import bpy
-from mathutils import Euler, Matrix
 
 from ..core import camera_model, transform
 from . import shader
@@ -37,35 +36,10 @@ def shader_params(model: str) -> Tuple[str, ...]:
     return SHADER_PARAMS[param_group(model)]
 
 
-def output_resolution(settings, scene=None) -> Tuple[int, int]:
-    """The image size the render should produce, per ``settings.output``."""
-    output = settings.output
-    if output.mode == "custom":
-        return max(8, int(output.width)), max(8, int(output.height))
-    if output.mode == "scene" or scene is None:
-        scene = scene or bpy.context.scene
-        return int(scene.render.resolution_x), int(scene.render.resolution_y)
-    intrinsics = settings.intrinsics
-    return max(8, int(intrinsics.image_width)), max(8, int(intrinsics.image_height))
-
-
-def apply_render_resolution(scene, settings) -> Tuple[bool, List[str]]:
-    """Write the output size into the scene render settings.
-
-    Returns ``(changed, messages)``.  Does nothing when the output follows the
-    scene (``mode == 'scene'``) or when driving the scene is switched off.
-    """
-    output = settings.output
-    if output.mode == "scene" or not output.lock_scene_resolution:
-        return False, []
-    width, height = output_resolution(settings, scene)
-    changed = (scene.render.resolution_x, scene.render.resolution_y,
-               scene.render.resolution_percentage) != (width, height, 100)
-    if changed:
-        scene.render.resolution_x = width
-        scene.render.resolution_y = height
-        scene.render.resolution_percentage = 100
-    return changed, []
+def render_resolution(scene=None) -> Tuple[int, int]:
+    """The scene's render resolution - the output size, set in Blender's Render tab."""
+    scene = scene or bpy.context.scene
+    return max(1, int(scene.render.resolution_x)), max(1, int(scene.render.resolution_y))
 
 
 def effective_intrinsics(settings, width: int = 0, height: int = 0) -> camera_model.Intrinsics:
@@ -147,13 +121,10 @@ def apply_values(cam_data, settings, scene=None,
     """Push the current settings to ``camera.cycles_custom`` (no recompile).
 
     Used by the live ("auto apply") path: the shader is assumed to be attached
-    and compiled already.  Also keeps the scene render size in sync when the
-    output size drives it.  Returns ``(ok, messages)``.
+    and compiled already.  Returns ``(ok, messages)``.
     """
     messages: List[str] = []
     scene = scene or bpy.context.scene
-    if scene is not None:
-        apply_render_resolution(scene, settings)
     params = shader.cycles_custom_params(cam_data)
     if params is None:
         messages.append("Cycles is not enabled: camera.cycles_custom is unavailable")
@@ -197,7 +168,6 @@ def apply_settings(cam_data, settings, scene=None,
     """
     messages: List[str] = []
     scene = scene or bpy.context.scene
-    apply_render_resolution(scene, settings)
     shader.attach(cam_data, settings)
     ok, compile_messages = shader.ensure_compiled(cam_data)
     messages.extend(compile_messages)
@@ -206,59 +176,6 @@ def apply_settings(cam_data, settings, scene=None,
     ok, value_messages = apply_values(cam_data, settings, scene, resolution)
     messages.extend(value_messages)
     return ok, messages
-
-
-def read_euler_rotation(obj) -> Tuple[float, float, float]:
-    """The object's world orientation as an XYZ Euler triple (radians)."""
-    euler = obj.matrix_world.decompose()[1].to_euler("XYZ")
-    return euler.x, euler.y, euler.z
-
-
-def apply_euler_rotation(obj, settings) -> None:
-    """Rotate ``obj`` to ``pose.euler`` (keeping location and scale).
-
-    Written through ``matrix_world`` so it works whatever the object's
-    ``rotation_mode`` is (euler, quaternion or axis-angle).
-    """
-    euler = settings.pose.euler
-    matrix = obj.matrix_world.copy()
-    location, _, scale = matrix.decompose()
-    rotation = Euler((euler[0], euler[1], euler[2]), "XYZ").to_matrix().to_4x4()
-    obj.matrix_world = (
-        Matrix.Translation(location)
-        @ rotation
-        @ Matrix.Diagonal((scale[0], scale[1], scale[2], 1.0))
-    )
-
-
-def apply_opencv_pose(obj, settings) -> None:
-    """Set ``obj.matrix_world`` from an OpenCV world-to-camera pose."""
-    pose = settings.pose
-    world = tuple(pose.world_matrix) if pose.use_world_transform else None
-    m = transform.object_matrix_from_opencv(pose.rotation, pose.translation, world)
-    obj.matrix_world = Matrix(
-        (m[0:4], m[4:8], m[8:12], m[12:16])
-    )
-
-
-def read_opencv_pose(obj, settings) -> Tuple[Tuple[float, ...], Tuple[float, float, float]]:
-    """Read ``obj.matrix_world`` back as an OpenCV world-to-camera pose."""
-    matrix = obj.matrix_world
-    if settings.pose.use_world_transform:
-        matrix = Matrix(
-            (tuple(settings.pose.world_matrix[0:4]),
-             tuple(settings.pose.world_matrix[4:8]),
-             tuple(settings.pose.world_matrix[8:12]),
-             tuple(settings.pose.world_matrix[12:16]))
-        ).inverted() @ matrix
-    rows = [tuple(matrix[r]) for r in range(4)]
-    R_wc = (rows[0][0], rows[0][1], rows[0][2],
-            rows[1][0], rows[1][1], rows[1][2],
-            rows[2][0], rows[2][1], rows[2][2])
-    centre = (rows[0][3], rows[1][3], rows[2][3])
-    R_b = transform.mat3_transpose(R_wc)
-    t_b = transform.mat3_vec(R_b, tuple(-c for c in centre))
-    return transform.blender_to_world_to_camera(R_b, t_b)
 
 
 def sync_intrinsics_from_lens(cam_data, settings, scene=None) -> List[str]:
@@ -292,11 +209,7 @@ def resolution_notes(settings, scene) -> List[str]:
     """Human readable notes about the stored vs. current resolution."""
     intr = settings.intrinsics
     width, height = scene.render.resolution_x, scene.render.resolution_y
-    output = settings.output
     notes: List[str] = []
-    if output.mode != "scene" and output.lock_scene_resolution:
-        out_w, out_h = output_resolution(settings, scene)
-        notes.append(f"output size {out_w}x{out_h} drives the scene resolution")
     if (intr.image_width, intr.image_height) != (width, height):
         if intr.scale_to_render and intr.image_height and height:
             same_aspect = abs(intr.image_width / intr.image_height - width / height) < 1e-3

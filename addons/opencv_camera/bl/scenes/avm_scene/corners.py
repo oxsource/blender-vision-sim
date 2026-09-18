@@ -453,8 +453,8 @@ def _load_annotated(name: str, path: str):
     return image
 
 
-def _signature(settings, entry, camera) -> str:
-    """A cache key: scene revision + pose + intrinsics + output.
+def _signature(settings, camera) -> str:
+    """A cache key: scene revision + pose + intrinsics + render size.
 
     Deliberately excludes the render sample count: the detected corners are
     stable across samples, so a detection at any quality can seed the Export
@@ -462,20 +462,20 @@ def _signature(settings, entry, camera) -> str:
     cam_settings = camera.data.opencv_cam
     intrinsics = cam_settings.intrinsics
     distortion = cam_settings.distortion
-    output = cam_settings.output
+    render = bpy.context.scene.render
     field = settings.field_spec()
     values = [
         settings.revision,
         field.border_w, field.border_h, field.corner,
         field.inner_w, field.inner_h, field.core_w, field.core_h,
         settings.block_lift,
-        entry.location[0], entry.location[1], entry.location[2],
-        entry.rotation[0], entry.rotation[1], entry.rotation[2],
+        camera.location[0], camera.location[1], camera.location[2],
+        camera.rotation_euler[0], camera.rotation_euler[1], camera.rotation_euler[2],
         intrinsics.fx, intrinsics.fy, intrinsics.cx, intrinsics.cy,
         intrinsics.image_width, intrinsics.image_height,
         int(bool(intrinsics.auto_center)), int(bool(intrinsics.scale_to_render)),
         distortion.k1, distortion.k2, distortion.k3, distortion.k4,
-        output.mode, output.width, output.height,
+        render.resolution_x, render.resolution_y,
     ]
     return ";".join(
         repr(round(float(value), 6)) if isinstance(value, (int, float)) else str(value)
@@ -488,7 +488,7 @@ def cache_signature(settings, name: str) -> str:
     camera = _camera_object(name)
     if entry is None or camera is None or getattr(camera.data, "opencv_cam", None) is None:
         return ""
-    return _signature(settings, entry, camera)
+    return _signature(settings, camera)
 
 
 def is_cached(settings, name: str) -> bool:
@@ -563,7 +563,7 @@ def detect_file(settings, name: str, path: str, samples: int = 64):
     entry.points_2d_ok = True
     entry.points_2d_error = residual
     entry.points_2d_revision = settings.revision
-    entry.points_2d_signature = _signature(settings, entry, camera)
+    entry.points_2d_signature = _signature(settings, camera)
 
     annotated = annotate_image(
         (rgb * 255.0).round().clip(0, 255).astype(np.uint8), points, projected)

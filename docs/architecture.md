@@ -15,18 +15,18 @@ addons/opencv_camera/
 │       ├── avm_layout.py     AVM 场地方程 + points(camera) + Store JSON
 │       └── avm_coverage.py   AVM 覆盖足迹 / 可见性矩阵
 ├── bl/                  Blender 集成层
-│   ├── properties.py      PropertyGroup / PointerProperty 定义 + Live Apply / 输出尺寸回调
+│   ├── properties.py      PropertyGroup / PointerProperty 定义 + Live Apply 回调
 │   ├── shader.py          OSL Text 数据块安装、编译校验、强制重编译
 │   ├── apply.py           apply_values（快，供 Live Apply）/ apply_settings（含编译）
 │   ├── camera_factory.py  Add Camera 的相机创建（模型 + 预设 + 可选 rig 空物体）
-│   ├── preview.py         预览渲染（按标定宽高比、渲染设置用完即还原）+ 防抖定时器
+│   ├── preview.py         预览渲染（按渲染宽高比、渲染设置用完即还原）+ 防抖定时器
 │   ├── selftest.py        渲染自检（隐藏其他对象，跑完还原）
 │   ├── menus.py           Add ▸ VisionSim 子菜单（Camera + 各场景，遍历场景注册表）
 │   ├── icons.py           图标集载入（每个菜单项一个单色线条 PNG，带内置图标回退）
 │   ├── panels_patch.py    隐藏 Cycles 自动生成的裸参数面板（可开关，卸载时还原）
-│   ├── ui.py              五个顶层面板（bl_order -50..-46 最前）：CV Intrinsics
+│   ├── ui.py              四个顶层面板（bl_order -50..-47 最前）：CV Intrinsics
 │   │                      （模型/内参/畸变/动作/状态）/ CV Extrinsics / CV Presets /
-│   │                      CV Preview / CV Output
+│   │                      CV Preview
 │   ├── scenes/            场景框架 + 每个场景一个模块/包（见 §6）
 │   │   ├── base.py          SceneDefinition / has_scene / root / ScenePanelMixin
 │   │   ├── debounce.py      通用去抖定时器
@@ -53,14 +53,14 @@ addons/opencv_camera/
 | 导入方式 | 插件内部**只用相对导入**；扩展模式下模块名是 `bl_ext.<repo>.<id>` |
 | 资源路径 | 用 `__file__` 定位（`core/paths.py`），不要依赖 `__package__` 或当前工作目录 |
 | 注册顺序 | `properties → operators → ui`，卸载时反序（UI 依赖算子/属性，属性依赖属性组） |
-| 面板挂载 | 每个模块都是**顶层**面板（`bl_space_type='PROPERTIES'`、`bl_context='data'`、**不设** `bl_parent_id`），统一 `CV ` 前缀命名（`CV Intrinsics` / `CV Extrinsics` / `CV Output` / `CV Presets` / `CV Preview`）；用**负** `bl_order`（-50..-46）排到 Blender 自带面板（默认 0 / 1000）**之前** |
+| 面板挂载 | 每个模块都是**顶层**面板（`bl_space_type='PROPERTIES'`、`bl_context='data'`、**不设** `bl_parent_id`），统一 `CV ` 前缀命名（`CV Intrinsics` / `CV Extrinsics` / `CV Presets` / `CV Preview`）；用**负** `bl_order`（-50..-47）排到 Blender 自带面板（默认 0 / 1000）**之前** |
 | 自定义相机入口 | **不能**扩展 `Camera.type`（C 侧 RNA 枚举）；用 `Add ▸ Camera` 菜单算子创建已配置好的 Custom 相机（`VIEW3D_MT_camera_add.append`） |
 | 属性即时生效 | 属性 `update=` 回调 → `bl/apply.apply_values()`（只写 `cycles_custom`，快）；切换模型时走完整的 `apply_settings()`（要换着色器并重编译） |
-| 双向同步要防递归 | `R/t` 与 Euler、相机物体三者互为镜像（`_update_pose` / `_update_euler`），用模块级 `_SYNCING` 重入守卫包住写回，避免 update 回调互相触发成环 |
+| 外参单一真源 | 相机位姿 = Blender 物体的 `location` + `rotation_euler`；`CV Extrinsics` 直接编辑它，AVM Scene 面板也**引用同一个物体变换**（预设 / 导入只写一次 `matrix_world`）；不再有 R/t 面板，也不再有场景级副本 |
 | 插件入口 | 所有入口集中在 `Add ▸ VisionSim`（`Camera` 四个模型 + `Camera Scene`）；不额外往 `Add ▸ Camera` 里塞条目（Blender 不允许扩展 `Camera.type`，塞进去也只能建 Custom 相机，容易误导）。相机骨架用 `add_camera(use_rig=True)` 的选项而不是单独的菜单项 |
 | 与别的插件共存 | 隐藏 Cycles 裸参数面板用的是**运行时替换 poll**（Python 面板的 poll 每次绘制都会重新查找），卸载时还原；Cycles 之后重新注册面板会导致补丁失效，此时面板会提示 "patch inactive"，功能不受影响 |
 | 预览 | Blender 4.x 无面板内嵌图片 API（`template_preview`/`Image.preview` 已移除）→ 预览渲染后用 `bpy.ops.render.view_show()` 显示在 Image Editor；渲染设置与内参都要还原 |
-| 分辨率所有权 | 输出尺寸由插件管理（`output.*`）并驱动 `scene.render.resolution_*`；面板/算子必须用同一处逻辑（`apply.output_resolution`），不要在别处硬编码分辨率 |
+| 分辨率所有权 | 渲染分辨率归 **Blender 自带的 `Render ▸ Output`**（`scene.render.resolution_*`）；插件不写它，只按它把内参从标定分辨率换算到渲染分辨率（`apply.render_resolution` + `apply.effective_intrinsics`），不要在别处硬编码分辨率 |
 | 算子 | `bl_idname = "opencv_cam.<action>"`；需要撤销的加 `{'REGISTER','UNDO'}`；文件对话框用 `ImportHelper`/`ExportHelper` |
 | 不污染用户场景 | 自检/预览类操作要保存并还原 `scene.render.*`、`view_settings`、`scene.camera`、`view_layer.objects.active`、各对象 `hide_render` |
 | 持久化 | 安装的 OSL Text 数据块加 `use_fake_user = True`，随 `.blend` 保存 |
@@ -102,16 +102,15 @@ Camera.opencv_cam（PropertyGroup）  ← 唯一真源，用户/脚本都改这�
         │  Apply to Camera（算子）
         ▼
 bl/apply.apply_settings()
-   1. apply_render_resolution()    按 output.* 把输出尺寸写进 scene.render（可关）
-   2. bl/shader.attach()           写/刷新 Text，Lens Type = Custom / Internal
-   3. bl/shader.ensure_compiled()  校验 custom_bytecode（失败即报错中止）
-   4. apply_values(): camera.cycles_custom[param] = value
+   1. bl/shader.attach()           写/刷新 Text，Lens Type = Custom / Internal
+   2. bl/shader.ensure_compiled()  校验 custom_bytecode（失败即报错中止）
+   3. apply_values(): camera.cycles_custom[param] = value
                                     （参数由 Cycles 从 OSL 形参自动创建）
 ```
 
-顺序不可颠倒：内参要按**当前渲染分辨率**换算，所以第 1 步必须在第 4 步之前。
-`apply_values()` 是给 Live Apply 用的轻量路径（不碰着色器）；切换畸变模型走完整的
-`apply_settings()`（需要换着色器并重编译）。
+`apply_values()` 按 `scene.render.resolution_*`（Blender 自带的 Render 设置）把内参从标定分辨率
+换算到渲染分辨率，再写进 `camera.cycles_custom`。`apply_values()` 是给 Live Apply 用的轻量路径
+（不碰着色器）；切换畸变模型走完整的 `apply_settings()`（需要换着色器并重编译）。
 
 参数名与类型由 OSL 形参决定（float/int/bool/数组/字符串），列表在 `bl/apply.py: SHADER_PARAMS` 与 `shaders/opencv_camera.osl` 之间必须保持同步。
 

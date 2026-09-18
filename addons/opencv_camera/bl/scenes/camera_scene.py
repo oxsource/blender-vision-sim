@@ -234,7 +234,6 @@ def prepare_render(scene: bpy.types.Scene, settings, samples: int = 64) -> None:
         )
     background.inputs[0].default_value = (0.055, 0.06, 0.075, 1.0)  # dim sky, not pure black
     background.inputs[1].default_value = 1.0
-    apply_mod.apply_render_resolution(scene, settings)
 
 
 def apply_and_build(camera_object: bpy.types.Object, scene: Optional[bpy.types.Scene] = None,

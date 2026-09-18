@@ -3,7 +3,7 @@
 The scene owns its settings on the **Scene** (``scene.avm_scene``), so the panels
 need no selected object.  Camera *intrinsics* are deliberately **not** here: they
 stay on ``camera.data.opencv_cam`` and are edited in the existing
-``CV Intrinsics`` / ``CV Presets`` / ``CV Output`` panels (see
+``CV Intrinsics`` / ``CV Presets`` panels (see
 ``docs/avm-scene.md`` §4.2).  Only the camera *mount pose* lives here.
 
 Every editable value schedules a debounced rebuild (dragging a slider fires one
@@ -57,30 +57,10 @@ def _schedule_active(self, context) -> None:
 
 
 class AVMCameraSettings(bpy.types.PropertyGroup):
-    """One camera's mount pose (intrinsics live on the camera data-block)."""
+    """One camera's scene-level state (pose + intrinsics live on the object)."""
 
     name: StringProperty(name="Name", default="camera")
     enable: BoolProperty(name="Enable", default=True, update=_schedule)
-    location: FloatVectorProperty(
-        name="Location",
-        description="Camera mount position in the vehicle frame [m]",
-        size=3,
-        subtype="TRANSLATION",
-        unit="LENGTH",
-        precision=4,
-        default=(0.0, 0.0, 0.0),
-        update=_schedule,
-    )
-    rotation: FloatVectorProperty(
-        name="Rotation",
-        description="Camera mount orientation, XYZ euler [deg]",
-        size=3,
-        subtype="EULER",
-        unit="ROTATION",
-        precision=3,
-        default=(0.0, 0.0, 0.0),
-        update=_schedule,
-    )
     #: detected block corners, in the points_3d order (8 x [u, v]); hidden and
     #: read through the corner detector / the material export
     points_2d: FloatVectorProperty(
@@ -252,11 +232,6 @@ class AVMSceneSettings(bpy.types.PropertyGroup):
     revision: IntProperty(name="Revision", default=0, options={"HIDDEN"})
 
     # -- parameter import / export -----------------------------------------
-    io_text: StringProperty(
-        name="Parameters",
-        description="Full (avm_scene) or compact (plane_scene) parameter JSON",
-        default="",
-    )
     io_status: StringProperty(name="Status", default="", options={"HIDDEN"})
 
     # -- coverage (cached by the analyze operator, §16) ---------------------

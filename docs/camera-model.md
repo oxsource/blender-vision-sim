@@ -144,11 +144,11 @@ R_wc = R_bᵀ               # camera → world，即 object 旋转
 ```
 
 若标定世界系不是 Blender 世界系（ROS: x 前/y 左/z 上；OpenCV 视觉系: y 下），
-插件提供可选的 `world_matrix`（4×4）左乘，不靠猜（在 `CV Extrinsics ▸ World Frame` 折叠块里）。
+先把标定位姿换算到 Blender 世界系再设相机（插件不再提供 `world_matrix` 输入）。
 
-面板里除 `R`/`t` 外还提供 **Euler（XYZ，Blender 世界系）三轴角度输入**，与 `R` 双向同步、直接旋转
-相机物体；注意约定：**OpenCV 下的单位位姿（X 右 / Y 下 / Z 前）在 Blender 里是绕 X 轴 180°**，
-所以 R=单位矩阵时 Euler 显示为 (180°, 0, 0) 而不是全 0。
+面板只提供 **Location + Euler（XYZ，Blender 世界系）**：编辑角度即时旋转相机物体，
+Blender 物体变换是外参的**唯一真源**（不再有 R/t 面板）。上面的 `(R_cv, t_cv) ↔ Blender`
+换算仍用于离线脚本（`scripts/solve_avm_defaults.py`）等外部流程。
 
 ## 6. 两种工作模式
 
@@ -159,17 +159,14 @@ R_wc = R_bᵀ               # camera → world，即 object 旋转
 
 ## 7. 分辨率行为
 
-内参是像素量纲，所以有**两个**分辨率概念，插件把两者分开管理：
+内参是像素量纲，所以有**两个**分辨率概念：
 
 | 概念 | 存放位置 | 说明 |
 | --- | --- | --- |
 | 标定分辨率 | `intrinsics.image_width/height` | K/D 是在这个尺寸下标出来的 |
-| 输出分辨率 | `output.mode` + `output.width/height` | 实际渲染/输出的图像尺寸；`mode='calibration'` 时等于标定分辨率，`'custom'` 用手填/预设，`'scene'` 跟随 Blender |
+| 渲染分辨率 | `scene.render.resolution_x/y` | 实际渲染尺寸，直接用 **Blender 自带的 `Render ▸ Output`**（插件没有单独的输出尺寸面板） |
 
-`output.lock_scene_resolution`（默认开）会在每次应用参数时把输出分辨率写进 `scene.render.resolution_*`，
-因此 F12 的输出就是设定的相机原生尺寸；关闭则只作为插件里的记录，渲染尺寸仍由场景控制。
-
-把内参从标定分辨率换算到输出分辨率时：
+把内参从标定分辨率换算到渲染分辨率时：
 
 | 情况 | 行为 |
 | --- | --- |
@@ -181,8 +178,6 @@ R_wc = R_bᵀ               # camera → world，即 object 旋转
 
 自动主点（`cx=cy=-1`）始终跟随图像中心；显式主点在缩放/裁剪时按上表处理。
 非方形像素（`pixel_aspect_x != pixel_aspect_y`）会破坏 OpenCV 的像素模型，插件在面板上给出提示。
-
-自检（`Run Self Test`）会自动按标定宽高比选择测试分辨率（长边 256，短边按比例），避免裁剪/拉伸。
 
 ## 8. 实测验证数据（Blender 4.5.3 LTS / Cycles CPU）
 

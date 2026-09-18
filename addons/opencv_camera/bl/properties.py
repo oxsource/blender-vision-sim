@@ -16,7 +16,6 @@ from bpy.props import (
     BoolProperty,
     EnumProperty,
     FloatProperty,
-    FloatVectorProperty,
     IntProperty,
     PointerProperty,
     StringProperty,
@@ -65,74 +64,6 @@ def _update_values(self, context):
 def _update_model(self, context):
     _apply_live(self, context, full=True)
 
-
-#: re-entrancy guard: R/t, Euler and the object transform sync both ways
-_SYNCING = {"active": False}
-
-
-class _SyncGuard:
-    def __enter__(self):
-        self._was = _SYNCING["active"]
-        _SYNCING["active"] = True
-        return self
-
-    def __exit__(self, *exc):
-        _SYNCING["active"] = self._was
-        return False
-
-
-def _owner_object(cam_data):
-    """The camera object that uses this camera data-block, if any."""
-    scene = getattr(bpy.context, "scene", None)
-    if scene is None:
-        return None
-    for obj in scene.objects:
-        if obj.type == "CAMERA" and obj.data is cam_data:
-            return obj
-    return None
-
-
-def _update_euler(self, context):
-    """Euler edit -> rotate the camera object -> refresh R/t."""
-    settings = _root_settings(self)
-    if settings is None or _SYNCING["active"]:
-        return
-    if not settings.auto_apply:
-        return
-    from . import apply as apply_mod
-    obj = _owner_object(self.id_data)
-    if obj is None:
-        return
-    try:
-        with _SyncGuard():
-            apply_mod.apply_euler_rotation(obj, settings)
-            rotation, translation = apply_mod.read_opencv_pose(obj, settings)
-            settings.pose.rotation = rotation
-            settings.pose.translation = translation
-    except Exception as exc:
-        settings.status = f"euler error: {type(exc).__name__}: {exc}"
-
-
-def _update_pose(self, context):
-    """Live extrinsics: keep the camera object in sync with R/t."""
-    settings = _root_settings(self)
-    obj = getattr(self, "id_data", None)
-    if settings is None or obj is None:
-        return
-    if not settings.auto_apply:
-        return
-    owner = _owner_object(obj)
-    if owner is None:
-        return
-    from . import apply as apply_mod
-    try:
-        with _SyncGuard():
-            apply_mod.apply_opencv_pose(owner, settings)
-            euler = apply_mod.read_euler_rotation(owner)
-            if euler is not None:
-                settings.pose.euler = euler
-    except Exception as exc:
-        settings.status = f"pose error: {type(exc).__name__}: {exc}"
 
 #: defaults of the bundled reference camera (surround view front camera, 1280x960)
 DEFAULT_INTRINSICS = {
@@ -294,93 +225,6 @@ class DistortionSettings(bpy.types.PropertyGroup):
     )
 
 
-#: common output sizes (identifier -> (width, height))
-OUTPUT_PRESETS = {
-    "1280x960": (1280, 960),
-    "1920x1080": (1920, 1080),
-    "1280x720": (1280, 720),
-    "640x480": (640, 480),
-    "3840x2160": (3840, 2160),
-    "1920x1200": (1920, 1200),
-}
-
-
-#: enum items for the output preset.  A *list* (not a callable) so the default can
-#: be a string identifier - with callable items bpy requires an index.
-OUTPUT_PRESET_ITEMS = [
-    (key, key.replace("x", " x "), "") for key in OUTPUT_PRESETS
-] + [("custom", "Custom", "Use the width/height fields")]
-
-
-def _update_output_preset(self, context):
-    # note: ``self`` is the OutputSettings group itself, not the root settings
-    if self.preset in OUTPUT_PRESETS:
-        width, height = OUTPUT_PRESETS[self.preset]
-        self.width = width
-        self.height = height
-    _apply_output(self, context)
-
-
-def _update_output(self, context):
-    _apply_output(self, context)
-
-
-def _apply_output(group, context=None):
-    """Keep the scene render size in sync with the output settings."""
-    settings = _root_settings(group)
-    if settings is None or not settings.output.lock_scene_resolution:
-        return
-    if settings.output.mode == "scene":
-        return
-    from . import apply as apply_mod
-    scene = context.scene if context is not None else bpy.context.scene
-    try:
-        changed, messages = apply_mod.apply_render_resolution(scene, settings)
-        if changed or messages:
-            settings.status = "resolution set" if not messages else messages[0][:120]
-        if settings.auto_apply and group.id_data.type == "CUSTOM":
-            apply_mod.apply_values(group.id_data, settings, scene)
-    except Exception as exc:
-        settings.status = f"output error: {type(exc).__name__}: {exc}"
-
-
-class OutputSettings(bpy.types.PropertyGroup):
-    mode: EnumProperty(
-        name="Output Size",
-        description="Where the render/output image size comes from",
-        items=[
-            ("calibration", "Calibration Size",
-             "Render at the size the intrinsics were calibrated for (real camera output size)"),
-            ("custom", "Custom", "Use the width/height below"),
-            ("scene", "Scene Settings", "Leave Blender's render resolution alone"),
-        ],
-        default="calibration",
-        update=_update_output,
-    )
-    preset: EnumProperty(
-        name="Preset",
-        description="Common sensor output sizes",
-        items=OUTPUT_PRESET_ITEMS,
-        default="1280x960",
-        update=_update_output_preset,
-    )
-    width: IntProperty(
-        name="Width", description="Output width in pixels", default=1280, min=8, max=16384,
-        update=_update_output,
-    )
-    height: IntProperty(
-        name="Height", description="Output height in pixels", default=960, min=8, max=16384,
-        update=_update_output,
-    )
-    lock_scene_resolution: BoolProperty(
-        name="Drive Scene Resolution",
-        description="Write the output size into Blender's render resolution whenever settings are "
-        "applied, so F12 always produces the camera's real output size",
-        default=True,
-        update=_update_output,
-    )
-
-
 class CalibrationSettings(bpy.types.PropertyGroup):
     filepath: StringProperty(
         name="File",
@@ -391,54 +235,12 @@ class CalibrationSettings(bpy.types.PropertyGroup):
     last_import: StringProperty(name="Last Import", default="", options={"HIDDEN"})
 
 
-class PoseSettings(bpy.types.PropertyGroup):
-    rotation: FloatVectorProperty(
-        name="R",
-        description="Row-major 3x3 rotation, world to camera (OpenCV convention)",
-        size=9,
-        default=(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0),
-        precision=6,
-        update=_update_pose,
-    )
-    translation: FloatVectorProperty(
-        name="t",
-        description="Translation, world to camera, OpenCV convention (meters)",
-        size=3,
-        default=(0.0, 0.0, 0.0),
-        precision=6,
-        update=_update_pose,
-    )
-    euler: FloatVectorProperty(
-        name="Euler",
-        description="Camera orientation in the Blender world (XYZ Euler, degrees). "
-        "Kept in sync with R and with the camera object, so the pose can be dialled in "
-        "with three angles instead of a matrix",
-        size=3,
-        subtype="EULER",
-        unit="ROTATION",
-        default=(0.0, 0.0, 0.0),
-        update=_update_euler,
-    )
-    use_world_transform: BoolProperty(
-        name="Custom World Frame",
-        description="Apply an extra transform (e.g. ROS/OpenCV world to Blender world)",
-        default=False,
-    )
-    world_matrix: FloatVectorProperty(
-        name="World Matrix",
-        description="Row-major 4x4 mapping the calibration world frame to the Blender world",
-        size=16,
-        default=(1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0),
-        precision=6,
-    )
-
-
 class PreviewSettings(bpy.types.PropertyGroup):
     size: EnumProperty(
         name="Preview Size",
         description="Resolution of the PREVIEW render: the long side in pixels, the short side "
-        "follows the output aspect ratio. It only affects the preview and Save Preview Image - "
-        "the final F12 size is set in Output Image",
+        "follows the render aspect ratio. It only affects the preview - the final F12 size is "
+        "set in Blender's Render > Output",
         items=[
             ("256", "256 px", "Fastest, enough to check the framing"),
             ("384", "384 px", "Default: a good balance for checking distortion"),
@@ -472,9 +274,7 @@ class OpenCVCameraSettings(bpy.types.PropertyGroup):
     intrinsics: PointerProperty(type=IntrinsicsSettings)
     distortion: PointerProperty(type=DistortionSettings)
     calibration: PointerProperty(type=CalibrationSettings)
-    pose: PointerProperty(type=PoseSettings)
     preview: PointerProperty(type=PreviewSettings)
-    output: PointerProperty(type=OutputSettings)
     show_raw_params: BoolProperty(
         name="Show Cycles Raw Parameters",
         description="Show the raw parameter list that Cycles generates from the OSL shader "
@@ -540,9 +340,7 @@ _CLASSES = (
     IntrinsicsSettings,
     DistortionSettings,
     CalibrationSettings,
-    PoseSettings,
     PreviewSettings,
-    OutputSettings,
     OpenCVCameraSettings,
 )
 

@@ -946,6 +946,9 @@ def _ensure_cameras(scene: bpy.types.Scene, settings, target: bpy.types.Collecti
             ok, apply_messages = _configure_camera(camera, record, scene)
             if not ok:
                 messages.append(f"{name}: " + "; ".join(apply_messages))
+            apply_camera_pose(camera, record.get("location", (0.0, 0.0, 0.0)),
+                              [math.radians(value)
+                               for value in record.get("rotation", (0.0, 0.0, 0.0))])
         link_to_collection(camera, target)
         cameras[name] = camera
     return cameras, messages
@@ -975,25 +978,22 @@ def _configure_camera(camera: bpy.types.Object, record: Dict,
     coefficients = list(record.get("D", (0.0, 0.0, 0.0, 0.0))) + [0.0] * 4
     (distortion.k1, distortion.k2, distortion.k3,
      distortion.k4) = (float(value) for value in coefficients[:4])
-    settings.output.mode = "calibration"
     return apply_mod.apply_settings(camera.data, settings, scene)
 
 
-def apply_camera_pose(camera: bpy.types.Object, location, rotation_deg) -> None:
-    """Set the mount pose, then sync ``CV Extrinsics`` (R/t) from the object.
+def apply_camera_pose(camera: bpy.types.Object, location, rotation) -> None:
+    """Set the mount pose from the AVM record.
 
-    The object matrix is written in one go and R/t are read *back* from it: going
-    through ``pose.euler`` first would read a stale ``matrix_world`` (the
-    depsgraph has not caught up yet) and collapse the mount position to the
-    origin.
+    ``rotation`` is the record's XYZ Euler in **radians** (the unit Blender's
+    Euler property stores); the coverage maths and :func:`object_matrix` work in
+    degrees, so it is converted here.  Writing ``matrix_world`` also updates the
+    object's own ``location`` / ``rotation_euler``, so ``CV Extrinsics`` (which
+    shows the object transform) stays in step.
     """
+    rotation_deg = [math.degrees(value) for value in rotation]
     matrix = avm_coverage.object_matrix(location, rotation_deg)
     camera.matrix_world = Matrix((matrix[0:4], matrix[4:8],
                                   matrix[8:12], matrix[12:16]))
-    settings = camera.data.opencv_cam
-    rotation, translation = apply_mod.read_opencv_pose(camera, settings)
-    settings.pose.rotation = rotation
-    settings.pose.translation = translation
 
 
 # ---------------------------------------------------------------------------
@@ -1126,6 +1126,9 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
         block_objects.append(block)
 
     # cameras --------------------------------------------------------------
+    # The camera object's own transform is the mount pose (so CV Extrinsics and
+    # the AVM panels show the same thing); a rebuild never resets it, only the
+    # preset / import do.
     camera_objects = []
     for index, name in enumerate(avm_layout.CAMERAS):
         record = settings.camera(name)
@@ -1133,8 +1136,6 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
         if camera is None:
             continue
         camera.hide_render = not (record.enable if record else True) or not settings.show_cameras
-        if record is not None:
-            apply_camera_pose(camera, record.location, record.rotation)
         # repair a camera without bytecode (e.g. a compile that failed when it
         # was created, or a .blend from before the Cycles osl fix)
         if not shader.is_compiled(camera.data):
@@ -1142,8 +1143,6 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
                 camera.data, camera.data.opencv_cam, scene)
             if not ok:
                 messages.append(f"{name}: " + "; ".join(apply_messages))
-        # only the active camera drives the scene resolution
-        camera.data.opencv_cam.output.lock_scene_resolution = (name == settings.active_camera)
         _parent(camera, root)
         camera_objects.append(camera)
 
@@ -1166,7 +1165,7 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
     # ground text (前 / 后 / 左 / 右 + the field title) ----------------------
     labels = _ensure_labels(scene, settings, target, root)
 
-    _apply_active_resolution(scene, settings)
+    _apply_active_camera(scene, settings)
     settings.revision += 1
     apply_visibility(settings)
     return {
@@ -1182,15 +1181,13 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
     }
 
 
-def _apply_active_resolution(scene: bpy.types.Scene, settings) -> None:
-    """Make the active camera the render camera and let it write the resolution."""
+def _apply_active_camera(scene: bpy.types.Scene, settings) -> None:
+    """Make the active camera the render camera (F12 uses ``scene.camera``)."""
     camera = bpy.data.objects.get(
         f"{CAMERA_PREFIX}{CAMERA_SUFFIX[settings.active_camera]}")
     if camera is None:
         return
-    # F12 renders scene.camera, not the selected object, so keep them in step
     scene.camera = camera
-    apply_mod.apply_render_resolution(scene, camera.data.opencv_cam)
 
 
 def remove(scene: bpy.types.Scene, settings) -> int:
