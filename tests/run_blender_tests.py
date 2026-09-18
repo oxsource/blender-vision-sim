@@ -1499,6 +1499,48 @@ def test_avm_ground_model():
     settings.ground_model = ""
 
 
+def test_avm_export_bowl():
+    """Export Bowl writes the scaled ground mesh as a standalone GLB."""
+    import struct
+
+    scene = setup_scene(resolution=64, samples=1)
+    clear_scene()
+    scene = setup_scene(resolution=64, samples=1)
+    check("add AVM scene", bpy.ops.opencv_cam.avm_add_scene() == {"FINISHED"})
+    settings = scene.avm_scene
+    settings.ground_radius = 8.0
+    settings.ground_rim_height = 3.0
+    bpy.ops.opencv_cam.avm_rebuild()
+
+    path = os.path.join(TMPDL, "bowl.glb")
+    check("export bowl operator",
+          bpy.ops.opencv_cam.avm_export_bowl(filepath=path) == {"FINISHED"})
+    check("bowl glb written", os.path.exists(path) and os.path.getsize(path) > 1000,
+          f"{os.path.getsize(path) if os.path.exists(path) else 0} bytes")
+
+    data = open(path, "rb").read()
+    _, _, length = struct.unpack_from("<III", data, 0)
+    offset, document = 12, None
+    while offset < length:
+        chunk_len, = struct.unpack_from("<I", data, offset)
+        tag = data[offset + 4:offset + 8]
+        if tag == b"JSON":
+            document = json.loads(data[offset + 8:offset + 8 + chunk_len])
+        offset += 8 + chunk_len
+    check("bowl glb parses", document is not None)
+    names = [node.get("name") for node in document.get("nodes", [])]
+    check("bowl glb has a single ground node", names == ["AVM_Ground"], str(names))
+    positions = [document["accessors"][primitive["attributes"]["POSITION"]]
+                 for mesh in document["meshes"] for primitive in mesh["primitives"]]
+    low = [min(a["min"][k] for a in positions) for k in range(3)]
+    high = [max(a["max"][k] for a in positions) for k in range(3)]
+    # glTF is Y-up: the bowl radius is X/Z, the rim height is Y
+    check("bowl glb keeps the radius and rim height",
+          abs(low[0] + 8.0) < 1e-3 and abs(high[0] - 8.0) < 1e-3
+          and abs(low[1]) < 1e-3 and abs(high[1] - 3.0) < 1e-3,
+          f"x[{low[0]:.2f},{high[0]:.2f}] y[{low[1]:.2f},{high[1]:.2f}]")
+
+
 def test_scene_default_view():
     """A fresh scene is framed from the standard 3/4 orbit, fitted to its subject.
 
@@ -2001,6 +2043,7 @@ def main():
         test_avm_export_falcon,
         test_avm_visibility_and_logo,
         test_avm_ground_model,
+        test_avm_export_bowl,
         test_scene_default_view,
         test_shader_force_compile,
         test_presets,

@@ -222,8 +222,11 @@ class OPENCV_CAM_PT_avm_scene_view3d(_AVMPanel, bpy.types.Panel):
         row.operator("opencv_cam.avm_reset_defaults", icon="LOOP_BACK")
         layout.operator("opencv_cam.frame_view", text="Frame View",
                         icon="VIEW_PERSPECTIVE").scene_id = DEFINITION.id
-        layout.operator("opencv_cam.avm_export_falcon",
-                        text="Export Falcon", icon="EXPORT")
+        row = layout.row(align=True)
+        row.operator("opencv_cam.avm_export_falcon",
+                     text="Export Falcon", icon="EXPORT")
+        row.operator("opencv_cam.avm_export_bowl",
+                     text="Export Bowl", icon="MESH_DATA")
 
 
 _CLASSES = (OPENCV_CAM_PT_avm_scene, OPENCV_CAM_PT_avm_scene_view3d)

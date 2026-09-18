@@ -483,6 +483,51 @@ class OPENCV_CAM_OT_avm_export_falcon(_AVMSceneOperator, bpy.types.Operator, Exp
         return {"FINISHED"}
 
 
+class OPENCV_CAM_OT_avm_export_bowl(_AVMSceneOperator, bpy.types.Operator, ExportHelper):
+    """Export the ground mesh (the real bowl) alone as a GLB"""
+
+    bl_idname = "opencv_cam.avm_export_bowl"
+    bl_label = "Export Bowl"
+    bl_options = {"REGISTER"}
+
+    filename_ext = ".glb"
+    filter_glob: StringProperty(default="*.glb", options={"HIDDEN"})
+
+    def invoke(self, context, event):
+        if not self.filepath:
+            self.filepath = "unlit_round_bowls.glb"
+        return super().invoke(context, event)
+
+    def execute(self, context):
+        ground = bpy.data.objects.get(builder.GROUND_NAME)
+        if ground is None or ground.type != "MESH":
+            self.report({"ERROR"}, "no AVM ground mesh to export")
+            return {"CANCELLED"}
+        view_layer = context.view_layer
+        selected = list(context.selected_objects)
+        active = view_layer.objects.active
+        try:
+            for obj in selected:
+                obj.select_set(False)
+            ground.select_set(True)
+            view_layer.objects.active = ground
+            bpy.ops.export_scene.gltf(
+                filepath=self.filepath, export_format="GLB", use_selection=True,
+                export_apply=True)
+        except Exception as exc:
+            self.report({"ERROR"}, f"{type(exc).__name__}: {exc}")
+            return {"CANCELLED"}
+        finally:
+            if ground.name in bpy.data.objects:
+                ground.select_set(False)
+            for obj in selected:
+                if obj.name in bpy.data.objects:
+                    obj.select_set(True)
+            view_layer.objects.active = active
+        self.report({"INFO"}, f"exported the ground mesh to {self.filepath}")
+        return {"FINISHED"}
+
+
 _CLASSES = (
     OPENCV_CAM_OT_avm_add_scene,
     OPENCV_CAM_OT_avm_rebuild,
@@ -502,6 +547,7 @@ _CLASSES = (
     OPENCV_CAM_OT_avm_analyze_coverage,
     OPENCV_CAM_OT_avm_export_materials,
     OPENCV_CAM_OT_avm_export_falcon,
+    OPENCV_CAM_OT_avm_export_bowl,
 )
 
 

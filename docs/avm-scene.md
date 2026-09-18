@@ -348,7 +348,7 @@ N ▸ VisionSim ▸ AVM Scene            （仅在 AVM Scene 存在时出现）
 ├── 地面文字：Show Logo / Logo size
 ├── 相机布局：active_camera + 4 台的 location / rotation / enable + [Detect Corners] / [Show Corners] / [X]
 ├── 图层开关：地面 / 标定块 / 车辆 / 相机 / 道具 / 地面文字 / 覆盖 / 太阳
-└── 动作：[重建] [还原默认] [Frame View] [Export Falcon]
+└── 动作：[重建] [还原默认] [Frame View] [Export Falcon] [Export Bowl]
 ```
 
 > - **相机内参**（K/D/输出尺寸）与**参数导入导出 / JSON 文本框 / 快速预设**都**只在 Scene 面板**，
@@ -537,7 +537,9 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 改半径/高度只从缓存重新缩放、不重复导入；对象 mesh 上用 `avm_ground_model` 键记录
 `路径 + 半径 + 高度` 做缓存。导入过程会保存并恢复用户选择。`ground_model` 可指向自定义模型
 （`.glb/.gltf/.fbx/.obj`），为空即内置 bowl；文件缺失/导入失败时回退平面并在 `messages` /
-状态栏给出提示。
+状态栏给出提示。N 面板的 `[Export Bowl]`（`opencv_cam.avm_export_bowl`）把当前 `AVM_Ground`
+（含 `ground_radius` / `ground_rim_height` 缩放）单独导出成 `.glb`（Y-up，底面在 y=0，单节点
+`AVM_Ground`），可回灌 `filament_avm` 或再作为自定义 `ground_model` 使用。
 
 ---
 
@@ -629,6 +631,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | `opencv_cam.avm_analyze_coverage` | **覆盖评估**（§16）：算 4 台相机的地面足迹、并集/重叠/盲区、标定块可见性矩阵；生成贴地覆盖曲线 |
 | `opencv_cam.avm_export_materials` | **一键出素材**（§16）：4 路 PNG + 角点检测 + `plane_scene.json` + `avm_scene.json` + `coverage.json` + filament 兼容 config |
 | `opencv_cam.avm_export_falcon` | **Export Falcon**（§16.8）：复用/渲染 4 张原始图 + 4 张角点标注图 + 完整 `vehicle_avm.json`，**打包为 zip** |
+| `opencv_cam.avm_export_bowl` | **Export Bowl**（§7，N 面板）：把 `AVM_Ground`（当前缩放后的真实碗形 mesh）单独导出成 `.glb` |
 
 ---
 
@@ -653,7 +656,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | `bl/scenes/avm_scene/corners.py` | 新增 | **角点检测**（§16.7）：渲染 4 路 → numpy 亚像素黑块角点 → 各相机 `points_2d` |
 | `core/scenes/avm_falcon.py` | 新增 | **Falcon 标定配置**（§16.8，纯 Python）：复刻 `JsonGenerator` 的字段/顺序 |
 | `bl/scenes/avm_scene/falcon.py` | 新增 | **Export Falcon**（§16.8）：渲染 4 张原始图 + 角点检测 + 写 `vehicle_avm.json` |
-| `bl/scenes/avm_scene/operators.py` | 新增 | `opencv_cam.avm_add_scene` / `avm_rebuild` / `avm_reset` / `avm_remove_scene` / `avm_import_params` / `avm_export_params` / `avm_export_json` / `avm_apply_json` / `avm_render_cameras` / `avm_detect_corners` / `avm_detect_camera` / `avm_show_corners` / `avm_clear_camera` / `avm_analyze_coverage` / `avm_export_materials` / `avm_export_falcon` |
+| `bl/scenes/avm_scene/operators.py` | 新增 | `opencv_cam.avm_add_scene` / `avm_rebuild` / `avm_reset` / `avm_remove_scene` / `avm_import_params` / `avm_export_params` / `avm_export_json` / `avm_apply_json` / `avm_render_cameras` / `avm_detect_corners` / `avm_detect_camera` / `avm_show_corners` / `avm_clear_camera` / `avm_analyze_coverage` / `avm_export_materials` / `avm_export_falcon` / `avm_export_bowl` |
 | `bl/scenes/avm_scene/ui.py` | 新增 | Scene 面板 + 3D 视口 N 面板（两者 poll 均为「`root` 存在」，§5.2） |
 | `bl/scene_builder.py` | **兼容转发** | `from .scenes.camera_scene import *`，保留一个版本后删除 |
 | `bl/menus.py` | 改 | 遍历场景注册表生成 `Add ▸ VisionSim` 条目（§17.4） |
