@@ -8,7 +8,7 @@ Blender 视觉算法仿真插件集合：用 Blender/Cycles 生成**与真实相
 
 | 插件 | 状态 | 说明 |
 | --- | --- | --- |
-| [`opencv_camera`](addons/opencv_camera) | 0.18.0 可用 | Cycles 自定义相机，支持 OpenCV 内参（fx/fy/cx/cy）与畸变（**fisheye / Brown-Conrady / rational**），可导入导出标定文件、设置相机外参（Location + Euler）、渲染自检；**算法场景**（`Camera Scene`、`AVM Scene`）统一在 `bl/scenes/` 注册，见 [`docs/avm-scene.md`](docs/avm-scene.md) |
+| [`opencv_camera`](addons/opencv_camera) | 0.18.0 可用 | Cycles 自定义相机，支持 OpenCV 内参（fx/fy/cx/cy）与畸变（**fisheye / Brown-Conrady / rational**），可导入导出标定文件、设置相机外参（Location + Euler）、渲染自检；**算法场景**（`Camera Scene`、`AVM Scene`、`Drive Scene`）统一在 `bl/scenes/` 注册，见 [`docs/avm-scene.md`](docs/avm-scene.md) |
 | `camera_rig` | 规划中 | 多相机刚体（外参）、同步渲染、标定数据集导出 |
 | `sensor_sim` | 规划中 | IMU / GNSS / LiDAR 轨迹与噪声仿真 |
 | `dataset_export` | 规划中 | 渲染 + 真值导出（位姿/内参/深度/分割），KITTI / COLMAP / EuRoC 布局 |
@@ -31,6 +31,7 @@ Blender 视觉算法仿真插件集合：用 Blender/Cycles 生成**与真实相
 | `pinhole` | Pinhole 条目 | 方 + 笔直十字 |
 | `camera_scene` | Camera Scene | 立方体轮廓 |
 | `avm_scene` | AVM Scene | 俯视场地 + 四角实心标定块 + 车体轮廓 |
+| `drive_scene` | Drive Scene | 俯视停车场车道 + 车位线 + 车辆轮廓 |
 
 这些都是**原创标识**（不是 OpenCV 商标本身），想改图案改脚本里的形状定义后重跑：
 
@@ -49,12 +50,13 @@ blender-vision-sim/
 │   ├── blender_manifest.toml    # Extensions 规范清单（唯一的插件元数据来源）
 │   ├── __init__.py              # 只做 register / unregister 编排
 │   ├── core/                    # 纯 Python：模型、变换、IO（禁止 import bpy）
-│   │   └── scenes/              # 每个算法场景的几何/模型/IO（avm_layout / avm_coverage）
+│   │   └── scenes/              # 每个算法场景的几何/模型/IO（avm_layout / avm_coverage / drive_lot / drive_path）
 │   ├── bl/                      # Blender 集成：properties / shader / apply / selftest / ui / operators
 │   │   └── scenes/              # 场景框架 + 每个场景一个模块/包
 │   │       ├── base.py / view.py / debounce.py  # SceneDefinition、默认 3/4 视角、通用去抖
 │   │       ├── camera_scene.py          # 原 bl/scene_builder.py
-│   │       └── avm_scene/               # AVM Scene（properties/builder/controller/io/coverage/corners/falcon/operators/ui）
+│   │       ├── avm_scene/               # AVM Scene（properties/builder/controller/io/coverage/corners/falcon/operators/ui）
+│   │       └── drive_scene/             # Drive Scene（properties/builder/controller/recording/operators/ui）
 │   ├── presets/avm_scene/default.json   # AVM 内置默认参数（离线反算产物）
 │   ├── models/unlit_round_bowls.glb     # AVM 真实碗形地面（app 投影面，AVM_Ground 默认用它）
 │   └── shaders/*.osl            # 随插件分发的 OSL 源文件（权威副本）
@@ -240,6 +242,32 @@ Object Data Properties
   已检测过的相机会复用缓存渲染图，不重复渲染。每台相机的 `[X]` 可单独清除检测与缓存。
 - 完整设计见 [`docs/avm-scene.md`](docs/avm-scene.md)（含与 HTML 工具 / `mediapipe_avm_calib`
   的字段对齐、场景目录结构与新增场景的方法）。
+
+### Drive Scene（停车场行驶素材）
+
+`Add ▸ VisionSim ▸ Drive Scene` 搭出「室内停车场 + 车辆按计划行驶」，用来给**透明底盘**算法造素材：
+一键把整段行驶**逐帧渲染**出来，并同步导出每帧的车速与真值位姿。
+
+```text
+输入：停车场地参数 + 车辆尺寸 + 行驶参数（里程 / 速度曲线 / 帧率）
+输出：frame_%04d.png 序列 + frames.csv（逐帧时间/里程/车速/位姿）+ clip.json（整段规格）
+```
+
+- **停车场**：混凝土地坪（**程序化颗粒**，不是纯色——透明底盘靠纹理对齐验证）、车道边线 /
+  车位分隔线 / **中线虚线**（车正下方那条线就是算法要重建出来的）、黄色禁停框、两侧立柱与围墙；
+  照明是**一整片与地块同大的柔和顶光**（不是沿车道一排小灯——那会在地面烧出一圈圈光斑，
+  同一车位在不同位置的亮度对不上，逐帧就没法比），`show_bays` 关标线、`ground_texture` 切棋盘/纯色可做对照。
+- **车位与停放车**：每侧车位都刷**编号**（`A01…` / `B01…`，平铺在车道上正对该车位，行驶时相机
+  一直看得见——对着编号就能核对那块区域重建得对不对）；`parked_cars` 按排停放若干辆车
+  （车头朝墙、车型与车漆循环、紧邻立柱的车位留空），`show_parked` 可整组隐藏。
+- **相机**：`DRIVE_Cam_Front` 就是插件的 **OpenCV Camera 组件**（fisheye），内参/安装位姿取内置
+  minibus 标定预设，画面与真机可比；内参照旧在 `CV Intrinsics` / `CV Presets` 里改。
+- **运动**：`DRIVE_Vehicle` 空物体承载世界位姿（车与相机挂在它下面，相机永远保持车体系安装位姿），
+  逐帧关键帧由纯 Python 的运动模型给出：`constant` 匀速或 `trapezoid` 加速-巡航-刹停
+  （里程不够跑满会退化成三角形，仍停在精确里程上）。
+- **录制**：`[Render Clip…]` 逐帧渲染前摄，写出 PNG 序列 + `frames.csv` + `clip.json`；
+  分辨率用 Blender 自带的 `Render ▸ Output`，渲染设置会自动还原，场景里其它灯光录制时临时屏蔽。
+- 完整设计见 [`docs/drive-scene.md`](docs/drive-scene.md)。
 
 ## 开发约定
 

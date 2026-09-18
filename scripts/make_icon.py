@@ -189,6 +189,15 @@ def build_icons() -> Dict[str, List[Shape]]:
             filled_rect(0.68, 0.68, 0.87, 0.87),
             rounded_rect(0.37, 0.28, 0.63, 0.72, 0.06),
         ],
+        # Drive: top view of a car park aisle - the two bay rows, the dashed
+        # centre line and the car driving between them
+        "drive_scene": [
+            line((0.17, 0.08), (0.17, 0.92)),
+            line((0.83, 0.08), (0.83, 0.92)),
+            line((0.50, 0.06), (0.50, 0.22)),
+            line((0.50, 0.78), (0.50, 0.94)),
+            rounded_rect(0.35, 0.30, 0.65, 0.70, 0.06),
+        ],
     }
 
 

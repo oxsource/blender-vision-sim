@@ -691,9 +691,9 @@ def test_menus_and_raw_params():
     check("icons loaded into a preview collection",
           all(icons_mod.is_loaded(name) for name in
               ("visionsim", "camera", "fisheye", "brown_conrady", "rational",
-               "pinhole", "camera_scene", "avm_scene")),
+               "pinhole", "camera_scene", "avm_scene", "drive_scene")),
           str(icons_mod.available()))
-    check("icon files ship with the add-on", len(icons_mod.available()) == 8,
+    check("icon files ship with the add-on", len(icons_mod.available()) == 9,
           str(icons_mod.available()))
     check("every menu entry has its own icon",
           menus_mod.MODEL_ICONS == {"fisheye": "fisheye", "brown_conrady": "brown_conrady",
@@ -1584,6 +1584,207 @@ def test_avm_export_bowl():
           f"x[{low[0]:.2f},{high[0]:.2f}] y[{low[1]:.2f},{high[1]:.2f}]")
 
 
+def test_drive_scene():
+    """The Drive Scene: car park, OpenCV camera, keyframed drive and a clip."""
+    from opencv_camera.bl import scenes as scenes_mod
+    from opencv_camera.bl.scenes.drive_scene import builder, recording
+    from opencv_camera.core.scenes import drive_lot, drive_path
+
+    scene = setup_scene(resolution=64, samples=1)
+    clear_scene()
+    scene = setup_scene(resolution=64, samples=1)
+
+    check("drive add operator registered", "drive_add_scene" in dir(bpy.ops.opencv_cam))
+    check("add Drive scene", bpy.ops.opencv_cam.drive_add_scene() == {"FINISHED"})
+    settings = scene.drive_scene
+    definition = scenes_mod.definition("drive_scene")
+    check("the registry knows the scene",
+          definition is not None and definition.label == "Drive Scene", str(definition))
+    check("root pointer set",
+          settings.root is not None and settings.root.name == "DRIVE_Root",
+          str(settings.root))
+    check("panels would show", scenes_mod.has_scene(bpy.context, definition))
+
+    target = bpy.data.collections.get("Drive Scene")
+    names = sorted(obj.name for obj in target.objects)
+    check("collection has the core objects",
+          {"DRIVE_Car", "DRIVE_Ground", "DRIVE_Root", "DRIVE_Vehicle",
+           "DRIVE_Cam_Front"} <= set(names), str(names))
+    check("every object is namespaced",
+          all(name.startswith("DRIVE_") for name in names), str(names))
+    check("the car park is built (walls / pillars / one soft ceiling panel)",
+          len([n for n in names if n.startswith("DRIVE_Wall_")]) == 4
+          and len([n for n in names if n.startswith("DRIVE_Pillar_")]) == 4
+          and [n for n in names if n.startswith("DRIVE_Light_")] == ["DRIVE_Light_Ceiling"],
+          str(names))
+    panel = bpy.data.objects["DRIVE_Light_Ceiling"]
+    lot_length, lot_width = settings.lot_size()
+    check("the ceiling panel spans the lot instead of lighting it in pools",
+          panel.data.type == "AREA"
+          and approx(panel.data.size, lot_width * 0.9, 1e-3)
+          and approx(panel.data.size_y, lot_length * 0.9, 1e-3),
+          f"{panel.data.size:.1f} x {panel.data.size_y:.1f} m")
+
+    # the floor: real geometry for the markings, a procedural grain (a flat grey
+    # floor would give a transparent-chassis algorithm nothing to align against)
+    ground = bpy.data.objects["DRIVE_Ground"]
+    slots = [material.name for material in ground.data.materials]
+    check("the floor carries floor / white / yellow slots",
+          slots == ["DRIVE_Floor_Concrete_Mat", "DRIVE_Paint_White_Mat",
+                    "DRIVE_Paint_Yellow_Mat"], str(slots))
+    check("the concrete floor has a procedural grain",
+          any(node.type == "TEX_NOISE" for node in ground.data.materials[0].node_tree.nodes),
+          str([node.type for node in ground.data.materials[0].node_tree.nodes]))
+    check("floor and both paint colours are used",
+          {polygon.material_index for polygon in ground.data.polygons} == {0, 1, 2},
+          str({polygon.material_index for polygon in ground.data.polygons}))
+    check("the lane markings include the centre line",
+          any(polygon.material_index == 1 and abs(polygon.center.x) < 0.1
+              for polygon in ground.data.polygons),
+          "no white marking on x = 0")
+    length, width = settings.lot_size()
+    check("the slab covers the whole drive",
+          approx(ground.dimensions.y, length, 1e-3) and approx(ground.dimensions.x, width, 1e-3),
+          f"{tuple(round(v, 2) for v in ground.dimensions)} vs {length:.2f} x {width:.2f}")
+
+    # the bays: parked cars and their numbers
+    parked = sorted(name for name in names if name.startswith("DRIVE_Parked_"))
+    check("parked cars are built (4 per row)", len(parked) == 8, str(parked))
+    first = bpy.data.objects[parked[0]]
+    check("a parked car stands in its bay, nose to the wall",
+          first.parent is not None and first.parent.name == "DRIVE_Root"
+          and approx(abs(math.degrees(first.rotation_euler[2])), 90.0, 1e-4)
+          and abs(first.location.x) > settings.aisle_width / 2,
+          f"{first.name}: {math.degrees(first.rotation_euler[2]):.2f} deg, "
+          f"x={first.location.x:.2f}")
+    paints = {bpy.data.objects[name].data.materials[0].name for name in parked}
+    check("the parked cars share a small paint palette", 1 < len(paints) <= 5, str(paints))
+
+    number_count = 2 * drive_lot.bay_count(length, settings.bay_width)
+    numbers = sorted(name for name in names if name.startswith("DRIVE_Number_"))
+    check("every bay has its number", len(numbers) == number_count,
+          f"{len(numbers)} of {number_count}")
+    number = bpy.data.objects["DRIVE_Number_A01"]
+    check("a number is flat text lying in the aisle",
+          number.type == "FONT" and number.data.body == "A01"
+          and abs(number.location.z - builder.NUMBER_Z) < 1e-9
+          and all(abs(value) < 1e-9 for value in number.rotation_euler)
+          and abs(number.location.x) < settings.aisle_width / 2,
+          f"{number.type}, z={number.location.z:.3f}, x={number.location.x:.2f}")
+
+    settings.show_parked = False
+    check("hiding the parked cars works",
+          all(bpy.data.objects[name].hide_render for name in parked))
+    settings.show_parked = True
+    check("showing them again works",
+          not any(bpy.data.objects[name].hide_render for name in parked))
+    structure = [name for name in names if name.startswith(("DRIVE_Wall_", "DRIVE_Pillar_"))]
+    settings.show_walls = False
+    check("hiding the structure leaves the ceiling panel on",
+          all(bpy.data.objects[name].hide_render for name in structure)
+          and not panel.hide_render, str(structure[:2]))
+    settings.show_walls = True
+    settings.bay_numbers = False
+    bpy.ops.opencv_cam.drive_rebuild()
+    check("turning the numbers off drops the objects",
+          not [obj for obj in target.objects if obj.name.startswith("DRIVE_Number_")])
+    settings.bay_numbers = True
+    bpy.ops.opencv_cam.drive_rebuild()
+    check("turning them back on rebuilds them",
+          len([obj for obj in target.objects
+               if obj.name.startswith("DRIVE_Number_")]) == number_count)
+
+    # the add-on's own camera, mounted in the vehicle frame
+    camera = bpy.data.objects["DRIVE_Cam_Front"]
+    check("the camera is a compiled custom fisheye",
+          camera.data.type == "CUSTOM" and len(camera.data.custom_bytecode) > 0
+          and camera.data.opencv_cam.distortion.model == "fisheye")
+    check("the camera carries the minibus calibration",
+          approx(camera.data.opencv_cam.intrinsics.fx, 317.77563818112867, 1e-3),
+          f"{camera.data.opencv_cam.intrinsics.fx:.4f}")
+    check("the camera keeps its vehicle-frame mount pose",
+          camera.parent is not None and camera.parent.name == "DRIVE_Vehicle"
+          and approx(camera.location.y, 2.466796, 1e-4)
+          and approx(camera.location.z, 2.69068, 1e-4),
+          str(camera.parent))
+    check("the car and the camera both hang off the vehicle empty",
+          bpy.data.objects["DRIVE_Car"].parent.name == "DRIVE_Vehicle")
+
+    # the keyframes are the plan, frame for frame
+    plan = settings.plan()
+    vehicle = bpy.data.objects["DRIVE_Vehicle"]
+    curves = vehicle.animation_data.action.fcurves
+    check("one key per frame on every curve",
+          curves and all(len(curve.keyframe_points) == len(plan.frames) for curve in curves),
+          str([len(curve.keyframe_points) for curve in curves]))
+    check("the keys interpolate linearly",
+          all(key.interpolation == "LINEAR" for curve in curves
+              for key in curve.keyframe_points))
+    worst = 0.0
+    for frame in plan.frames[::max(1, len(plan.frames) // 7)]:
+        scene.frame_set(frame.index)
+        location = vehicle.matrix_world.translation
+        worst = max(worst, abs(location.x - frame.x), abs(location.y - frame.y))
+    check("the keyframed vehicle follows the pure plan", worst < 1e-4, f"{worst:.2e}")
+    check("the timeline is the clip",
+          scene.frame_start == 0 and scene.frame_end == len(plan.frames) - 1
+          and scene.render.fps == settings.drive_fps,
+          f"{scene.frame_start}..{scene.frame_end} @ {scene.render.fps}")
+    check("a rebuild keeps the objects",
+          bpy.ops.opencv_cam.drive_rebuild() == {"FINISHED"}
+          and bpy.data.objects.get("DRIVE_Car") is not None)
+
+    # recording: a short clip at a tiny size, through the real operator path
+    settings.drive_distance = 6.0
+    settings.drive_speed = 3.0
+    settings.drive_profile = "constant"
+    settings.drive_fps = 4
+    bpy.ops.opencv_cam.drive_rebuild()
+    plan = settings.plan()
+    check("the short clip is 9 frames", len(plan.frames) == 9, str(len(plan.frames)))
+
+    scene.render.resolution_x, scene.render.resolution_y = 96, 72
+    scene.render.filepath = "//keep-me"
+    before = (scene.render.filepath, scene.camera, scene.cycles.samples,
+              scene.render.image_settings.file_format)
+    directory = tempfile.mkdtemp(prefix="opencv_cam_drive_")
+    check("render clip operator",
+          bpy.ops.opencv_cam.drive_render_clip(directory=directory, samples=2) == {"FINISHED"})
+    check("one png per frame",
+          all(os.path.exists(os.path.join(directory, recording.frame_name(frame.index)))
+              for frame in plan.frames), str(directory))
+    rows = open(os.path.join(directory, "frames.csv"), encoding="utf-8").read().rstrip("\n").split("\n")
+    check("frames.csv: header plus one row per frame",
+          rows[0] == ",".join(drive_path.CSV_HEADER) and len(rows) == len(plan.frames) + 1,
+          f"{len(rows)} rows")
+    check("frames.csv carries the speed column",
+          all(len(row.split(",")) == 7 and float(row.split(",")[3]) > 0.0 for row in rows[1:]),
+          rows[1] if len(rows) > 1 else "")
+    meta = json.load(open(os.path.join(directory, "clip.json"), encoding="utf-8"))
+    check("clip.json describes the clip",
+          meta["format"] == "drive_clip" and meta["frames"] == len(plan.frames)
+          and meta["drive"]["profile"] == "constant"
+          and approx(meta["drive"]["cruise_speed_mps"], 3.0, 1e-9),
+          str({k: meta[k] for k in ("format", "frames")}))
+    check("clip.json carries the camera and the real render size",
+          meta["camera"]["mount"]["frame"] == "vehicle"
+          and meta["camera"]["K"][0] > 0
+          and tuple(meta["render"]["resolution"]) == (96, 72),
+          str(meta["render"]))
+    check("recording restored the render settings",
+          (scene.render.filepath, scene.camera, scene.cycles.samples,
+           scene.render.image_settings.file_format) == before,
+          str((scene.render.filepath, scene.cycles.samples)))
+    check("the clip status is reported", settings.clip_status.startswith("9 frames"),
+          settings.clip_status)
+
+    check("remove scene", bpy.ops.opencv_cam.drive_remove_scene() == {"FINISHED"})
+    check("the panels hide after the remove",
+          scenes_mod.has_scene(bpy.context, definition) is False)
+    check("the camera object is gone too",
+          bpy.data.objects.get("DRIVE_Cam_Front") is None)
+
+
 def test_scene_default_view():
     """A fresh scene is framed from the standard 3/4 orbit, fitted to its subject.
 
@@ -1624,7 +1825,8 @@ def test_scene_default_view():
 
     # --- every registered scene carries it ---------------------------------
     ids = {definition.id for definition in scenes_mod.definitions()}
-    check("the registry has both scenes", ids == {"camera_scene", "avm_scene"}, str(ids))
+    check("the registry has all three scenes",
+          ids == {"camera_scene", "avm_scene", "drive_scene"}, str(ids))
     for definition in scenes_mod.definitions():
         check(f"{definition.id} uses the 3/4 default view",
               approx(definition.view.azimuth, 135.0) and approx(definition.view.elevation, 30.0),
@@ -2037,6 +2239,7 @@ def main():
         test_avm_visibility_and_logo,
         test_avm_ground_model,
         test_avm_export_bowl,
+        test_drive_scene,
         test_scene_default_view,
         test_shader_force_compile,
         test_presets,

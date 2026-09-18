@@ -17,7 +17,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "addons", "opencv_camera"))
 
 from core import calibration_io, camera_model, transform  # noqa: E402
-from core.scenes import avm_coverage, avm_falcon, avm_layout  # noqa: E402
+from core.scenes import (avm_coverage, avm_falcon, avm_layout, drive_lot,  # noqa: E402
+                         drive_path)
 
 FAILURES = []
 
@@ -459,11 +460,169 @@ def test_avm_falcon_config():
           '"points_2d": [' in text and "[\n" in text)
 
 
+def test_drive_path():
+    """The Drive Scene motion plan: speed profiles, sampling and the CSV."""
+    check("forward is +Y at yaw 0", drive_path.forward(0.0) == (0.0, 1.0))
+    check("yaw 90 turns the nose to -X",
+          approx(drive_path.forward(90.0)[0], -1.0, 1e-12)
+          and approx(drive_path.forward(90.0)[1], 0.0, 1e-12))
+
+    # constant speed: one leg, the drive lasts distance / speed
+    legs = drive_path.phases(20.0, 5.0, 1.0, profile=drive_path.CONSTANT)
+    check("constant speed is a single leg",
+          len(legs) == 1 and approx(legs[0].duration, 4.0, 1e-12), str(legs))
+    check("sample at 0 and at the end",
+          drive_path.sample(legs, 0.0) == (0.0, 5.0)
+          and approx(drive_path.sample(legs, 4.0)[0], 20.0, 1e-9),
+          str(drive_path.sample(legs, 4.0)))
+    check("sample clamps past the end",
+          approx(drive_path.sample(legs, 9.0)[0], 20.0, 1e-9))
+
+    # trapezoid: ramp up, cruise, ramp down - starting and ending at rest
+    legs = drive_path.phases(20.0, 5.0, 2.5, profile=drive_path.TRAPEZOID)
+    check("trapezoid ramps in, cruises and brakes",
+          [approx(leg.accel, a, 1e-12) for leg, a in zip(legs, (2.5, 0.0, -2.5))] == [True] * 3,
+          str(legs))
+    ramp = 5.0 / 2.5
+    check("ramps take speed / accel seconds",
+          approx(legs[0].duration, ramp, 1e-12)
+          and approx(legs[-1].duration, ramp, 1e-12), str(legs))
+    total = sum(leg.distance for leg in legs)
+    check("the legs cover exactly the requested distance", approx(total, 20.0, 1e-9),
+          f"{total:.6f}")
+    check("no leg overshoots the cruise speed",
+          max(leg.end_speed for leg in legs) <= 5.0 + 1e-12)
+
+    # a drive too short for both ramps: the peak drops, the car still stops on it
+    legs = drive_path.phases(2.0, 10.0, 2.0, profile=drive_path.TRAPEZOID)
+    check("a short drive becomes a triangular profile",
+          len(legs) == 2 and approx(max(leg.end_speed for leg in legs),
+                                    math.sqrt(2.0 * 2.0), 1e-9),
+          str(legs))
+    check("the triangular profile covers the distance too",
+          approx(sum(leg.distance for leg in legs), 2.0, 1e-9),
+          f"{sum(leg.distance for leg in legs):.6f}")
+
+    # the sampled plan: frames, pose, and speed that really is ds/dt
+    drive = drive_path.plan(20.0, 5.0, accel=2.5, fps=10.0, heading=90.0,
+                            start=(1.0, -2.0))
+    check("frame count covers the duration", len(drive.frames) == int(round(drive.duration * 10.0)) + 1,
+          f"{len(drive.frames)} frames, {drive.duration:.3f} s")
+    check("the first frame is the start pose",
+          drive.frames[0].distance == 0.0 and drive.frames[0].speed == 0.0
+          and (drive.frames[0].x, drive.frames[0].y) == (1.0, -2.0), str(drive.frames[0]))
+    check("the last frame stands exactly on the distance",
+          approx(drive.frames[-1].distance, 20.0, 1e-9), str(drive.frames[-1]))
+    check("yaw 90 drives towards -X",
+          approx(drive.frames[-1].x, 1.0 - 20.0, 1e-6)
+          and approx(drive.frames[-1].y, -2.0, 1e-9),
+          f"({drive.frames[-1].x:.4f}, {drive.frames[-1].y:.4f})")
+    check("distance is monotonic",
+          all(b.distance >= a.distance
+              for a, b in zip(drive.frames, drive.frames[1:])))
+    check("time is monotonic",
+          all(b.time >= a.time for a, b in zip(drive.frames, drive.frames[1:])))
+    step = 1.0 / drive.fps
+    worst = max(abs((b.distance - a.distance) / step - (a.speed + b.speed) * 0.5)
+                for a, b in zip(drive.frames, drive.frames[1:]))
+    check("the sampled speed is ds/dt (mean over the step)", worst < 2e-3, f"{worst:.2e}")
+
+    # a duration that is not a whole number of frames ends on the exact duration
+    odd = drive_path.plan(10.0, 3.0, profile=drive_path.CONSTANT, fps=4.0)
+    check("the clip ends on the exact duration",
+          approx(odd.frames[-1].time, odd.duration, 1e-12)
+          and approx(odd.duration, 10.0 / 3.0, 1e-12),
+          f"{odd.frames[-1].time:.6f} vs {odd.duration:.6f}")
+
+    # the CSV is the contract with the algorithm side
+    text = drive_path.csv_text(drive)
+    rows = text.rstrip("\n").split("\n")
+    check("csv header", rows[0] == ",".join(drive_path.CSV_HEADER), rows[0])
+    check("csv has one row per frame", len(rows) == len(drive.frames) + 1,
+          f"{len(rows)} rows for {len(drive.frames)} frames")
+    check("every csv row carries 7 columns",
+          all(len(row.split(",")) == 7 for row in rows[1:]))
+    third = rows[3].split(",")
+    check("csv rows carry the frame's truth",
+          int(third[0]) == drive.frames[2].index
+          and approx(float(third[1]), drive.frames[2].time, 1e-6)
+          and approx(float(third[3]), drive.frames[2].speed, 1e-6)
+          and approx(float(third[6]), drive.frames[2].yaw, 1e-4), rows[3])
+    check("a zero-length drive is a single frame",
+          len(drive_path.plan(0.0, 5.0, fps=10.0).frames) == 1)
+    check("summary mentions the frame count and fps",
+          f"{len(drive.frames)} frames" in drive_path.summary(drive),
+          drive_path.summary(drive))
+
+
+def test_drive_lot():
+    """The car-park layout: bays, dividers, columns, parked cars and labels."""
+    length, aisle, depth, bay_width = 48.0, 6.0, 5.2, 2.5
+    count = drive_lot.bay_count(length, bay_width)
+    check("bay count follows the pitch", count == 19, str(count))
+
+    dividers = drive_lot.divider_positions(length, bay_width)
+    check("one divider more than bays", len(dividers) == count + 1, str(len(dividers)))
+    check("the dividers span the whole slab",
+          approx(dividers[0], -length / 2, 1e-9)
+          and approx(dividers[-1], length / 2, 1e-9), f"{dividers[0]}..{dividers[-1]}")
+    gaps = [b - a for a, b in zip(dividers, dividers[1:])]
+    check("the dividers are evenly spaced", max(gaps) - min(gaps) < 1e-9, str(gaps[:3]))
+
+    rows = drive_lot.bays(length, aisle, depth, bay_width)
+    check("both rows are laid out", len(rows) == 2 * count, str(len(rows)))
+    left = [bay for bay in rows if bay.side < 0]
+    right = [bay for bay in rows if bay.side > 0]
+    check("the rows are lettered A / B",
+          left[0].label == "A01" and right[0].label == "B01"
+          and left[-1].label == f"A{count:02d}" and right[-1].label == f"B{count:02d}",
+          f"{left[0].label}..{left[-1].label} / {right[0].label}..{right[-1].label}")
+    check("every bay sits in its row",
+          all(approx(abs(bay.x), aisle / 2 + depth / 2, 1e-9) for bay in rows)
+          and approx(left[0].y, -length / 2 + left[0].width / 2, 1e-9)
+          and all(-length / 2 <= bay.y <= length / 2 for bay in rows),
+          f"x={left[0].x}, y={left[0].y}")
+    check("a bay's number hangs in the aisle in front of it",
+          all(abs(x) < aisle / 2 and approx(y, bay.y, 1e-9)
+              for bay in rows for x, y in [drive_lot.label_position(bay, aisle)]))
+
+    columns = drive_lot.pillar_positions(length, aisle, 2)
+    check("two columns per side", len(columns) == 4, str(columns))
+    check("the columns stand in the bay rows, off the aisle",
+          all(aisle / 2 < abs(x) < aisle / 2 + depth for x, y in columns), str(columns))
+
+    parked = drive_lot.parked_cars(rows, columns, 4)
+    check("four parked cars per row", len(parked) == 8, str(len(parked)))
+    check("no car is parked into a column",
+          all(all(abs(car.bay.y - y) >= drive_lot.PILLAR_CLEARANCE
+                  for x, y in columns if (x > 0) == (car.bay.side > 0))
+              for car in parked),
+          str([(car.bay.label, car.bay.y) for car in parked]))
+    check("every parked car fits its bay",
+          all(car.length <= car.bay.depth and car.width <= car.bay.width for car in parked))
+    check("parked cars stand nose-in, facing the wall",
+          all(approx(car.yaw, -90.0 * car.bay.side, 1e-9) for car in parked))
+    check("each parked car has its own bay",
+          len({car.bay.label for car in parked}) == len(parked))
+    check("the forms and paints vary",
+          len({car.paint for car in parked}) > 1
+          and len({car.length for car in parked}) > 1)
+    check("the layout is deterministic",
+          [(car.bay.label, car.length, car.paint) for car in parked]
+          == [(car.bay.label, car.length, car.paint)
+              for car in drive_lot.parked_cars(rows, columns, 4)])
+    check("without columns every bay is free",
+          len(drive_lot.parked_cars(rows, [], 4)) == 8)
+    check("no parked cars when none are asked for",
+          drive_lot.parked_cars(rows, columns, 0) == [])
+
+
 def main():
     for test in (test_intrinsics, test_distortion_roundtrip, test_fisheye, test_projection,
                  test_transform, test_lens_conversion, test_bundled_preset,
                  test_filament_avm_config, test_avm_layout, test_avm_coverage,
-                 test_avm_falcon_config, test_calibration_io):
+                 test_avm_falcon_config, test_drive_path, test_drive_lot,
+                 test_calibration_io):
         test()
     print()
     if FAILURES:
