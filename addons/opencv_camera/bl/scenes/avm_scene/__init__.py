@@ -14,6 +14,7 @@ Layout
 ``operators.py``   add / rebuild / reset / remove
 ``io.py``          parameter import/export (P4)
 ``coverage.py``    footprints, visibility matrix, material export (P5)
+``corners.py``     per-camera corner detection -> points_2d (P6)
 ``ui.py``          Scene Properties panel + 3D viewport N panel (P3)
 """
 
@@ -37,10 +38,11 @@ DEFINITION = SceneDefinition(
     view_targets=builder.view_targets,
 )
 
-from . import controller, coverage, io, operators, properties, ui  # noqa: E402
+from . import (controller, corners, coverage, falcon, io, operators,  # noqa: E402
+               properties, ui)
 
-__all__ = ["DEFINITION", "builder", "controller", "coverage", "io",
-           "operators", "properties", "ui"]
+__all__ = ["DEFINITION", "builder", "controller", "corners", "coverage",
+           "falcon", "io", "operators", "properties", "ui"]
 
 
 def register() -> None:

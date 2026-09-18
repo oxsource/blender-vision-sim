@@ -81,6 +81,20 @@ class AVMCameraSettings(bpy.types.PropertyGroup):
         default=(0.0, 0.0, 0.0),
         update=_schedule,
     )
+    #: detected block corners, in the points_3d order (8 x [u, v]); hidden and
+    #: read through the corner detector / the material export
+    points_2d: FloatVectorProperty(
+        name="Points 2D", size=16, default=(0.0,) * 16, options={"HIDDEN"})
+    points_2d_ok: BoolProperty(
+        name="Points 2D Detected", default=False, options={"HIDDEN"})
+    points_2d_error: FloatProperty(
+        name="Points 2D RMS", default=0.0, options={"HIDDEN"})
+    #: cache key captured at detection time (scene revision + pose/intrinsics/
+    #: output/samples); a re-detect with the same key reuses the result
+    points_2d_revision: IntProperty(
+        name="Points 2D Revision", default=-1, options={"HIDDEN"})
+    points_2d_signature: StringProperty(
+        name="Points 2D Signature", default="", options={"HIDDEN"})
 
 
 class AVMSceneSettings(bpy.types.PropertyGroup):
@@ -184,7 +198,7 @@ class AVMSceneSettings(bpy.types.PropertyGroup):
         default="",
         update=_schedule)
     logo_size: FloatProperty(
-        name="Logo Size", default=1.2, min=0.1, max=10.0, unit="LENGTH",
+        name="Logo Size", default=1.0, min=0.1, max=10.0, unit="LENGTH",
         description="Logo width in metres; the height follows the image aspect ratio",
         update=_schedule)
 
@@ -225,6 +239,9 @@ class AVMSceneSettings(bpy.types.PropertyGroup):
     # -- coverage (cached by the analyze operator, §16) ---------------------
     coverage_status: StringProperty(name="Coverage", default="", options={"HIDDEN"})
     coverage_matrix: StringProperty(name="Visibility", default="", options={"HIDDEN"})
+
+    # -- corner detection (cached by the detect operator, §16.7) ------------
+    corners_status: StringProperty(name="Corners", default="", options={"HIDDEN"})
 
     # -- helpers ------------------------------------------------------------
     def field_spec(self):

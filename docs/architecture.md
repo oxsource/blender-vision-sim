@@ -31,7 +31,7 @@ addons/opencv_camera/
 │   │   ├── base.py          SceneDefinition / has_scene / root / ScenePanelMixin
 │   │   ├── debounce.py      通用去抖定时器
 │   │   ├── camera_scene.py  Camera Scene（原 bl/scene_builder.py）
-│   │   └── avm_scene/       AVM Scene（properties/builder/controller/io/coverage/operators/ui）
+│   │   └── avm_scene/       AVM Scene（properties/builder/controller/io/coverage/corners/falcon/operators/ui）
 │   └── scene_builder.py   兼容转发 → scenes.camera_scene（保留一个版本）
 ├── shaders/opencv_camera.osl   权威着色器源文件
 ├── presets/avm_scene/default.json    AVM 内置默认参数（离线反算产物）
@@ -164,7 +164,7 @@ bl/scenes/
 ├── view.py            ViewSpec / 包围盒 / 默认 3/4 视角取景 + opencv_cam.frame_view
 ├── debounce.py        通用去抖定时器（多场景共用）
 ├── camera_scene.py    Camera Scene（原 bl/scene_builder.py，命名不变；§17.5）
-└── avm_scene/         AVM Scene（properties / builder / controller / io / coverage / operators / ui）
+└── avm_scene/         AVM Scene（properties / builder / controller / io / coverage / corners / falcon / operators / ui）
 ```
 
 约定：

@@ -250,12 +250,14 @@ def _read_intrinsics(camera) -> tuple:
 # ---------------------------------------------------------------------------
 # four-camera render export
 # ---------------------------------------------------------------------------
-def render_cameras(context, settings, directory: str, samples: int = 64) -> List[str]:
+def render_cameras(context, settings, directory: str, samples: int = 64,
+                   names=None) -> List[str]:
     """Render every enabled camera to ``<directory>/<name>.png`` at its own size.
 
-    Each camera is rendered with its own ``K`` / ``D`` and output resolution; the
-    scene render settings are saved and restored, so the export never changes the
-    user's setup.
+    ``names`` limits the render to a subset (used by the per-camera corner
+    detector); the default is all four.  Each camera is rendered with its own
+    ``K`` / ``D`` and output resolution; the scene render settings are saved and
+    restored, so the export never changes the user's setup.
 
     Shadows from any light *other* than ``AVM_Sun`` are muted for the duration:
     a cast shadow is a dark ground patch that a black-region corner detector can
@@ -284,7 +286,7 @@ def render_cameras(context, settings, directory: str, samples: int = 64) -> List
         scene.cycles.samples = int(samples)
         for light, _ in other_lights:
             light.data.use_shadow = False
-        for name in avm_layout.CAMERAS:
+        for name in (names if names is not None else avm_layout.CAMERAS):
             entry = settings.camera(name)
             if entry is None or not entry.enable:
                 continue

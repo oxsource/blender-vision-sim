@@ -14,8 +14,10 @@ import bmesh
 import json
 import math
 import os
+import re
 import sys
 import tempfile
+import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "addons"))
@@ -919,8 +921,16 @@ def test_avm_scene_builder():
     check("front-left block centre",
           approx(block.location.x, -1.9, 1e-6) and approx(block.location.y, 3.7, 1e-6),
           f"{tuple(round(v, 4) for v in block.location)}")
-    check("block is a real quad",
-          len(block.data.polygons) == 1 and len(block.data.vertices) == 4)
+    check("block is a black quad with a white border",
+          len(block.data.polygons) == 5 and len(block.data.vertices) == 8
+          and len(block.data.materials) == 2,
+          f"{len(block.data.polygons)} faces / {len(block.data.materials)} materials")
+    check("block border is 0.2 m wide",
+          approx(block.dimensions.x, 1.0 + 2 * 0.2, 1e-6)
+          and approx(block.dimensions.y, 1.0 + 2 * 0.2, 1e-6)
+          and sum(1 for p in block.data.polygons if p.material_index == 0) == 1
+          and sum(1 for p in block.data.polygons if p.material_index == 1) == 4,
+          f"{tuple(round(v, 4) for v in block.dimensions)}")
 
     # editing only schedules the debounced rebuild (a no-op in background)
     revision = settings.revision
@@ -1134,11 +1144,11 @@ def test_avm_coverage_and_export():
     for name in ("front", "back", "left", "right"):
         cam_settings = bpy.data.objects[f"AVM_Cam_{name.capitalize()}"].data.opencv_cam
         cam_settings.output.mode = "custom"
-        cam_settings.output.width, cam_settings.output.height = 64, 48
+        cam_settings.output.width, cam_settings.output.height = 256, 192
     tmp = tempfile.mkdtemp(prefix="avm_mat_")
     check("export materials",
           bpy.ops.opencv_cam.avm_export_materials(
-              filepath=os.path.join(tmp, "avm_scene.json"), samples=1) == {"FINISHED"})
+              filepath=os.path.join(tmp, "avm_scene.json"), samples=4) == {"FINISHED"})
     for expected in ("front.png", "back.png", "left.png", "right.png",
                      "plane_scene.json", "avm_scene.json", "coverage.json",
                      "vehicle_avm_scene.json", "scene_spec.md"):
@@ -1146,10 +1156,10 @@ def test_avm_coverage_and_export():
 
     with open(os.path.join(tmp, "vehicle_avm_scene.json"), encoding="utf-8") as handle:
         skeleton = json.load(handle)
-    check("filament skeleton has points_3d and empty points_2d",
+    check("filament skeleton has points_3d and detected points_2d",
           len(skeleton["cameras"]) == 4
           and len(skeleton["cameras"][0]["points_3d"]) == 8
-          and skeleton["cameras"][0]["points_2d"] == [])
+          and len(skeleton["cameras"][0]["points_2d"]) == 8)
     with open(os.path.join(tmp, "coverage.json"), encoding="utf-8") as handle:
         report = json.load(handle)
     check("coverage report has footprints and visibility",
@@ -1158,6 +1168,173 @@ def test_avm_coverage_and_export():
     check("spec mentions the field",
           "AVM Scene specification" in open(os.path.join(tmp, "scene_spec.md"),
                                            encoding="utf-8").read())
+
+
+def test_avm_corner_detection():
+    """Detect the block corners in the rendered images and store them as points_2d."""
+    from opencv_camera.bl.scenes.avm_scene import io as io_mod
+    from opencv_camera.core.scenes import avm_coverage, avm_layout
+
+    scene = setup_scene(resolution=256, samples=4)
+    clear_scene()
+    scene = setup_scene(resolution=256, samples=4)
+    check("add AVM scene", bpy.ops.opencv_cam.avm_add_scene() == {"FINISHED"})
+    settings = scene.avm_scene
+
+    for name in ("front", "back", "left", "right"):
+        cam_settings = bpy.data.objects[f"AVM_Cam_{name.capitalize()}"].data.opencv_cam
+        cam_settings.output.mode = "custom"
+        cam_settings.output.width, cam_settings.output.height = 256, 192
+
+    check("detect corners operator",
+          bpy.ops.opencv_cam.avm_detect_corners(samples=16) == {"FINISHED"})
+    check("corners status set", bool(settings.corners_status), settings.corners_status)
+
+    field = settings.field_spec()
+    records = {record["name"]: record for record in io_mod.camera_records(settings)}
+    for name in ("front", "back", "left", "right"):
+        entry = settings.camera(name)
+        check(f"{name}: 8 points_2d detected", entry.points_2d_ok, settings.corners_status)
+        if not entry.points_2d_ok:
+            continue
+        check(f"{name}: sub-pixel detection", entry.points_2d_error < 1.5,
+              f"rms {entry.points_2d_error:.2f} px")
+        detected = np.array(entry.points_2d, dtype=float).reshape(8, 2)
+        camera = bpy.data.objects[f"AVM_Cam_{name.capitalize()}"]
+        intrinsics = apply_mod.effective_intrinsics(camera.data.opencv_cam, 256, 192)
+        distortion = camera.data.opencv_cam.core_distortion()
+        matrix = avm_coverage.object_matrix(records[name]["location"],
+                                            records[name]["rotation"])
+        projected = np.array([
+            avm_coverage.project_ground_point((x, y), intrinsics, distortion, matrix)
+            for x, y, _ in avm_layout.points(name, field)])
+        error = np.hypot(*(detected - projected).T)
+        check(f"{name}: points_2d match the render projection",
+              float(error.max()) < 3.0, f"max {float(error.max()):.2f} px")
+
+    tmp = tempfile.mkdtemp(prefix="avm_corners_")
+    check("export materials detects corners",
+          bpy.ops.opencv_cam.avm_export_materials(
+              filepath=os.path.join(tmp, "avm_scene.json"), samples=4) == {"FINISHED"})
+    with open(os.path.join(tmp, "vehicle_avm_scene.json"), encoding="utf-8") as handle:
+        skeleton = json.load(handle)
+    check("exported points_2d are filled",
+          all(len(camera["points_2d"]) == 8 for camera in skeleton["cameras"]))
+
+
+def test_avm_corner_single_and_cache():
+    """Per-camera detection, the annotated image and the revision cache."""
+    from opencv_camera.bl.scenes.avm_scene import corners as corners_mod
+
+    scene = setup_scene(resolution=256, samples=8)
+    clear_scene()
+    scene = setup_scene(resolution=256, samples=8)
+    check("add AVM scene", bpy.ops.opencv_cam.avm_add_scene() == {"FINISHED"})
+    settings = scene.avm_scene
+    for name in ("front", "back", "left", "right"):
+        cam_settings = bpy.data.objects[f"AVM_Cam_{name.capitalize()}"].data.opencv_cam
+        cam_settings.output.mode = "custom"
+        cam_settings.output.width, cam_settings.output.height = 256, 192
+
+    check("detect one camera",
+          bpy.ops.opencv_cam.avm_detect_camera(name="front", samples=8) == {"FINISHED"})
+    entry = settings.camera("front")
+    check("single camera detected 8 points",
+          entry.points_2d_ok and entry.points_2d_error < 1.5,
+          f"rms {entry.points_2d_error:.2f} px")
+    image = bpy.data.images.get("AVM_Corners_Front")
+    check("annotated image created",
+          image is not None and tuple(image.size) == (256, 192),
+          str(None if image is None else tuple(image.size)))
+    check("the raw render is cached for Export Falcon",
+          corners_mod.is_cached(settings, "front")
+          and os.path.exists(corners_mod.raw_image_path("front")))
+
+    before = list(entry.points_2d)
+    bpy.ops.opencv_cam.avm_detect_camera(name="front", samples=8)
+    check("unchanged inputs reuse the cache",
+          "cached" in settings.corners_status and list(entry.points_2d) == before,
+          settings.corners_status)
+
+    bpy.ops.opencv_cam.avm_detect_camera(name="front", samples=8, use_cache=False)
+    check("use_cache=False re-detects", "cached" not in settings.corners_status,
+          settings.corners_status)
+
+    settings.core_w = 300.0
+    bpy.ops.opencv_cam.avm_rebuild()
+    bpy.ops.opencv_cam.avm_detect_camera(name="front", samples=8)
+    check("a rebuild invalidates the cache",
+          "cached" not in settings.corners_status, settings.corners_status)
+
+    check("show corners operator",
+          bpy.ops.opencv_cam.avm_show_corners(name="front") == {"FINISHED"})
+
+    check("clear one camera",
+          bpy.ops.opencv_cam.avm_clear_camera(name="front") == {"FINISHED"})
+    check("clear drops the detection and the caches",
+          not entry.points_2d_ok
+          and bpy.data.images.get("AVM_Corners_Front") is None
+          and not os.path.exists(corners_mod.raw_image_path("front")),
+          settings.corners_status)
+
+
+def test_avm_export_falcon():
+    """Export Falcon packs the four original images and the full config."""
+    scene = setup_scene(resolution=256, samples=8)
+    clear_scene()
+    scene = setup_scene(resolution=256, samples=8)
+    check("add AVM scene", bpy.ops.opencv_cam.avm_add_scene() == {"FINISHED"})
+    settings = scene.avm_scene
+    for name in ("front", "back", "left", "right"):
+        cam_settings = bpy.data.objects[f"AVM_Cam_{name.capitalize()}"].data.opencv_cam
+        cam_settings.output.mode = "custom"
+        cam_settings.output.width, cam_settings.output.height = 256, 192
+
+    tmp = tempfile.mkdtemp(prefix="avm_falcon_")
+    path = os.path.join(tmp, "vehicle_avm.zip")
+    check("export falcon",
+          bpy.ops.opencv_cam.avm_export_falcon(filepath=path, samples=8) == {"FINISHED"})
+    check("falcon archive written", os.path.exists(path), path)
+    with zipfile.ZipFile(path) as archive:
+        names = sorted(archive.namelist())
+        check("falcon archive contents",
+              names == ["back.png", "back_annotated.png", "front.png",
+                        "front_annotated.png", "left.png", "left_annotated.png",
+                        "right.png", "right_annotated.png", "vehicle_avm.json"],
+              str(names))
+        raw_config = archive.read("vehicle_avm.json").decode("utf-8")
+        config = json.loads(raw_config)
+    check("falcon json keeps scalar arrays on one line",
+          '"D": [0.0847' in raw_config
+          and not [line for line in raw_config.splitlines()
+                   if re.fullmatch(r"\s*-?\d+(?:\.\d+)?,?", line)],
+          str([line.strip() for line in raw_config.splitlines()
+               if re.fullmatch(r"\s*-?\d+(?:\.\d+)?,?", line)][:3]))
+    check("falcon config cameras",
+          [camera["name"] for camera in config["cameras"]]
+          == ["front", "back", "left", "right"])
+    check("falcon config points_2d and input size",
+          all(len(camera["points_2d"]) == 8 and camera["input_size"] == [256, 192]
+              for camera in config["cameras"]),
+          str([(camera["name"], len(camera["points_2d"]), camera["input_size"])
+               for camera in config["cameras"]]))
+    check("falcon points_2d are in the rendered image pixels",
+          all(0.0 <= u <= 256.0 and 0.0 <= v <= 192.0
+              for camera in config["cameras"] for u, v in camera["points_2d"]),
+          str([[round(u), round(v)] for u, v in config["cameras"][0]["points_2d"]]))
+    check("falcon K matches the rendered resolution",
+          all(abs(camera["K"][0][0] - 63.55) < 0.1 for camera in config["cameras"]),
+          str(config["cameras"][0]["K"][0][0]))
+    check("falcon config has the app assets",
+          config["name"] == "filament_avm" and "steering_line" in config
+          and "mask_overlay" in config and "bev_coord" in config
+          and len(config["steering_line"]) == 14)
+
+    # a second export reuses the cached renders (no re-detect needed)
+    second = os.path.join(tmp, "again.zip")
+    check("export falcon reuses the cache",
+          bpy.ops.opencv_cam.avm_export_falcon(filepath=second, samples=8) == {"FINISHED"}
+          and os.path.exists(second))
 
 
 def test_shader_force_compile():
@@ -1215,7 +1392,7 @@ def test_avm_visibility_and_logo():
     logo = bpy.data.objects.get("AVM_Label_Logo")
     check("empty logo_image falls back to the bundled logo", logo is not None)
     check("bundled logo is square (750x750)",
-          abs(logo.dimensions.x - 1.2) < 1e-4 and abs(logo.dimensions.y - 1.2) < 1e-4,
+          abs(logo.dimensions.x - 1.0) < 1e-4 and abs(logo.dimensions.y - 1.0) < 1e-4,
           f"{tuple(round(v, 3) for v in logo.dimensions)}")
 
     settings.logo_enabled = False
@@ -1235,7 +1412,7 @@ def test_avm_visibility_and_logo():
           any(node.type == "TEX_COORD" for node in logo.data.materials[0].node_tree.nodes))
     # preview_example.png is 384x288 (4:3): the plane must follow, not be square
     check("logo keeps the image aspect ratio",
-          abs(logo.dimensions.x - 1.2) < 1e-4 and abs(logo.dimensions.y - 0.9) < 1e-4,
+          abs(logo.dimensions.x - 1.0) < 1e-4 and abs(logo.dimensions.y - 0.75) < 1e-4,
           f"{tuple(round(v, 3) for v in logo.dimensions)}")
     check("logo sits before the title", logo.location.x < title.location.x,
           f"logo {logo.location.x:.2f} title {title.location.x:.2f}")
@@ -1746,6 +1923,9 @@ def main():
         test_avm_panels,
         test_avm_io,
         test_avm_coverage_and_export,
+        test_avm_corner_detection,
+        test_avm_corner_single_and_cache,
+        test_avm_export_falcon,
         test_avm_visibility_and_logo,
         test_scene_default_view,
         test_shader_force_compile,

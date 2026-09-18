@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import sys
 import tempfile
 
@@ -16,7 +17,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "addons", "opencv_camera"))
 
 from core import calibration_io, camera_model, transform  # noqa: E402
-from core.scenes import avm_coverage, avm_layout  # noqa: E402
+from core.scenes import avm_coverage, avm_falcon, avm_layout  # noqa: E402
 
 FAILURES = []
 
@@ -280,6 +281,13 @@ def test_avm_coverage():
           avm_coverage.covers_ground_point((0.0, 3.7), intr, dist, matrix))
     check("front camera does not cover behind the car",
           not avm_coverage.covers_ground_point((0.0, -3.7), intr, dist, matrix))
+    uv = avm_coverage.project_ground_point((0.0, 3.7), intr, dist, matrix)
+    back = (avm_coverage.ground_point(uv[0], uv[1], intr, dist, matrix)
+            if uv is not None else None)
+    check("ground point projection round trip",
+          uv is not None and back is not None
+          and abs(back[0]) < 1e-6 and abs(back[1] - 3.7) < 1e-6,
+          f"{uv} -> {back}")
     check("camera centre round trip",
           all(abs(a - b) < 1e-9 for a, b in
               zip(avm_coverage.camera_centre(matrix), cameras[0]["location"])))
@@ -383,11 +391,79 @@ cam0:
     check("yaml round trip", approx(reloaded.intrinsics.fy, 500.0) and approx(reloaded.distortion.k2, 0.03))
 
 
+def test_avm_falcon_config():
+    """The Falcon config structure mirrors mediapipe_avm_calib JsonGenerator."""
+    preset = avm_layout.load_preset()
+    field = avm_layout.field_from_preset(preset)
+    cameras = avm_layout.cameras_from_preset(preset)
+    points_2d = {camera["name"]: [[100.0 + index, 200.0 + index]
+                                  for index in range(8)] for camera in cameras}
+    input_sizes = {camera["name"]: (1280, 960) for camera in cameras}
+    config = avm_falcon.build_config(field, cameras, points_2d, input_sizes,
+                                     "2026-01-01 00:00:00")
+
+    check("falcon top-level keys",
+          list(config) == ["comment", "name", "glb_file", "ibl_file",
+                           "filamat_path", "vehicle_model", "mask_overlay",
+                           "cameras", "bev_coord", "orbit_pitchs", "orbit_yaw",
+                           "orbit_radius", "orbit_mouse_sens", "orbit_fov_y",
+                           "orbit_near", "orbit_far", "steering_line"],
+          str(list(config)))
+    check("falcon assets", config["name"] == "filament_avm"
+          and config["glb_file"].endswith(".glb")
+          and config["vehicle_model"] == "vehicle")
+    check("falcon mask overlay",
+          config["mask_overlay"] == {
+              "refer": [1.4, 3.2, 15.0], "padding": 0.2, "scale": 20},
+          str(config["mask_overlay"]))
+    check("falcon bev coord uses the scene width",
+          config["bev_coord"] == [-4.8, 4.8, -4.8, 4.8], str(config["bev_coord"]))
+
+    streams = config["cameras"]
+    check("falcon has four cameras",
+          [stream["name"] for stream in streams] == ["front", "back", "left", "right"])
+    front = streams[0]
+    check("falcon stream keys",
+          list(front) == ["name", "points_2d", "points_3d", "K", "D", "input_size",
+                          "model_scene", "bev_bound", "orbit", "enable", "ba_opt"],
+          str(list(front)))
+    check("falcon stream payload",
+          len(front["points_2d"]) == 8 and len(front["points_3d"]) == 8
+          and front["input_size"] == [1280, 960] and front["enable"] is True
+          and front["model_scene"] == "NurbsPath.001"
+          and front["bev_bound"] == [-15.0, 15.0, 0.0, 15.0]
+          and front["ba_opt"] is False)
+    check("falcon points_3d match the contract",
+          front["points_3d"] == avm_layout.points("front", field))
+    fx, fy, cx, cy = cameras[0]["K"]
+    check("falcon K is the 3x3 matrix",
+          front["K"] == [[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]])
+    check("falcon side cameras ba_opt",
+          streams[2]["ba_opt"] is True and streams[3]["ba_opt"] is True)
+    check("falcon camera without points is disabled",
+          avm_falcon.build_config(field, cameras, {}, input_sizes,
+                                  "x")["cameras"][0]["enable"] is False)
+    check("falcon steering line",
+          config["steering_line"]["wheel_base"] == 3.2
+          and config["steering_line"]["segments"] == 64
+          and config["steering_line"]["back_prewarp"] is True)
+
+    text = avm_falcon.dumps(config)
+    check("falcon json parses back", json.loads(text) == config)
+    check("falcon json keeps scalar arrays on one line",
+          not any(re.fullmatch(r"\s*-?\d+(?:\.\d+)?,?", line)
+                  for line in text.splitlines()),
+          str([line.strip() for line in text.splitlines()
+               if re.fullmatch(r"\s*-?\d+(?:\.\d+)?,?", line)][:3]))
+    check("falcon json wraps the outer points_2d",
+          '"points_2d": [' in text and "[\n" in text)
+
+
 def main():
     for test in (test_intrinsics, test_distortion_roundtrip, test_fisheye, test_projection,
                  test_transform, test_lens_conversion, test_bundled_preset,
                  test_filament_avm_config, test_avm_layout, test_avm_coverage,
-                 test_calibration_io):
+                 test_avm_falcon_config, test_calibration_io):
         test()
     print()
     if FAILURES:

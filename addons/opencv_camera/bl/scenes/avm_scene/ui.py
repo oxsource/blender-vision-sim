@@ -80,6 +80,20 @@ def _cameras(layout, settings) -> None:
         column.use_property_split = True
         column.prop(record, "location")
         column.prop(record, "rotation")
+        detect = box.row(align=True)
+        button = detect.operator("opencv_cam.avm_detect_camera",
+                                 text="Detect Corners", icon="TRACKER")
+        button.name = record.name
+        view = detect.operator("opencv_cam.avm_show_corners", text="", icon="IMAGE_DATA")
+        view.name = record.name
+        clear = detect.operator("opencv_cam.avm_clear_camera", text="", icon="X")
+        clear.name = record.name
+        if record.points_2d_ok:
+            detect.label(text=f"{record.points_2d_error:.2f} px", icon="CHECKMARK")
+            values = list(record.points_2d)
+            grid = box.grid_flow(columns=2, align=True, even_columns=True)
+            for index in range(8):
+                grid.label(text=f"P{index} {values[2 * index]:.1f},{values[2 * index + 1]:.1f}")
     layout.label(text="Intrinsics live in CV Intrinsics", icon="INFO")
 
 
@@ -96,13 +110,10 @@ def _ground_text(layout, settings) -> None:
     column = layout.column(align=True)
     column.use_property_split = True
     column.label(text="Ground text")
-    column.prop(settings, "ground_title")
-    column.prop(settings, "label_font")
     column.prop(settings, "logo_enabled")
     row = column.row()
     row.enabled = settings.logo_enabled
-    row.prop(settings, "logo_image")
-    column.prop(settings, "logo_size")
+    row.prop(settings, "logo_size")
 
 
 def _layers(layout, settings) -> None:
@@ -139,6 +150,7 @@ def _io_section(layout, settings) -> None:
     row.operator("opencv_cam.avm_export_params", icon="FILE_TICK")
     row.operator("opencv_cam.avm_import_params", icon="FILEBROWSER")
     box.operator("opencv_cam.avm_render_cameras", icon="RENDER_STILL")
+    box.operator("opencv_cam.avm_export_falcon", text="Export Falcon", icon="EXPORT")
     if settings.io_status:
         box.label(text=settings.io_status)
 
@@ -200,6 +212,8 @@ class OPENCV_CAM_PT_avm_scene_view3d(_AVMPanel, bpy.types.Panel):
         row.operator("opencv_cam.avm_reset_defaults", icon="LOOP_BACK")
         layout.operator("opencv_cam.frame_view", text="Frame View",
                         icon="VIEW_PERSPECTIVE").scene_id = DEFINITION.id
+        layout.operator("opencv_cam.avm_export_falcon",
+                        text="Export Falcon", icon="EXPORT")
 
 
 _CLASSES = (OPENCV_CAM_PT_avm_scene, OPENCV_CAM_PT_avm_scene_view3d)

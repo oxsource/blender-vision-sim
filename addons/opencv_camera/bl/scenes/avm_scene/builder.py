@@ -70,6 +70,11 @@ CAMERA_SUFFIX = {"front": "Front", "back": "Back", "left": "Left", "right": "Rig
 #: stay at ``z ~ 0``, so the two never share a plane and cannot z-fight.
 GROUND_DROP = 0.002
 
+#: White frame drawn around each black calibration block [m].  The black face
+#: keeps the nominal ``corner`` size (the ``points_3d`` contract depends on it);
+#: the frame only extends outward, so the calibration corners never move.
+BLOCK_BORDER = 0.2
+
 
 # ---------------------------------------------------------------------------
 # meshes (generated at real size; object scale stays 1)
@@ -79,6 +84,29 @@ def _quad_mesh(name: str, width: float, height: float) -> bpy.types.Mesh:
     hw, hh = width * 0.5, height * 0.5
     mesh.from_pydata([(-hw, -hh, 0.0), (hw, -hh, 0.0),
                       (hw, hh, 0.0), (-hw, hh, 0.0)], [], [(0, 1, 2, 3)])
+    mesh.update()
+    return mesh
+
+
+def _block_mesh(name: str, inner_w: float, inner_h: float,
+                border: float) -> bpy.types.Mesh:
+    """A black calibration square with a white frame around it.
+
+    The black face keeps the block's nominal size (the ``points_3d`` contract
+    and the corner detector depend on it); the frame extends ``border`` metres
+    outward on all four sides, so the calibration corners never move.  The two
+    regions meet edge to edge and never overlap, so they cannot z-fight.
+    """
+    mesh = bpy.data.meshes.new(name)
+    hw, hh = inner_w * 0.5, inner_h * 0.5
+    ow, oh = hw + border, hh + border
+    verts = [(-hw, -hh, 0.0), (hw, -hh, 0.0), (hw, hh, 0.0), (-hw, hh, 0.0),
+             (-ow, -oh, 0.0), (ow, -oh, 0.0), (ow, oh, 0.0), (-ow, oh, 0.0)]
+    faces = [(0, 1, 2, 3),
+             (4, 5, 1, 0), (5, 6, 2, 1), (6, 7, 3, 2), (7, 4, 0, 3)]
+    mesh.from_pydata(verts, [], faces)
+    for polygon in mesh.polygons[1:]:
+        polygon.material_index = 1
     mesh.update()
     return mesh
 
@@ -885,6 +913,8 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
     # the black-region corner detector, and black blocks need contrast
     ground_material = _principled("AVM_Ground_Mat", (0.62, 0.62, 0.60, 1.0), 0.9)
     block_material = _principled("AVM_Block_Mat", (0.02, 0.02, 0.02, 1.0), 0.9)
+    block_border_material = _principled(
+        "AVM_Block_Border_Mat", (0.95, 0.95, 0.95, 1.0), 0.9)
 
     # ground ---------------------------------------------------------------
     ground = bpy.data.objects.get(GROUND_NAME)
@@ -921,9 +951,9 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
         block = bpy.data.objects.get(name)
         if block is None:
             block = _new_mesh_object(name, _quad_mesh(name, 1.0, 1.0), target)
-        _replace_mesh(block, _quad_mesh(name, x1 - x0, y1 - y0))
+        mesh = _block_mesh(name, x1 - x0, y1 - y0, BLOCK_BORDER)
+        _assign_mesh(block, mesh, (block_material, block_border_material))
         block.location = (0.5 * (x0 + x1), 0.5 * (y0 + y1), settings.block_lift)
-        _assign(block, block_material)
         _parent(block, root)
         block.hide_render = not settings.show_blocks
         block_objects.append(block)

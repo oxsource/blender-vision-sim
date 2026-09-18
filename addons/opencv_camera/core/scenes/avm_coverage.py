@@ -34,8 +34,8 @@ __all__ = [
     "Point", "Footprint", "CoverageReport",
     "euler_matrix", "object_matrix", "camera_centre", "rotation_of",
     "image_border_points", "valid_circle_points", "ground_point",
-    "covers_ground_point", "footprint", "footprints", "point_in_polygon",
-    "polygon_area", "coverage_report", "visibility_matrix",
+    "project_ground_point", "covers_ground_point", "footprint", "footprints",
+    "point_in_polygon", "polygon_area", "coverage_report", "visibility_matrix",
 ]
 
 Point = Tuple[float, float]
@@ -153,6 +153,31 @@ def ground_point(u: float, v: float, intr: camera_model.Intrinsics,
     return (centre[0] + t * direction[0], centre[1] + t * direction[1])
 
 
+def project_ground_point(point: Point, intr: camera_model.Intrinsics,
+                         dist: camera_model.Distortion,
+                         matrix: Sequence[float]) -> Optional[Point]:
+    """A ground point -> image pixel ``(u, v)``, or ``None`` if not projectable.
+
+    The exact inverse of :func:`ground_point`; used to seed the corner detector
+    (and the visibility matrix).
+    """
+    centre = camera_centre(matrix)
+    world = (point[0] - centre[0], point[1] - centre[1], -centre[2])
+    if world[2] >= -1e-9:
+        return None
+    local = transform.mat3_vec(transform.mat3_transpose(rotation_of(matrix)), world)
+    x, y, z = local[0], -local[1], -local[2]  # Blender local -> OpenCV camera
+    if z <= 0.0:
+        return None
+    try:
+        u, v, _ = camera_model.project_point(x, y, z, intr, dist)
+    except (ValueError, ZeroDivisionError):
+        return None
+    if not (math.isfinite(u) and math.isfinite(v)):
+        return None
+    return u, v
+
+
 def covers_ground_point(point: Point, intr: camera_model.Intrinsics,
                         dist: camera_model.Distortion,
                         matrix: Sequence[float]) -> bool:
@@ -162,21 +187,10 @@ def covers_ground_point(point: Point, intr: camera_model.Intrinsics,
     horizon-cut views): project the ground point back through the fisheye model
     and check the pixel lands inside the image.
     """
-    centre = camera_centre(matrix)
-    world = (point[0] - centre[0], point[1] - centre[1], -centre[2])
-    if world[2] >= -1e-9:
+    uv = project_ground_point(point, intr, dist, matrix)
+    if uv is None:
         return False
-    local = transform.mat3_vec(transform.mat3_transpose(rotation_of(matrix)), world)
-    x, y, z = local[0], -local[1], -local[2]  # Blender local -> OpenCV camera
-    if z <= 0.0:
-        return False
-    try:
-        u, v, _ = camera_model.project_point(x, y, z, intr, dist)
-    except (ValueError, ZeroDivisionError):
-        return False
-    if not (math.isfinite(u) and math.isfinite(v)):
-        return False
-    return 0.0 <= u <= intr.width and 0.0 <= v <= intr.height
+    return 0.0 <= uv[0] <= intr.width and 0.0 <= uv[1] <= intr.height
 
 
 # ---------------------------------------------------------------------------

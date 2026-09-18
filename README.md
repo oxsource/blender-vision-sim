@@ -54,7 +54,7 @@ blender-vision-sim/
 │   │   └── scenes/              # 场景框架 + 每个场景一个模块/包
 │   │       ├── base.py / view.py / debounce.py  # SceneDefinition、默认 3/4 视角、通用去抖
 │   │       ├── camera_scene.py          # 原 bl/scene_builder.py
-│   │       └── avm_scene/               # AVM Scene（properties/builder/controller/io/coverage/operators/ui）
+│   │       └── avm_scene/               # AVM Scene（properties/builder/controller/io/coverage/corners/falcon/operators/ui）
 │   ├── presets/avm_scene/default.json   # AVM 内置默认参数（离线反算产物）
 │   └── shaders/*.osl            # 随插件分发的 OSL 源文件（权威副本）
 ├── docs/                        # 架构、相机模型、路线图
@@ -231,9 +231,16 @@ Object Data Properties
 - **本场景不做位姿解算**：只摆放、渲染、导出；PnP 只在离线脚本里跑一次用来产出默认预设。
 - **覆盖评估**：`[Analyze Coverage]` 给出每台相机的贴地覆盖曲线、并集/重叠/盲区、
   场地覆盖率，以及「哪个标定块被哪几台相机看到」的可见性矩阵。
+- **角点检测**：每台相机的条目有 `[Detect Corners]`（单视图，numpy 亚像素，无 cv2 依赖），
+  生成标注图（绿点=角点+序号，红点=投影）可用 `[Show Corners]` 在图像编辑器查看；
+  输入不变时自动命中缓存不重渲染。`Export Materials` 会自动带上 `points_2d`。
 - **素材导出**：`[Export Materials]` 一次产出 4 张相机图 + `plane_scene.json` +
-  `avm_scene.json` + `coverage.json` + `vehicle_avm_*.json`（骨架，`points_2d` 留给外部检测）+
+  `avm_scene.json` + `coverage.json` + `vehicle_avm_*.json`（含检测出的 `points_2d`）+
   `scene_spec.md`。
+- **Export Falcon**：`[Export Falcon]`（N 面板 / Scene 面板）导出最终标定配置——把 4 张原始图
+  （`front/back/left/right.png`）、4 张角点标注图（`*_annotated.png`）和 `vehicle_avm.json`
+  打包成一个 **zip**，字段/顺序对齐 `mediapipe_avm_calib` 的 `JsonGenerator`（数组尽量一行）；
+  已检测过的相机会复用缓存渲染图，不重复渲染。每台相机的 `[X]` 可单独清除检测与缓存。
 - 完整设计见 [`docs/avm-scene.md`](docs/avm-scene.md)（含与 HTML 工具 / `mediapipe_avm_calib`
   的字段对齐、场景目录结构与新增场景的方法）。
 

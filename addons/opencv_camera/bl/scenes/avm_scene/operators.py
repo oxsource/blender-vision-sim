@@ -9,13 +9,13 @@ from __future__ import annotations
 import os
 
 import bpy
-from bpy.props import BoolProperty, EnumProperty, StringProperty
+from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from ....core.scenes import avm_layout
 from ..base import has_scene
 from .. import view as view_mod
-from . import DEFINITION, builder, controller, io as io_mod, properties
+from . import DEFINITION, builder, controller, falcon, io as io_mod, properties
 
 
 def _scene(context):
@@ -334,6 +334,96 @@ class OPENCV_CAM_OT_avm_analyze_coverage(_AVMSceneOperator, bpy.types.Operator):
         return {"FINISHED"}
 
 
+class OPENCV_CAM_OT_avm_detect_corners(_AVMSceneOperator, bpy.types.Operator):
+    """Render every enabled camera and detect the block corners as points_2d"""
+
+    bl_idname = "opencv_cam.avm_detect_corners"
+    bl_label = "Detect Corners"
+    bl_options = {"REGISTER", "UNDO"}
+
+    samples: bpy.props.IntProperty(name="Samples", default=64, min=1, max=4096)
+
+    def execute(self, context):
+        from . import corners
+        settings = _settings(context)
+        try:
+            _, status = corners.detect_corners(context, settings, samples=self.samples)
+        except Exception as exc:
+            settings.corners_status = f"error: {exc}"
+            self.report({"ERROR"}, f"{type(exc).__name__}: {exc}")
+            return {"CANCELLED"}
+        settings.corners_status = status or "no enabled camera"
+        self.report({"INFO"}, settings.corners_status)
+        return {"FINISHED"}
+
+
+class OPENCV_CAM_OT_avm_detect_camera(_AVMSceneOperator, bpy.types.Operator):
+    """Detect the block corners in one camera's rendered image (cached)"""
+
+    bl_idname = "opencv_cam.avm_detect_camera"
+    bl_label = "Detect Corners"
+    bl_options = {"REGISTER", "UNDO"}
+
+    name: EnumProperty(name="Camera", items=properties.CAMERA_ITEMS)
+    samples: IntProperty(name="Samples", default=64, min=1, max=4096)
+    use_cache: BoolProperty(
+        name="Use Cache", default=True,
+        description="Reuse the previous detection when nothing that affects the "
+                    "image has changed")
+
+    def execute(self, context):
+        from . import corners
+        settings = _settings(context)
+        entry, status = corners.detect_one(context, settings, self.name,
+                                           samples=self.samples, use_cache=self.use_cache)
+        settings.corners_status = status
+        if entry is not None:
+            corners.show_image(context, corners.corner_image(self.name))
+        self.report({"INFO"}, status)
+        return {"FINISHED"}
+
+
+class OPENCV_CAM_OT_avm_show_corners(_AVMSceneOperator, bpy.types.Operator):
+    """Show the annotated corner image of one camera in an Image Editor"""
+
+    bl_idname = "opencv_cam.avm_show_corners"
+    bl_label = "Show Corners"
+    bl_options = {"REGISTER"}
+
+    name: EnumProperty(name="Camera", items=properties.CAMERA_ITEMS)
+
+    def execute(self, context):
+        from . import corners
+        image = corners.corner_image(self.name)
+        if image is None:
+            self.report({"WARNING"}, "detect the corners first")
+            return {"CANCELLED"}
+        if corners.show_image(context, image):
+            self.report({"INFO"}, f"showing {image.name}")
+        else:
+            self.report({"INFO"},
+                        f"{image.name} is loaded; open an Image Editor to view it")
+        return {"FINISHED"}
+
+
+class OPENCV_CAM_OT_avm_clear_camera(_AVMSceneOperator, bpy.types.Operator):
+    """Clear one camera's corner detection (points, image and cached render)"""
+
+    bl_idname = "opencv_cam.avm_clear_camera"
+    bl_label = "Clear Corners"
+    bl_options = {"REGISTER", "UNDO"}
+
+    name: EnumProperty(name="Camera", items=properties.CAMERA_ITEMS)
+
+    def execute(self, context):
+        from . import corners
+        settings = _settings(context)
+        status = corners.clear(settings, self.name)
+        settings.corners_status = status
+        self.report({"INFO"}, status)
+        return {"FINISHED"}
+
+
 class OPENCV_CAM_OT_avm_export_materials(_AVMSceneOperator, bpy.types.Operator, ExportHelper):
     """Render the four cameras and write the parameters + coverage report"""
 
@@ -364,6 +454,35 @@ class OPENCV_CAM_OT_avm_export_materials(_AVMSceneOperator, bpy.types.Operator, 
         return {"FINISHED"}
 
 
+class OPENCV_CAM_OT_avm_export_falcon(_AVMSceneOperator, bpy.types.Operator, ExportHelper):
+    """Render (or reuse) the 4 camera images and pack them + the Falcon config"""
+
+    bl_idname = "opencv_cam.avm_export_falcon"
+    bl_label = "Export Falcon"
+    bl_options = {"REGISTER"}
+
+    filename_ext = ".zip"
+    filter_glob: StringProperty(default="*.zip", options={"HIDDEN"})
+    samples: IntProperty(name="Samples", default=64, min=1, max=4096)
+
+    def invoke(self, context, event):
+        if not self.filepath:
+            self.filepath = f"{falcon.DEFAULT_NAME}.zip"
+        return super().invoke(context, event)
+
+    def execute(self, context):
+        settings = _settings(context)
+        try:
+            written = falcon.export_zip(context, settings, self.filepath,
+                                        samples=self.samples)
+        except Exception as exc:
+            self.report({"ERROR"}, f"{type(exc).__name__}: {exc}")
+            return {"CANCELLED"}
+        self.report({"INFO"},
+                    f"{len(written)} files packed into {self.filepath}")
+        return {"FINISHED"}
+
+
 _CLASSES = (
     OPENCV_CAM_OT_avm_add_scene,
     OPENCV_CAM_OT_avm_rebuild,
@@ -376,8 +495,13 @@ _CLASSES = (
     OPENCV_CAM_OT_avm_export_params,
     OPENCV_CAM_OT_avm_import_params,
     OPENCV_CAM_OT_avm_render_cameras,
+    OPENCV_CAM_OT_avm_detect_corners,
+    OPENCV_CAM_OT_avm_detect_camera,
+    OPENCV_CAM_OT_avm_show_corners,
+    OPENCV_CAM_OT_avm_clear_camera,
     OPENCV_CAM_OT_avm_analyze_coverage,
     OPENCV_CAM_OT_avm_export_materials,
+    OPENCV_CAM_OT_avm_export_falcon,
 )
 
 
