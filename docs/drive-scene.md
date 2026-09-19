@@ -73,7 +73,7 @@ Blender 侧把**同一份 plan** 写进关键帧（每帧一个 key，LINEAR）�
 
 ## 5. 录制与导出
 
-`[Render Clip…]` 写目录，`[Export Clip…]` 把同一份内容**加视频、打包成一个 zip**：
+`[Export Clip…]` 把整段内容**打包成一个 zip**（PNG 序列 + mp4 + csv + json）：
 
 ```
 <输出目录>/ 或 <clip.zip>/
@@ -99,7 +99,7 @@ Blender 侧把**同一份 plan** 写进关键帧（每帧一个 key，LINEAR）�
 - **Vehicle**：长 / 宽 / 高 / 离地间隙；
 - **Drive**：`drive_distance` / `drive_speed` / `drive_profile` / `drive_accel` / `drive_fps` / `drive_heading`；
 - **Show / Hide**：地面（含编号）/ 围墙（含立柱）/ 停放的车 / 自车（只切显隐、不重建；顶灯不属于任何图层，隐藏围墙不会把画面弄黑）；
-- **动作**：`[Rebuild]` `[Reset Defaults]` `[Frame View]` `[Render Clip…]` `[Export Clip…]`（PNG + mp4 + csv + json 打包成 zip）`[Remove Drive Scene]`。
+- **动作**：`[Rebuild]` `[Reset Defaults]` `[Frame View]` `[Export Clip…]`（PNG + mp4 + csv + json 打包成 zip）`[Remove Drive Scene]`。
 
 ## 7. 模块划分
 
