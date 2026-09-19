@@ -9,7 +9,7 @@
 | | 内容 |
 | --- | --- |
 | 输入 | 停车场地参数（车道/车位/立柱/灯光）+ 车辆尺寸 + 行驶参数（里程 / 速度 / 加速度 / 帧率）|
-| 输出 | `frame_%04d.png` 序列 + `frames.csv`（逐帧时间/里程/车速/**真值位姿**）+ `clip.json`（整段规格）|
+| 输出 | `frame_%04d.png` 序列 + `clip.mp4` + `frames.csv`（逐帧时间/里程/车速/**车体与相机世界位姿**）+ `clip.json`（整段规格，含 K/D/安装位姿）；`[Export Clip…]` 打包成一个 zip |
 | 相机 | 插件自带的 **OpenCV Camera 组件**（fisheye），内参/安装位姿取内置 minibus 标定预设 |
 | 非目标 | 多相机同步、深度/分割真值、悬架俯仰侧倾、滚动快门、mp4（P1 起）|
 
@@ -73,14 +73,20 @@ Blender 侧把**同一份 plan** 写进关键帧（每帧一个 key，LINEAR）�
 
 ## 5. 录制与导出
 
+`[Render Clip…]` 写目录，`[Export Clip…]` 把同一份内容**加视频、打包成一个 zip**：
+
 ```
-<输出目录>/
+<输出目录>/ 或 <clip.zip>/
 ├── frame_0000.png … frame_NNNN.png    # 前摄画面（鱼眼，标定分辨率换算后）
-├── frames.csv                         # frame,time_s,distance_m,speed_mps,x_m,y_m,yaw_deg
-└── clip.json                          # 路径/速度参数 + 相机 K/D/车体系安装位姿 + 渲染尺寸与采样 + 时间口径
+├── clip.mp4                           # 同一序列的 H.264 视频（Export Clip 才有）
+├── frames.csv                         # frame,time_s,distance_m,speed_mps,x_m,y_m,yaw_deg,
+│                                      #   cam_x_m,cam_y_m,cam_z_m,cam_roll_deg,cam_pitch_deg,cam_yaw_deg
+└── clip.json                          # 路径/速度参数 + 相机 K/D/车体系安装位姿 + 渲染尺寸与采样 + 时间口径 + video 文件名
 ```
 
 - **分辨率用 Blender 自带的 `Render ▸ Output`**（插件不另设输出尺寸），`clip.json` 记录实际尺寸；内参按渲染分辨率换算后写入 `K`。
+- `frames.csv` 的 `cam_*` 列是**每帧相机的世界位姿**（车体位姿 × 固定安装位姿，由 `core/scenes/drive_path.camera_world_pose` 纯 Python 算出），下游不必自己组合。
+- **视频**用 Blender 内置 FFmpeg（H.264/mp4）：把已渲染的 PNG 序列喂给一个临时序列编辑器场景编码，**不重渲染** 3D 场景，编完即删。
 - 录制时**临时屏蔽场景里不属于本场景的灯**（新建 Blender 场景自带点光，否则每段素材的光照都不一样），渲染设置（filepath / 格式 / 采样 / 相机 / 当前帧）整体保存并恢复。
 - P0 是**阻塞式**整段渲染（与 `Export Falcon` 一致）；长片段建议先小尺寸试跑，可中断/进度条见 P1。
 
@@ -93,7 +99,7 @@ Blender 侧把**同一份 plan** 写进关键帧（每帧一个 key，LINEAR）�
 - **Vehicle**：长 / 宽 / 高 / 离地间隙；
 - **Drive**：`drive_distance` / `drive_speed` / `drive_profile` / `drive_accel` / `drive_fps` / `drive_heading`；
 - **Show / Hide**：地面（含编号）/ 围墙（含立柱）/ 停放的车 / 自车（只切显隐、不重建；顶灯不属于任何图层，隐藏围墙不会把画面弄黑）；
-- **动作**：`[Rebuild]` `[Reset Defaults]` `[Frame View]` `[Render Clip…]` `[Remove Drive Scene]`。
+- **动作**：`[Rebuild]` `[Reset Defaults]` `[Frame View]` `[Render Clip…]` `[Export Clip…]`（PNG + mp4 + csv + json 打包成 zip）`[Remove Drive Scene]`。
 
 ## 7. 模块划分
 
@@ -105,23 +111,23 @@ bl/scenes/drive_scene/
 ├── properties.py                    # scene.drive_scene（地块 / 车辆 / 行驶 / 图层）
 ├── builder.py                       # 地坪+标线、立柱、围墙、顶灯、车模、相机、关键帧
 ├── controller.py                    # 去抖重建
-├── recording.py                     # 逐帧渲染 → PNG + frames.csv + clip.json
+├── recording.py                     # 逐帧渲染 → PNG + frames.csv + clip.json；PNG → mp4；打包 zip
 ├── operators.py                     # opencv_cam.drive_*
 └── ui.py                            # 两个面板
 ```
 
 ## 8. 测试
 
-- `tests/test_core.py::test_drive_path`：速度曲线（匀速/梯形/退化三角形）、采样（`v = ds/dt`、单调性、末帧落在精确 T）、CSV 契约（表头、行数、精度、零里程）；
+- `tests/test_core.py::test_drive_path`：速度曲线（匀速/梯形/退化三角形）、采样（`v = ds/dt`、单调性、末帧落在精确 T）、CSV 契约（表头、行数、精度、**每帧相机世界位姿列**、零里程）；
 - `tests/test_core.py::test_drive_lot`：车位数量/编号（A01…/B01…）/位置、分隔线等距且铺满地块、立柱落在车位排内、**停放车不杵进立柱、不超车位、车头朝墙、均匀铺开、可复现**；
-- `tests/run_blender_tests.py::test_drive_scene`：对象命名与集合、地坪材质槽与**程序化噪声**、中线标线存在、地块覆盖里程、停放车（数量/朝向/车漆表/图层开关）、编号（数量、FONT 平铺、在车道内、开关会增删对象）、相机（Custom + bytecode + minibus K + 车体系位姿）、**关键帧与纯 Python 位姿逐帧一致**、时间轴、小尺寸录 9 帧（PNG 数、CSV 行与速度列、clip.json 的 K/尺寸/挂载系）、渲染设置与外部灯光的恢复、移除后对象清理。
+- `tests/run_blender_tests.py::test_drive_scene`：对象命名与集合、地坪材质槽与**程序化噪声**、中线标线存在、地块覆盖里程、停放车（数量/朝向/车漆表/图层开关）、编号（数量、FONT 平铺、在车道内、开关会增删对象）、相机（Custom + bytecode + minibus K + 车体系位姿）、**关键帧与纯 Python 位姿逐帧一致**、时间轴、小尺寸录 9 帧（PNG 数、CSV 行与速度/相机位姿列、clip.json 的 K/尺寸/挂载系）、**Export Clip 产出的 zip 含 PNG+mp4+csv+json**、渲染设置与外部灯光的恢复、移除后对象清理。
 
 ## 9. 分期
 
 | 期 | 内容 |
 | --- | --- |
-| **P0（本批）** | 直线 + 匀速/梯形 + 前摄逐帧 + PNG/CSV/clip.json + 测试 + 本文档 |
-| P1 | 曲线路径与航向、四路相机、mp4（Blender 内置 FFmpeg）、模态化可中断录制与进度 |
+| **P0（本批）** | 直线 + 匀速/梯形 + 前摄逐帧 + PNG/CSV/clip.json + **mp4 与 zip 导出** + 测试 + 本文档 |
+| P1 | 曲线路径与航向、四路相机、模态化可中断录制与进度 |
 | P2 | 真值扩展（深度 / 实例分割 / 逐帧相机位姿文件），布局向路线图 M7 `dataset_export` 靠拢 |
 | P3 | 地面附着（z 跟随坡面）、悬架俯仰 / 侧倾、滚动快门 / 运动模糊 |
 

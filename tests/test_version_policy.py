@@ -45,7 +45,7 @@ FORBIDDEN_STRINGS = {
 #: shims every compat.py must define, and the source module that owns them
 REQUIRED_SHIMS = (
     "action_fcurves", "eevee_engine", "import_model", "export_gltf",
-    "set_material_blend", "node_of_type",
+    "set_material_blend", "node_of_type", "sequence_strips", "enable_movie_output",
 )
 
 FAILURES = []

@@ -1781,8 +1781,13 @@ def test_drive_scene():
           rows[0] == ",".join(drive_path.CSV_HEADER) and len(rows) == len(plan.frames) + 1,
           f"{len(rows)} rows")
     check("frames.csv carries the speed column",
-          all(len(row.split(",")) == 7 and float(row.split(",")[3]) > 0.0 for row in rows[1:]),
+          all(len(row.split(",")) == 13 and float(row.split(",")[3]) > 0.0 for row in rows[1:]),
           rows[1] if len(rows) > 1 else "")
+    expected = drive_path.camera_world_pose(plan.frames[0], recording.camera_mount())
+    first = rows[1].split(",")
+    check("frames.csv carries the camera world pose",
+          all(approx(float(first[7 + i]), expected[i], 1e-3) for i in range(6)),
+          rows[1])
     meta = json.load(open(os.path.join(directory, "clip.json"), encoding="utf-8"))
     check("clip.json describes the clip",
           meta["format"] == "drive_clip" and meta["frames"] == len(plan.frames)
@@ -1800,6 +1805,19 @@ def test_drive_scene():
           str((scene.render.filepath, scene.cycles.samples)))
     check("the clip status is reported", settings.clip_status.startswith("9 frames"),
           settings.clip_status)
+
+    # export: the same clip plus an mp4, packed into one zip
+    zip_path = os.path.join(tempfile.mkdtemp(prefix="opencv_cam_zip_"), "clip.zip")
+    check("export clip operator",
+          bpy.ops.opencv_cam.drive_export_zip(filepath=zip_path, samples=2) == {"FINISHED"})
+    with zipfile.ZipFile(zip_path) as archive:
+        names = set(archive.namelist())
+    check("the zip holds the pngs, csv, json and mp4",
+          {"frames.csv", "clip.json", "clip.mp4"} <= names
+          and all(recording.frame_name(frame.index) in names for frame in plan.frames),
+          str(sorted(names)))
+    check("clip.json inside the zip names the video",
+          json.loads(zipfile.ZipFile(zip_path).read("clip.json"))["video"] == "clip.mp4")
 
     check("remove scene", bpy.ops.opencv_cam.drive_remove_scene() == {"FINISHED"})
     check("the panels hide after the remove",
