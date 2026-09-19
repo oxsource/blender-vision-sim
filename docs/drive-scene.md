@@ -17,14 +17,14 @@
 
 | 元素 | 做法 |
 | --- | --- |
-| 地面 | **室内停车场**：混凝土地坪（程序化噪声）+ 车道/车位标线（真实几何，见 §3） |
+| 地面 | **室内停车场**：地坪可切 **concrete / asphalt / epoxy**（程序化**低对比度多尺度斑驳**：宽污渍 + 细颗粒，见 §10）+ 车道/车位标线（真实几何，见 §3） |
 | 车位 | 两侧车位**编号**（`A01…` / `B01…`，文字平铺在车道上、正对该车位）与**停好的车**（`parked_cars`/排，车型与颜色循环）|
 | 结构 | 两侧立柱（`pillar_count`/侧）、四面围墙（`show_walls`）、一整片柔和顶光（见 §3） |
-| 车辆 | 程序化 minibus（长/宽/高/离地间隙可调），几何与 AVM Scene 同构但**本场景自带实现** |
+| 车辆 | 程序化 minibus（长/宽/高/离地间隙可调），几何与 AVM Scene 同构但**本场景自带实现**；车漆取自共享调色板，与 AVM Scene 完全一致 |
 | 相机 | `DRIVE_Cam_Front`，`Add ▸ VisionSim ▸ Drive Scene` 时按预设创建（K/D/输出 + 车体系安装位姿）|
 | 运动 | `DRIVE_Vehicle` 空物体承载世界位姿，车与相机都挂在它下面（相机因此永远保持车体系位姿）|
 
-**与 AVM Scene 的关系**：相机用的是同一个 OpenCV Camera 组件与同一份 minibus 标定预设（这样仿真画面才和真机可比）；**其余组件不复用**，Drive Scene 自带地面/立柱/车模实现，只参考 AVM 的做法。两者可同时存在于一个 .blend（对象前缀分别是 `DRIVE_` / `AVM_`，互不干扰）。
+**与 AVM Scene 的关系**：相机用的是同一个 OpenCV Camera 组件与同一份 minibus 标定预设，**车漆也取自同一份共享调色板**（`avm_layout.MINIBUS_MATERIALS`），车身尺寸默认值同样对齐 AVM——相机内外参、车色与车体因此**不会漂移**，`tests/run_blender_tests.py: test_drive_matches_avm_defaults` 逐项断言（这样仿真画面才和真机可比）；**其余组件不复用**，Drive Scene 自带地面/立柱/车模实现，只参考 AVM 的做法。两者可同时存在于一个 .blend（对象前缀分别是 `DRIVE_` / `AVM_`，互不干扰）。
 
 **三点本质差别**（也是这个场景存在的理由）：
 
@@ -89,7 +89,7 @@ Blender 侧把**同一份 plan** 写进关键帧（每帧一个 key，LINEAR）�
 两个面板（Scene Properties + 3D 视口 N 侧栏 `Drive Scene`），都只在场景已建立时出现：
 
 - **概览**：地块尺寸 + `N frames @ fps`、时长、里程、峰值速度 + 「巡航速度下每帧位移 = v / fps」（选速度与帧率时最实用的一个数）；
-- **Car park**：`aisle_length` / `aisle_width` / `bay_depth` / `bay_width` / `ground_texture`(concrete/checker/plain) / `show_bays` / `bay_numbers` / `parked_cars` / `pillar_count` / `light_energy` / `shadows`；
+- **Car park**：`aisle_length` / `aisle_width` / `bay_depth` / `bay_width` / `ground_texture`(concrete/asphalt/epoxy/checker/plain) / `show_bays` / `bay_numbers` / `parked_cars` / `pillar_count` / `light_energy` / `shadows`；
 - **Vehicle**：长 / 宽 / 高 / 离地间隙；
 - **Drive**：`drive_distance` / `drive_speed` / `drive_profile` / `drive_accel` / `drive_fps` / `drive_heading`；
 - **Show / Hide**：地面（含编号）/ 围墙（含立柱）/ 停放的车 / 自车（只切显隐、不重建；顶灯不属于任何图层，隐藏围墙不会把画面弄黑）；
@@ -128,7 +128,11 @@ bl/scenes/drive_scene/
 ## 10. 风险与注意点
 
 - **渲染耗时**：1280×960 × 上百帧的 Cycles CPU 不便宜 —— 默认只录前摄，先小尺寸试跑；
-- **纹理不能太规整**：纯棋盘等于"送分"（对齐误差天然小）—— 默认混凝土噪声，`ground_texture` 可切棋盘/纯色做对照实验；
+- **纹理要像真实停车场、但要有信号**：纯棋盘等于"送分"（对齐误差天然小），单一尺度的噪声又**自相似**
+  （很多平移都拟合得差不多）；而裂缝网格、高对比斑点又太花、不像真地面。`ground_texture` 提供三种真实
+  地坪——`concrete`（水泥，中灰哑光）、`asphalt`（柏油，近黑哑光 + 骨料亮点）、`epoxy`（环氧，浅灰半光）
+  ——都用两种**低对比度**尺度叠加（宽污渍 ~0.9 m + 细颗粒 ~3 cm），每块地面各有轻微差异、逐帧不同，
+  纹理锚在**地面物体**坐标系上（车动它不动）；`checker` / `plain` 是对照实验（最强纹理 / 无纹理）；
 - **前摄的盲区**：车正下方与两侧本就看不到，透明底盘必然出现空洞 —— 这是素材要暴露的现象（多相机在 P1）；
 - **时间口径**：仿真时间 `t = frame / fps`，没有绝对时钟，与真实采集的差异写进了 `clip.json`；
 - **外部灯光/相机内参**：录制时会屏蔽外部灯；相机内参由 minibus 预设决定，要改请在 `CV Intrinsics` 改（与其它场景一致）。

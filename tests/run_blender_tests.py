@@ -1635,6 +1635,29 @@ def test_drive_scene():
     check("the concrete floor has a procedural grain",
           any(node.type == "TEX_NOISE" for node in ground.data.materials[0].node_tree.nodes),
           str([node.type for node in ground.data.materials[0].node_tree.nodes]))
+    floor_nodes = [node.type for node in ground.data.materials[0].node_tree.nodes]
+    check("the floor has multi-scale mottling to align a reconstruction against",
+          floor_nodes.count("TEX_NOISE") >= 2, str(floor_nodes))
+
+    # every floor preset builds its own material (and the textured ones keep the
+    # two noise scales); the default is restored afterwards
+    for kind, expected in (("concrete", "DRIVE_Floor_Concrete_Mat"),
+                           ("asphalt", "DRIVE_Floor_Asphalt_Mat"),
+                           ("epoxy", "DRIVE_Floor_Epoxy_Mat"),
+                           ("checker", "DRIVE_Floor_Checker_Mat"),
+                           ("plain", "DRIVE_Floor_Plain_Mat")):
+        settings.ground_texture = kind
+        bpy.ops.opencv_cam.drive_rebuild()
+        floor = bpy.data.objects["DRIVE_Ground"].data.materials[0]
+        check(f"the {kind} floor preset builds its material",
+              floor.name == expected, floor.name)
+        if kind in ("concrete", "asphalt", "epoxy"):
+            types = [node.type for node in floor.node_tree.nodes]
+            check(f"the {kind} floor keeps two noise scales",
+                  types.count("TEX_NOISE") == 2, str(types))
+    settings.ground_texture = "concrete"
+    bpy.ops.opencv_cam.drive_rebuild()
+    ground = bpy.data.objects["DRIVE_Ground"]
     check("floor and both paint colours are used",
           {polygon.material_index for polygon in ground.data.polygons} == {0, 1, 2},
           str({polygon.material_index for polygon in ground.data.polygons}))
@@ -1783,6 +1806,73 @@ def test_drive_scene():
           scenes_mod.has_scene(bpy.context, definition) is False)
     check("the camera object is gone too",
           bpy.data.objects.get("DRIVE_Cam_Front") is None)
+
+
+def test_drive_matches_avm_defaults():
+    """The Drive Scene must reproduce the AVM Scene's car colour and front camera.
+
+    The two scenes are the same vehicle from the same calibration; this pins that
+    the Drive Scene does not drift from the AVM defaults (body colour, K, D,
+    output size and mount pose), which is what makes the footage comparable.
+    """
+    from opencv_camera.core.scenes import avm_layout
+
+    def rgb_close(a, b, tol=1e-6):
+        return all(abs(x - y) <= tol for x, y in zip(a[:3], b[:3]))
+
+    clear_scene()
+    scene = setup_scene(resolution=128, samples=4)
+
+    check("build the AVM scene for comparison",
+          bpy.ops.opencv_cam.avm_add_scene() == {"FINISHED"})
+    avm_cam = bpy.data.objects["AVM_Cam_Front"]
+    avm = avm_cam.data.opencv_cam
+    avm_pose = avm_cam.matrix_world.copy()
+    avm_body = tuple(bpy.data.materials["AVM_Car_Mat"].diffuse_color)
+
+    check("build the Drive scene for comparison",
+          bpy.ops.opencv_cam.drive_add_scene() == {"FINISHED"})
+    drive_cam = bpy.data.objects["DRIVE_Cam_Front"]
+    drive = drive_cam.data.opencv_cam
+    drive_pose = drive_cam.matrix_basis.copy()
+    drive_body = tuple(bpy.data.materials["DRIVE_Car_Mat"].diffuse_color)
+
+    palette = avm_layout.MINIBUS_MATERIALS["body"][0]
+    check("the AVM and Drive ego cars share the body colour",
+          rgb_close(avm_body, palette) and rgb_close(drive_body, palette)
+          and rgb_close(avm_body, drive_body),
+          f"avm={avm_body} drive={drive_body} palette={palette}")
+
+    for attribute in ("car_length", "car_width", "car_height", "car_clearance"):
+        a = getattr(scene.avm_scene, attribute)
+        d = getattr(scene.drive_scene, attribute)
+        check(f"the car {attribute} matches the AVM default", approx(a, d, 1e-9),
+              f"{a} vs {d}")
+
+    for attribute in ("fx", "fy", "cx", "cy"):
+        a, d = getattr(avm.intrinsics, attribute), getattr(drive.intrinsics, attribute)
+        check(f"the front camera {attribute} matches the AVM default",
+              approx(a, d, 1e-9), f"{a} vs {d}")
+    check("the front camera calibration size matches the AVM default",
+          (avm.intrinsics.image_width, avm.intrinsics.image_height)
+          == (drive.intrinsics.image_width, drive.intrinsics.image_height),
+          f"{avm.intrinsics.image_width}x{avm.intrinsics.image_height} vs "
+          f"{drive.intrinsics.image_width}x{drive.intrinsics.image_height}")
+    check("the front camera distortion matches the AVM default",
+          (avm.distortion.model, avm.distortion.k1, avm.distortion.k2,
+           avm.distortion.k3, avm.distortion.k4)
+          == (drive.distortion.model, drive.distortion.k1, drive.distortion.k2,
+              drive.distortion.k3, drive.distortion.k4),
+          f"{avm.distortion.model} vs {drive.distortion.model}")
+
+    # AVM camera world pose == Drive camera vehicle-frame (local) pose
+    worst = max(abs(avm_pose[i][j] - drive_pose[i][j])
+                for i in range(4) for j in range(4))
+    check("the front camera mount pose matches the AVM default", worst < 1e-6,
+          f"max|delta|={worst:.2e}")
+
+    bpy.ops.opencv_cam.avm_remove_scene()
+    bpy.ops.opencv_cam.drive_remove_scene()
 
 
 def test_scene_default_view():
@@ -2240,6 +2330,7 @@ def main():
         test_avm_ground_model,
         test_avm_export_bowl,
         test_drive_scene,
+        test_drive_matches_avm_defaults,
         test_scene_default_view,
         test_shader_force_compile,
         test_presets,

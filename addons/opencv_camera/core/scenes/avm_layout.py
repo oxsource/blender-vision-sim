@@ -36,6 +36,7 @@ from .. import camera_model
 __all__ = [
     "CM_TO_M",
     "FRONT", "BACK", "LEFT", "RIGHT", "CAMERAS",
+    "MINIBUS_MATERIALS",
     "BLOCK_FRONT_LEFT", "BLOCK_FRONT_RIGHT", "BLOCK_BACK_LEFT", "BLOCK_BACK_RIGHT",
     "BLOCKS",
     "FieldSpec", "FieldGeometry",
@@ -49,6 +50,18 @@ CM_TO_M = 0.01
 
 FRONT, BACK, LEFT, RIGHT = "front", "back", "left", "right"
 CAMERAS: Tuple[str, ...] = (FRONT, BACK, LEFT, RIGHT)
+
+#: the default minibus materials as ``name -> (rgba, roughness)``.  The AVM Scene
+#: and the Drive Scene both paint their ego car from this one palette, so the
+#: vehicle looks identical in the two scenes (the Drive Scene's car is otherwise
+#: self-contained).
+MINIBUS_MATERIALS: Dict[str, Tuple[Tuple[float, float, float, float], float]] = {
+    "body":  ((0.16, 0.42, 0.37, 1.0), 0.45),   # teal body
+    "glass": ((0.06, 0.10, 0.11, 1.0), 0.15),   # tinted glass
+    "tire":  ((0.04, 0.04, 0.04, 1.0), 0.85),   # rubber
+    "head":  ((0.95, 0.95, 0.85, 1.0), 0.20),   # head lights
+    "tail":  ((0.55, 0.06, 0.05, 1.0), 0.30),   # tail lights
+}
 
 BLOCK_FRONT_LEFT, BLOCK_FRONT_RIGHT = "front_left", "front_right"
 BLOCK_BACK_LEFT, BLOCK_BACK_RIGHT = "back_left", "back_right"

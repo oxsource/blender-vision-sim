@@ -924,7 +924,7 @@ def _ensure_cameras(scene: bpy.types.Scene, settings, target: bpy.types.Collecti
             # scene owns these names, so force them
             camera.name = object_name
             camera.data.name = object_name
-            ok, apply_messages = _configure_camera(camera, record, scene)
+            ok, apply_messages = camera_factory.configure_from_record(camera, record, scene)
             if not ok:
                 messages.append(f"{name}: " + "; ".join(apply_messages))
             apply_camera_pose(camera, record.get("location", (0.0, 0.0, 0.0)),
@@ -933,33 +933,6 @@ def _ensure_cameras(scene: bpy.types.Scene, settings, target: bpy.types.Collecti
         link_to_collection(camera, target)
         cameras[name] = camera
     return cameras, messages
-
-
-def _configure_camera(camera: bpy.types.Object, record: Dict,
-                      scene: bpy.types.Scene):
-    """Write the preset's K / D / output into the camera's own settings.
-
-    Returns ``(ok, messages)`` - the shader compile can fail (see
-    :func:`bl.shader.force_compile`), and silently shipping an uncompiled camera
-    would render with no lens model at all.
-    """
-    settings = camera.data.opencv_cam
-    intrinsics = settings.intrinsics
-    fx, fy, cx, cy = record.get("K", (0.0, 0.0, 0.0, 0.0))
-    intrinsics.fx, intrinsics.fy = float(fx), float(fy)
-    intrinsics.auto_center = False
-    intrinsics.cx, intrinsics.cy = float(cx), float(cy)
-    width, height = record.get("output", (1280, 960))
-    intrinsics.image_width, intrinsics.image_height = int(width), int(height)
-    intrinsics.scale_to_render = True
-
-    distortion = settings.distortion
-    distortion.model = "fisheye"
-    distortion.enabled = True
-    coefficients = list(record.get("D", (0.0, 0.0, 0.0, 0.0))) + [0.0] * 4
-    (distortion.k1, distortion.k2, distortion.k3,
-     distortion.k4) = (float(value) for value in coefficients[:4])
-    return apply_mod.apply_settings(camera.data, settings, scene)
 
 
 def apply_camera_pose(camera: bpy.types.Object, location, rotation) -> None:
@@ -1081,11 +1054,11 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
         car = _new_mesh_object(CAR_NAME, _quad_mesh("AVM_Car", 1.0, 1.0), target)
     car_mesh = _minibus_mesh("AVM_Car", car_length, car_width, settings.car_height)
     _assign_mesh(car, car_mesh, (
-        _principled("AVM_Car_Mat", (0.16, 0.42, 0.37, 1.0), 0.45),       # teal body
-        _principled("AVM_Car_Glass_Mat", (0.06, 0.10, 0.11, 1.0), 0.15),  # glass
-        _principled("AVM_Car_Tire_Mat", (0.04, 0.04, 0.04, 1.0), 0.85),   # tires
-        _principled("AVM_Car_Head_Mat", (0.95, 0.95, 0.85, 1.0), 0.2),    # head lights
-        _principled("AVM_Car_Tail_Mat", (0.55, 0.06, 0.05, 1.0), 0.3),    # tail lights
+        _principled("AVM_Car_Mat", *avm_layout.MINIBUS_MATERIALS["body"]),
+        _principled("AVM_Car_Glass_Mat", *avm_layout.MINIBUS_MATERIALS["glass"]),
+        _principled("AVM_Car_Tire_Mat", *avm_layout.MINIBUS_MATERIALS["tire"]),
+        _principled("AVM_Car_Head_Mat", *avm_layout.MINIBUS_MATERIALS["head"]),
+        _principled("AVM_Car_Tail_Mat", *avm_layout.MINIBUS_MATERIALS["tail"]),
     ))
     car.location = (0.0, 0.0, settings.car_clearance)
     _parent(car, root)
