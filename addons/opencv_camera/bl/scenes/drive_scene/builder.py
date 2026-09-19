@@ -20,8 +20,7 @@ import bmesh
 import bpy
 from mathutils import Matrix
 
-from ....core.scenes import drive_lot
-from ... import apply as apply_mod
+from ....core.scenes import avm_layout, drive_lot
 from ... import camera_factory, compat
 from ..base import collection, link_to_collection, remove_collection_objects
 
@@ -287,43 +286,112 @@ def _principled(name: str, color, roughness: float = 0.7) -> bpy.types.Material:
     return material
 
 
-def _concrete_material(name: str, color=(0.42, 0.43, 0.44, 1.0)) -> bpy.types.Material:
-    """Concrete: a procedural grain, so the floor has features without a file.
+def _mottled_material(name: str, color, roughness: float,
+                      stains: Tuple[float, float, float, float],
+                      grain: Tuple[float, float, float], grain_weight: float,
+                      stops) -> bpy.types.Material:
+    """A procedurally mottled floor: broad stains + a fine grain, no texture file.
 
-    A flat grey floor would leave a transparent-chassis algorithm nothing to
-    align against (see ``docs/drive-scene.md``); the noise gives every patch of
-    floor its own signature and no two frames the same texture.
+    A flat floor leaves a transparent-chassis algorithm nothing to align against,
+    but a loud pattern (cracks, high-contrast tiles) does not look like the real
+    thing either.  Two low-contrast noise scales give every patch of floor its own
+    signature while staying quiet; they are anchored to the ground object, so they
+    do not swim as the car moves (see ``docs/drive-scene.md``).
+
+    ``stains`` is ``(scale, detail, roughness, distortion)``, ``grain`` is
+    ``(scale, detail, roughness)`` and ``stops`` is the colour ramp as
+    ``(position, brightness, rgb offset)`` tuples.
     """
     material = bpy.data.materials.get(name)
     if material is None:
         material = bpy.data.materials.new(name)
     material.use_nodes = True
     material.diffuse_color = color
-    material.roughness = 0.8
+    material.roughness = roughness
     nodes = material.node_tree.nodes
     for node in list(nodes):
         nodes.remove(node)
     output = nodes.new("ShaderNodeOutputMaterial")
     principled = nodes.new("ShaderNodeBsdfPrincipled")
-    noise = nodes.new("ShaderNodeTexNoise")
-    ramp = nodes.new("ShaderNodeValToRGB")
     coords = nodes.new("ShaderNodeTexCoord")
-    noise.inputs["Scale"].default_value = 24.0
-    noise.inputs["Detail"].default_value = 6.0
-    noise.inputs["Roughness"].default_value = 0.55
-    darker = tuple(value * 0.72 for value in color[:3]) + (1.0,)
-    lighter = tuple(min(1.0, value * 1.22) for value in color[:3]) + (1.0,)
-    ramp.color_ramp.elements[0].position = 0.30
-    ramp.color_ramp.elements[0].color = darker
-    ramp.color_ramp.elements[1].position = 0.72
-    ramp.color_ramp.elements[1].color = lighter
-    principled.inputs["Roughness"].default_value = 0.8
+
+    stains_node = nodes.new("ShaderNodeTexNoise")
+    stains_node.inputs["Scale"].default_value = stains[0]
+    stains_node.inputs["Detail"].default_value = stains[1]
+    stains_node.inputs["Roughness"].default_value = stains[2]
+    stains_node.inputs["Distortion"].default_value = stains[3]
+
+    grain_node = nodes.new("ShaderNodeTexNoise")
+    grain_node.inputs["Scale"].default_value = grain[0]
+    grain_node.inputs["Detail"].default_value = grain[1]
+    grain_node.inputs["Roughness"].default_value = grain[2]
+
+    grain_scale = nodes.new("ShaderNodeMath")
+    grain_scale.operation = "MULTIPLY"
+    grain_scale.inputs[1].default_value = grain_weight
+
+    combine = nodes.new("ShaderNodeMath")   # stains * (1 - w) + grain * w
+    combine.operation = "MULTIPLY_ADD"
+    combine.inputs[1].default_value = 1.0 - grain_weight
+
+    ramp = nodes.new("ShaderNodeValToRGB")
+
+    def shade(level: float, offset) -> tuple:
+        return tuple(min(1.0, max(0.0, value * level + shift))
+                     for value, shift in zip(color[:3], offset)) + (1.0,)
+
+    ramp.color_ramp.elements[0].position = stops[0][0]
+    ramp.color_ramp.elements[0].color = shade(stops[0][1], stops[0][2])
+    ramp.color_ramp.elements[1].position = stops[-1][0]
+    ramp.color_ramp.elements[1].color = shade(stops[-1][1], stops[-1][2])
+    for position, level, offset in stops[1:-1]:
+        element = ramp.color_ramp.elements.new(position)
+        element.color = shade(level, offset)
+
+    principled.inputs["Roughness"].default_value = roughness
     links = material.node_tree.links
-    links.new(coords.outputs["Object"], noise.inputs["Vector"])
-    links.new(noise.outputs["Fac"], ramp.inputs["Fac"])
+    for texture in (stains_node, grain_node):
+        links.new(coords.outputs["Object"], texture.inputs["Vector"])
+    links.new(grain_node.outputs["Fac"], grain_scale.inputs[0])
+    links.new(stains_node.outputs["Fac"], combine.inputs[0])
+    links.new(grain_scale.outputs["Value"], combine.inputs[2])
+    links.new(combine.outputs["Value"], ramp.inputs["Fac"])
     links.new(ramp.outputs["Color"], principled.inputs["Base Color"])
     links.new(principled.outputs["BSDF"], output.inputs["Surface"])
     return material
+
+
+def _concrete_material(name: str) -> bpy.types.Material:
+    """Poured concrete: mid grey, matte, gentle blotchiness."""
+    return _mottled_material(
+        name, (0.42, 0.43, 0.44, 1.0), 0.80,
+        stains=(1.1, 6.0, 0.5, 0.9), grain=(30.0, 3.0, 0.6), grain_weight=0.2,
+        stops=((0.00, 0.72, (0.030, 0.000, -0.030)),
+               (0.40, 0.90, (0.0, 0.0, 0.0)),
+               (0.70, 1.04, (0.0, 0.0, 0.0)),
+               (1.00, 1.18, (0.0, 0.0, 0.0))))
+
+
+def _asphalt_material(name: str) -> bpy.types.Material:
+    """Asphalt: near black, matte, with the light aggregate speckle."""
+    return _mottled_material(
+        name, (0.085, 0.085, 0.09, 1.0), 0.92,
+        stains=(2.4, 5.0, 0.55, 1.2), grain=(90.0, 4.0, 0.65), grain_weight=0.35,
+        stops=((0.00, 0.55, (0.0, 0.0, 0.0)),
+               (0.40, 0.85, (0.0, 0.0, 0.0)),
+               (0.72, 1.25, (0.0, 0.0, 0.0)),
+               (0.90, 1.90, (0.030, 0.030, 0.030)),
+               (1.00, 2.60, (0.060, 0.060, 0.060))))
+
+
+def _epoxy_material(name: str) -> bpy.types.Material:
+    """Epoxy coating: light grey, semi-gloss, almost even."""
+    return _mottled_material(
+        name, (0.50, 0.51, 0.53, 1.0), 0.30,
+        stains=(0.7, 4.0, 0.5, 0.6), grain=(70.0, 2.0, 0.5), grain_weight=0.1,
+        stops=((0.00, 0.88, (0.0, 0.0, 0.010)),
+               (0.50, 0.98, (0.0, 0.0, 0.0)),
+               (1.00, 1.08, (0.0, 0.0, 0.0))))
 
 
 def _checker_material(name: str) -> bpy.types.Material:
@@ -350,12 +418,19 @@ def _checker_material(name: str) -> bpy.types.Material:
     return material
 
 
+#: floor preset -> the material builder that paints it
+FLOOR_MATERIALS = {
+    "concrete": lambda: _concrete_material("DRIVE_Floor_Concrete_Mat"),
+    "asphalt": lambda: _asphalt_material("DRIVE_Floor_Asphalt_Mat"),
+    "epoxy": lambda: _epoxy_material("DRIVE_Floor_Epoxy_Mat"),
+    "checker": lambda: _checker_material("DRIVE_Floor_Checker_Mat"),
+    "plain": lambda: _principled("DRIVE_Floor_Plain_Mat", (0.42, 0.43, 0.44, 1.0), 0.8),
+}
+
+
 def _floor_material(settings) -> bpy.types.Material:
-    if settings.ground_texture == "checker":
-        return _checker_material("DRIVE_Floor_Checker_Mat")
-    if settings.ground_texture == "plain":
-        return _principled("DRIVE_Floor_Plain_Mat", (0.42, 0.43, 0.44, 1.0), 0.8)
-    return _concrete_material("DRIVE_Floor_Concrete_Mat")
+    builder = FLOOR_MATERIALS.get(settings.ground_texture, FLOOR_MATERIALS["concrete"])
+    return builder()
 
 
 def _lot_materials(settings) -> Tuple[bpy.types.Material, ...]:
@@ -367,12 +442,16 @@ def _lot_materials(settings) -> Tuple[bpy.types.Material, ...]:
 
 
 def _car_materials(body: Optional[bpy.types.Material] = None) -> Tuple[bpy.types.Material, ...]:
-    """The car's slots: body (the ego car's paint, or a parked car's), glass, etc."""
+    """The car's slots: body (the ego car's paint, or a parked car's), glass, etc.
+
+    The ego car paints from the shared minibus palette, so it looks exactly like
+    the AVM Scene's car; a parked car passes its own body colour.
+    """
     return (
-        body or _principled("DRIVE_Car_Mat", (0.74, 0.75, 0.77, 1.0), 0.35),
-        _principled("DRIVE_Car_Glass_Mat", (0.05, 0.07, 0.08, 1.0), 0.15),
-        _principled("DRIVE_Car_Tire_Mat", (0.04, 0.04, 0.04, 1.0), 0.85),
-        _principled("DRIVE_Car_Lamp_Mat", (0.95, 0.93, 0.80, 1.0), 0.2),
+        body or _principled("DRIVE_Car_Mat", *avm_layout.MINIBUS_MATERIALS["body"]),
+        _principled("DRIVE_Car_Glass_Mat", *avm_layout.MINIBUS_MATERIALS["glass"]),
+        _principled("DRIVE_Car_Tire_Mat", *avm_layout.MINIBUS_MATERIALS["tire"]),
+        _principled("DRIVE_Car_Lamp_Mat", *avm_layout.MINIBUS_MATERIALS["head"]),
     )
 
 
@@ -619,28 +698,6 @@ def preset_camera(name: str = "front") -> Dict:
     return {}
 
 
-def _configure_camera(camera: bpy.types.Object, record: Dict,
-                      scene: bpy.types.Scene) -> Tuple[bool, List[str]]:
-    """Write the preset's K / D / output onto the camera and compile it."""
-    settings = camera.data.opencv_cam
-    intrinsics = settings.intrinsics
-    fx, fy, cx, cy = record.get("K", (0.0, 0.0, 0.0, 0.0))
-    intrinsics.fx, intrinsics.fy = float(fx), float(fy)
-    intrinsics.auto_center = False
-    intrinsics.cx, intrinsics.cy = float(cx), float(cy)
-    width, height = record.get("output", (1280, 960))
-    intrinsics.image_width, intrinsics.image_height = int(width), int(height)
-    intrinsics.scale_to_render = True
-
-    distortion = settings.distortion
-    distortion.model = "fisheye"
-    distortion.enabled = True
-    coefficients = list(record.get("D", (0.0, 0.0, 0.0, 0.0))) + [0.0] * 4
-    (distortion.k1, distortion.k2, distortion.k3,
-     distortion.k4) = (float(value) for value in coefficients[:4])
-    return apply_mod.apply_settings(camera.data, settings, scene)
-
-
 def _apply_camera_pose(camera: bpy.types.Object, record: Dict) -> None:
     """Set the camera's **vehicle frame** mount pose (degrees in the record)."""
     camera.location = tuple(record.get("location", (0.0, 0.0, 0.0)))
@@ -660,7 +717,7 @@ def _ensure_camera(scene: bpy.types.Scene, target: bpy.types.Collection,
             location=tuple(record.get("location", (0.0, 0.0, 0.0))))
         camera.name = CAMERA_NAME  # a lingering data-block could suffix it
         camera.data.name = CAMERA_NAME
-        ok, apply_messages = _configure_camera(camera, record, scene)
+        ok, apply_messages = camera_factory.configure_from_record(camera, record, scene)
         if not ok:
             messages.append("front camera: " + "; ".join(apply_messages))
         _apply_camera_pose(camera, record)

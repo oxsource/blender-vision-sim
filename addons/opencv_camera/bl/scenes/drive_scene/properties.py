@@ -29,7 +29,9 @@ from . import DEFINITION
 
 #: enum items must be a plain module level list (annotations are re-evaluated)
 GROUND_TEXTURES = [
-    ("concrete", "Concrete", "Concrete slab with a procedural grain (indoor car park)"),
+    ("concrete", "Concrete", "Poured concrete - mid grey, matte, gently blotchy"),
+    ("asphalt", "Asphalt", "Asphalt - near black, matte, light aggregate speckle"),
+    ("epoxy", "Epoxy", "Epoxy coating - light grey, semi-gloss, almost even"),
     ("checker", "Checker", "High contrast checker tiles"),
     ("plain", "Plain", "Flat grey - no texture at all"),
 ]
@@ -97,8 +99,9 @@ class DriveSceneSettings(bpy.types.PropertyGroup):
         update=_schedule)
     ground_texture: EnumProperty(
         name="Floor", items=GROUND_TEXTURES, default="concrete",
-        description="Floor material; the concrete grain is procedural, so the "
-                    "scene needs no texture file",
+        description="Floor material; concrete / asphalt / epoxy are procedural "
+                    "(subtle multi-scale mottling, no texture file), checker and "
+                    "plain are control experiments",
         update=_schedule)
     light_energy: FloatProperty(
         name="Ceiling Light", default=2000.0, min=0.0, max=50000.0,
@@ -113,7 +116,8 @@ class DriveSceneSettings(bpy.types.PropertyGroup):
                     "the lighting a real car park has)",
         update=_schedule)
 
-    # -- vehicle (m) --------------------------------------------------------
+    # -- vehicle (m) - the defaults mirror the AVM Scene's minibus (its height is
+    # derived from the preset mount heights as round(max(mount)+0.05, 2) = 2.88)
     car_length: FloatProperty(name="Length", default=4.8, min=1.0, max=30.0,
                               unit="LENGTH", update=_schedule)
     car_width: FloatProperty(name="Width", default=2.4, min=0.5, max=10.0,

@@ -15,7 +15,7 @@ Models:
 
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import bpy
 
@@ -38,6 +38,34 @@ def default_name(model: str) -> str:
         "rational": "RationalCamera",
         "pinhole": "PinholeCamera",
     }.get(model, "OpenCVCamera")
+
+
+def configure_from_record(camera: bpy.types.Object, record: Dict,
+                          scene: bpy.types.Scene) -> Tuple[bool, List[str]]:
+    """Write a calibration record's K / D / output onto a camera and compile it.
+
+    ``record`` is an ``avm_layout.cameras_from_preset`` entry (``K`` = fx/fy/cx/cy,
+    ``D`` = the four fisheye coefficients, ``output`` = the calibration size).  The
+    AVM Scene and the Drive Scene configure their cameras through this one
+    function, so their intrinsics can never drift apart.
+    """
+    settings = camera.data.opencv_cam
+    intrinsics = settings.intrinsics
+    fx, fy, cx, cy = record.get("K", (0.0, 0.0, 0.0, 0.0))
+    intrinsics.fx, intrinsics.fy = float(fx), float(fy)
+    intrinsics.auto_center = False
+    intrinsics.cx, intrinsics.cy = float(cx), float(cy)
+    width, height = record.get("output", (1280, 960))
+    intrinsics.image_width, intrinsics.image_height = int(width), int(height)
+    intrinsics.scale_to_render = True
+
+    distortion = settings.distortion
+    distortion.model = camera_model.MODEL_FISHEYE
+    distortion.enabled = True
+    coefficients = list(record.get("D", (0.0, 0.0, 0.0, 0.0))) + [0.0] * 4
+    (distortion.k1, distortion.k2, distortion.k3,
+     distortion.k4) = (float(value) for value in coefficients[:4])
+    return apply_mod.apply_settings(camera.data, settings, scene)
 
 
 def resolve_camera(context):
