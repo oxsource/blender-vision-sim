@@ -535,19 +535,25 @@ def test_drive_path():
           f"{odd.frames[-1].time:.6f} vs {odd.duration:.6f}")
 
     # the CSV is the contract with the algorithm side
-    text = drive_path.csv_text(drive)
+    mount = drive_path.Mount(location=(-0.03, 2.47, 2.69),
+                             rotation_deg=(20.0, -1.0, 2.0))
+    text = drive_path.csv_text(drive, mount)
     rows = text.rstrip("\n").split("\n")
     check("csv header", rows[0] == ",".join(drive_path.CSV_HEADER), rows[0])
     check("csv has one row per frame", len(rows) == len(drive.frames) + 1,
           f"{len(rows)} rows for {len(drive.frames)} frames")
-    check("every csv row carries 7 columns",
-          all(len(row.split(",")) == 7 for row in rows[1:]))
+    check("every csv row carries 13 columns",
+          all(len(row.split(",")) == 13 for row in rows[1:]))
     third = rows[3].split(",")
     check("csv rows carry the frame's truth",
           int(third[0]) == drive.frames[2].index
           and approx(float(third[1]), drive.frames[2].time, 1e-6)
           and approx(float(third[3]), drive.frames[2].speed, 1e-6)
           and approx(float(third[6]), drive.frames[2].yaw, 1e-4), rows[3])
+    expected = drive_path.camera_world_pose(drive.frames[2], mount)
+    check("csv rows carry the camera world pose",
+          all(approx(float(third[7 + i]), expected[i], 1e-4) for i in range(6)),
+          rows[3])
     check("a zero-length drive is a single frame",
           len(drive_path.plan(0.0, 5.0, fps=10.0).frames) == 1)
     check("summary mentions the frame count and fps",

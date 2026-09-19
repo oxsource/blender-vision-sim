@@ -53,6 +53,8 @@ SHIMS: Tuple[Tuple[str, str], ...] = (
     ("export_gltf", "the glTF exporter's options vary between releases"),
     ("set_material_blend", "4.2 replaced Material.blend_method with surface_render_method"),
     ("node_of_type", "shader node names are localized; look nodes up by type"),
+    ("sequence_strips", "4.4 renamed SequenceEditor.sequences to .strips"),
+    ("enable_movie_output", "4.5 gates FFmpeg output behind ImageFormatSettings.media_type"),
 )
 
 __all__ = [
@@ -67,6 +69,8 @@ __all__ = [
     "export_gltf",
     "set_material_blend",
     "node_of_type",
+    "sequence_strips",
+    "enable_movie_output",
 ]
 
 
@@ -193,3 +197,27 @@ def node_of_type(node_tree, node_type: str):
         if node.type == node_type:
             return node
     return None
+
+
+def sequence_strips(scene):
+    """The sequence editor's strip collection, creating the editor if needed.
+
+    Blender 4.4 renamed ``SequenceEditor.sequences`` to ``.strips``; resolve
+    whichever this Blender exposes so callers just add strips.
+    """
+    editor = scene.sequence_editor or scene.sequence_editor_create()
+    strips = getattr(editor, "strips", None)
+    if strips is not None:   # an empty collection is falsy, so test for None
+        return strips
+    return editor.sequences
+
+
+def enable_movie_output(image_settings) -> None:
+    """Select FFmpeg movie output on a render's image settings.
+
+    Blender 4.5 added ``ImageFormatSettings.media_type``; ``FFMPEG`` is only an
+    assignable ``file_format`` once the media type is ``VIDEO``.
+    """
+    if hasattr(image_settings, "media_type"):
+        image_settings.media_type = "VIDEO"
+    image_settings.file_format = "FFMPEG"

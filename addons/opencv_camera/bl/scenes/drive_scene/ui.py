@@ -75,7 +75,9 @@ def _layers(layout, settings) -> None:
 def _record(layout, settings) -> None:
     box = layout.box()
     box.label(text="Record", icon="RENDER_ANIMATION")
-    box.operator("opencv_cam.drive_render_clip", icon="RENDER_STILL")
+    row = box.row(align=True)
+    row.operator("opencv_cam.drive_render_clip", icon="RENDER_STILL")
+    row.operator("opencv_cam.drive_export_zip", text="Export Clip…", icon="EXPORT")
     if settings.clip_status:
         box.label(text=settings.clip_status, icon="CHECKMARK")
 

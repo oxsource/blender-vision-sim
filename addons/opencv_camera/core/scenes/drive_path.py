@@ -21,8 +21,12 @@ CONSTANT = "constant"    #: hold one speed for the whole drive
 TRAPEZOID = "trapezoid"  #: accelerate to the cruise speed, cruise, brake to a stop
 PROFILES = (CONSTANT, TRAPEZOID)
 
-#: the per-frame truth, one row per rendered frame
-CSV_HEADER = ("frame", "time_s", "distance_m", "speed_mps", "x_m", "y_m", "yaw_deg")
+#: the per-frame truth, one row per rendered frame.  The ``cam_*`` columns are the
+#: camera's **world** pose at that frame (vehicle pose composed with the fixed
+#: mount pose), so the algorithm side does not have to compose it itself.
+CSV_HEADER = ("frame", "time_s", "distance_m", "speed_mps", "x_m", "y_m", "yaw_deg",
+              "cam_x_m", "cam_y_m", "cam_z_m", "cam_roll_deg", "cam_pitch_deg",
+              "cam_yaw_deg")
 
 #: the speed profile can never need a smaller acceleration than this
 MIN_ACCEL = 0.05
@@ -56,6 +60,32 @@ class Frame:
     x: float
     y: float
     yaw: float  #: degrees, the vehicle empty's Z Euler
+
+
+@dataclass(frozen=True)
+class Mount:
+    """A camera's fixed pose in the vehicle frame (metres, XYZ euler degrees)."""
+
+    location: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    rotation_deg: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+
+def camera_world_pose(frame: Frame, mount: Mount) -> Tuple[float, ...]:
+    """The camera's world pose at ``frame``: ``(x, y, z, roll, pitch, yaw)``.
+
+    Metres and degrees, same convention as the vehicle columns.  The vehicle only
+    yaws about Z and Blender's XYZ euler composes on the left as ``Rz``, so the
+    composed rotation is exactly ``(rx, ry, rz + yaw)`` and the position is the
+    vehicle position plus the Z-rotated mount offset.
+    """
+    angle = math.radians(frame.yaw)
+    cos, sin = math.cos(angle), math.sin(angle)
+    mx, my, mz = mount.location
+    rx, ry, rz = mount.rotation_deg
+    return (frame.x + cos * mx - sin * my,
+            frame.y + sin * mx + cos * my,
+            mz,
+            rx, ry, rz + frame.yaw)
 
 
 @dataclass(frozen=True)
@@ -166,13 +196,20 @@ def plan(distance: float, speed: float, accel: float = 1.0,
                 start=(float(start[0]), float(start[1])))
 
 
-def csv_text(plan_: Plan) -> str:
-    """The per-frame truth as CSV: header plus one row per frame."""
+def csv_text(plan_: Plan, mount: Mount = Mount()) -> str:
+    """The per-frame truth as CSV: header plus one row per frame.
+
+    ``mount`` is the camera's vehicle-frame pose; each row carries the camera's
+    world pose it implies (see :func:`camera_world_pose`).
+    """
     lines = [",".join(CSV_HEADER)]
     for frame in plan_.frames:
+        camera = camera_world_pose(frame, mount)
         lines.append(
             f"{frame.index},{frame.time:.6f},{frame.distance:.6f},{frame.speed:.6f},"
-            f"{frame.x:.6f},{frame.y:.6f},{frame.yaw:.4f}")
+            f"{frame.x:.6f},{frame.y:.6f},{frame.yaw:.4f},"
+            f"{camera[0]:.6f},{camera[1]:.6f},{camera[2]:.6f},"
+            f"{camera[3]:.4f},{camera[4]:.4f},{camera[5]:.4f}")
     return "\n".join(lines) + "\n"
 
 

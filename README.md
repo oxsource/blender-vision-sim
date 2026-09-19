@@ -250,7 +250,8 @@ Object Data Properties
 
 ```text
 输入：停车场地参数 + 车辆尺寸 + 行驶参数（里程 / 速度曲线 / 帧率）
-输出：frame_%04d.png 序列 + frames.csv（逐帧时间/里程/车速/位姿）+ clip.json（整段规格）
+输出：frame_%04d.png 序列 + clip.mp4 + frames.csv（逐帧时间/里程/车速/车体与相机世界位姿）
+      + clip.json（整段规格，含相机 K/D/安装位姿）；[Export Clip…] 打包成一个 zip
 ```
 
 - **停车场**：地坪可切 **水泥 / 柏油 / 环氧**（`ground_texture`，程序化低对比度斑驳——宽污渍 + 细颗粒
@@ -272,7 +273,9 @@ Object Data Properties
 - **运动**：`DRIVE_Vehicle` 空物体承载世界位姿（车与相机挂在它下面，相机永远保持车体系安装位姿），
   逐帧关键帧由纯 Python 的运动模型给出：`constant` 匀速或 `trapezoid` 加速-巡航-刹停
   （里程不够跑满会退化成三角形，仍停在精确里程上）。
-- **录制**：`[Render Clip…]` 逐帧渲染前摄，写出 PNG 序列 + `frames.csv` + `clip.json`；
+- **录制 / 导出**：`[Render Clip…]` 逐帧渲染前摄，写出 PNG 序列 + `frames.csv` + `clip.json`；
+  `[Export Clip…]` 在同一份内容上加 **H.264 mp4**（Blender 内置 FFmpeg，不重渲染 3D）并**打包成一个 zip**。
+  `frames.csv` 的 `cam_*` 列是每帧相机的世界位姿（车体位姿 × 固定安装位姿，纯 Python 算出）。
   分辨率用 Blender 自带的 `Render ▸ Output`，渲染设置会自动还原，场景里其它灯光录制时临时屏蔽。
 - 完整设计见 [`docs/drive-scene.md`](docs/drive-scene.md)。
 

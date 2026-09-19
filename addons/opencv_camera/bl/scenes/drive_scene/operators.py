@@ -1,4 +1,4 @@
-"""Drive Scene operators: add / rebuild / reset / remove / render clip."""
+"""Drive Scene operators: add / rebuild / reset / remove / render clip / export."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import os
 
 import bpy
 from bpy.props import BoolProperty, IntProperty, StringProperty
+from bpy_extras.io_utils import ExportHelper
 
 from ....core.scenes import drive_path
 from ..base import has_scene
@@ -166,12 +167,47 @@ class OPENCV_CAM_OT_drive_render_clip(_DriveSceneOperator, bpy.types.Operator):
         return {"FINISHED"}
 
 
+class OPENCV_CAM_OT_drive_export_zip(_DriveSceneOperator, bpy.types.Operator, ExportHelper):
+    """Export the whole clip - PNG sequence, video, CSV and JSON - as one zip"""
+
+    bl_idname = "opencv_cam.drive_export_zip"
+    bl_label = "Export Clip"
+    bl_description = (
+        "Render the whole drive and pack it into one zip: frame_%04d.png, "
+        "clip.mp4 (H.264), frames.csv (per-frame speed, vehicle and camera pose) "
+        "and clip.json (K / D, mount pose, drive and render parameters). The "
+        "render resolution is Blender's own Render ▸ Output; the scene's render "
+        "settings are restored afterwards"
+    )
+    bl_options = {"REGISTER"}
+
+    filename_ext = ".zip"
+    filter_glob: StringProperty(default="*.zip", options={"HIDDEN"})
+    samples: IntProperty(name="Samples", default=64, min=1, max=4096)
+
+    def execute(self, context):
+        settings = _settings(context)
+        plan = settings.plan()
+        try:
+            report = recording.export_zip(context, settings, self.filepath,
+                                          samples=self.samples)
+        except Exception as exc:
+            settings.clip_status = f"error: {exc}"
+            self.report({"ERROR"}, f"{type(exc).__name__}: {exc}")
+            return {"CANCELLED"}
+        settings.clip_status = (f"{report['frames']} frames -> {report['filepath']} "
+                                f"({drive_path.summary(plan)})")
+        self.report({"INFO"}, settings.clip_status)
+        return {"FINISHED"}
+
+
 _CLASSES = (
     OPENCV_CAM_OT_drive_add_scene,
     OPENCV_CAM_OT_drive_rebuild,
     OPENCV_CAM_OT_drive_reset_defaults,
     OPENCV_CAM_OT_drive_remove_scene,
     OPENCV_CAM_OT_drive_render_clip,
+    OPENCV_CAM_OT_drive_export_zip,
 )
 
 
