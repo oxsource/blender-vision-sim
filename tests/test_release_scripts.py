@@ -168,6 +168,8 @@ def test_workflow_present():
     check("manual runs can still build without a tag", "tag:" in trigger)
 
     check("the release job runs the fast checks", "test_core.py" in text)
+    check("the release job enforces the version policy",
+          "test_version_policy.py" in text)
     check("the release job builds the zip", "scripts/package.py" in text)
     check("the release job publishes", "gh release create" in text)
     check("release has write permission", "contents: write" in text)

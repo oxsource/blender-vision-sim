@@ -12,6 +12,7 @@ from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from ....core.scenes import avm_layout
+from ... import compat
 from ..base import has_scene
 from .. import view as view_mod
 from . import DEFINITION, builder, controller, falcon, io as io_mod, properties
@@ -392,9 +393,7 @@ class OPENCV_CAM_OT_avm_export_bowl(_AVMSceneOperator, bpy.types.Operator, Expor
                 obj.select_set(False)
             ground.select_set(True)
             view_layer.objects.active = ground
-            bpy.ops.export_scene.gltf(
-                filepath=self.filepath, export_format="GLB", use_selection=True,
-                export_apply=True)
+            compat.export_gltf(self.filepath)
         except Exception as exc:
             self.report({"ERROR"}, f"{type(exc).__name__}: {exc}")
             return {"CANCELLED"}

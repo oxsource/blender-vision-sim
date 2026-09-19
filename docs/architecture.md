@@ -15,6 +15,7 @@ addons/opencv_camera/
 │       ├── avm_layout.py     AVM 场地方程 + points(camera) + Store JSON
 │       └── avm_coverage.py   AVM 覆盖足迹 / 可见性矩阵
 ├── bl/                  Blender 集成层
+│   ├── compat.py          版本适配唯一入口（所有跨版本 API 差异只在这里，见 §2.3）
 │   ├── properties.py      PropertyGroup / PointerProperty 定义 + Live Apply 回调
 │   ├── shader.py          OSL Text 数据块安装、编译校验、强制重编译
 │   ├── apply.py           apply_values（快，供 Live Apply）/ apply_settings（含编译）
@@ -90,6 +91,28 @@ bpy 会在注册时用 `typing.get_type_hints` 重新求值注解字符串，任
 - 后台/无 UI 会话 `icon_id` 为 0（无效），`icons.operator()` 会自动回退到内置图标；
 - 图标是**原创**线条标识（眼睛/相机/畸变网格/立方体/坐标轴），不要分发 OpenCV 官方 logo（商标）；
   每个菜单项一个图标名，`icons.kwargs(name)` / `icons.operator(..., name=...)` 统一处理回退。
+
+### 2.3 版本适配（全局机制）
+
+插件同一套代码要跑 **Blender 4.5 LTS 与 5.x**。所有跨版本的 Blender API 差异**只允许**出现在
+`bl/compat.py` 一个模块里；其它模块**禁止**：
+
+- `bpy.app.version` 分支；
+- 直接使用跨版本改名的标识符（`action.fcurves`、`BLENDER_EEVEE` / `BLENDER_EEVEE_NEXT`、
+  `Material.blend_method` / `surface_render_method`）；
+- 直接调用跨版本改名的算子（`import_scene.obj` / `wm.obj_import` / `export_scene.gltf` …）；
+- 按**名字**取着色器节点（`nodes["Principled BSDF"]`、`nodes.get("Background")`，名字会被本地化）。
+
+| 项 | 约定 |
+| --- | --- |
+| 唯一入口 | 差异集中在 `bl/compat.py`，对外是**按意图命名**的函数：`action_fcurves` / `eevee_engine` / `import_model` / `export_gltf` / `set_material_blend` / `node_of_type` |
+| 探测方式 | **特性探测**优先于版本号：读 RNA 枚举、`getattr` 试新形状并回退；未来版本保留新形状时无需改动 |
+| 记录 | 每个 shim 的 docstring 注明桥接的版本；`compat.SHIMS` 登记全部差异，`compat.report()` 打印运行版本与生效的 shim（报 bug 时附上） |
+| 强制 | `tests/test_version_policy.py`（纯 Python，进 CI）用 AST 扫描整个 `addons/`，`compat.py` 之外触碰上述 API 即失败；`core/` 本就禁止 `import bpy` |
+| 验证 | 每个 shim 都要有测试：纯 Python 部分进 `tests/test_core.py`，需要 Blender 的进 `tests/run_blender_tests.py`；集成测试在 Blender 4.5 与 5.2 上各跑一遍 |
+
+> 为什么是"机制"而不是"补丁"：一处改 API、多版本编译，靠的是**单一适配层 + 静态强制 + 多版本验证**，
+> 而不是在每个调用点各写一个 `if bpy.app.version`。新增差异时只动 `compat.py` 与它的用例。
 
 ## 3. 参数流向
 

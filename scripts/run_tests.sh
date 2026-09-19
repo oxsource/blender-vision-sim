@@ -21,6 +21,10 @@ echo "== core tests (no Blender)"
 python3 "${REPO_ROOT}/tests/test_core.py"
 
 echo
+echo "== version policy tests (no Blender)"
+python3 "${REPO_ROOT}/tests/test_version_policy.py"
+
+echo
 echo "== release tooling tests (no Blender)"
 python3 "${REPO_ROOT}/tests/test_release_scripts.py"
 

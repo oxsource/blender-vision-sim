@@ -28,7 +28,7 @@ from mathutils import Matrix, Vector  # noqa: E402
 
 import opencv_camera  # noqa: E402
 from opencv_camera.bl import apply as apply_mod
-from opencv_camera.bl import camera_factory, preview
+from opencv_camera.bl import camera_factory, compat, preview
 from opencv_camera.bl.scenes import camera_scene
 from opencv_camera.bl.properties import DEFAULT_DISTORTION, DEFAULT_INTRINSICS  # noqa: E402
 from opencv_camera.bl import selftest, shader  # noqa: E402
@@ -796,7 +796,7 @@ def test_avm_scene_builder():
     scene = setup_scene(resolution=128, samples=4)
 
     check("avm add operator registered", "avm_add_scene" in dir(bpy.ops.opencv_cam))
-    scene.render.engine = "BLENDER_EEVEE_NEXT"
+    scene.render.engine = compat.eevee_engine()
     scene.view_settings.view_transform = "AgX"
     check("add AVM scene", bpy.ops.opencv_cam.avm_add_scene() == {"FINISHED"})
     check("building switches the scene to Cycles (custom cameras need it)",
@@ -1713,7 +1713,7 @@ def test_drive_scene():
     # the keyframes are the plan, frame for frame
     plan = settings.plan()
     vehicle = bpy.data.objects["DRIVE_Vehicle"]
-    curves = vehicle.animation_data.action.fcurves
+    curves = compat.action_fcurves(vehicle.animation_data.action)
     check("one key per frame on every curve",
           curves and all(len(curve.keyframe_points) == len(plan.frames) for curve in curves),
           str([len(curve.keyframe_points) for curve in curves]))
