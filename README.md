@@ -271,12 +271,18 @@ Object Data Properties
   前摄的 **K/D/输出与安装位姿**也与 AVM 默认逐项相等（`test_drive_matches_avm_defaults` 断言），
   两场景的实验参数不会漂移。
 - **运动**：`DRIVE_Vehicle` 空物体承载世界位姿（车与相机挂在它下面，相机永远保持车体系安装位姿），
-  逐帧关键帧由纯 Python 的运动模型给出：`constant` 匀速或 `trapezoid` 加速-巡航-刹停
-  （里程不够跑满会退化成三角形，仍停在精确里程上）。
+  逐帧关键帧由纯 Python 的运动模型给出：`constant` 匀速（**默认**，无加速度）或 `trapezoid`
+  加速-巡航-刹停（里程不够跑满会退化成三角形，仍停在精确里程上）。
 - **导出**：`[Export Clip…]` 逐帧渲染前摄，把 PNG 序列 + **H.264 mp4**（Blender 内置 FFmpeg，
   不重渲染 3D）+ `frames.csv` + `clip.json` **打包成一个 zip**。
   `frames.csv` 的 `cam_*` 列是每帧相机的世界位姿（车体位姿 × 固定安装位姿，纯 Python 算出）。
   分辨率用 Blender 自带的 `Render ▸ Output`，渲染设置会自动还原，场景里其它灯光录制时临时屏蔽。
+  **`clip_quality`**（draft / balanced / high，默认 draft）只改渲染成本（采样 / 降噪 / 反弹 /
+  自适应 / 焦散 / 跨帧持久化缓存），**输出尺寸与相机 K/D 完全不变**，`high` 等于历史行为（64 采样）。
+  导出对话框默认文件名为 `drive_scene.zip`（固定值，与 .blend 名无关）。
+  GUI 导出是**逐帧模态渲染**：面板与状态栏显示 `frame k/N · xx% · ETA`，**ESC 取消**。
+  **`clip_device`**（cpu / gpu，默认 cpu）：相机是 OSL 自定义相机，Cycles 只在 CPU 与 NVIDIA
+  **OptiX** 上求值，macOS 的 **Metal** 选 GPU 会回退 CPU（保证相机正确）。
 - 完整设计见 [`docs/drive-scene.md`](docs/drive-scene.md)。
 
 ## 开发约定

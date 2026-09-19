@@ -1587,7 +1587,7 @@ def test_avm_export_bowl():
 def test_drive_scene():
     """The Drive Scene: car park, OpenCV camera, keyframed drive and a clip."""
     from opencv_camera.bl import scenes as scenes_mod
-    from opencv_camera.bl.scenes.drive_scene import builder, recording
+    from opencv_camera.bl.scenes.drive_scene import builder, properties, recording
     from opencv_camera.core.scenes import drive_lot, drive_path
 
     scene = setup_scene(resolution=64, samples=1)
@@ -1604,6 +1604,62 @@ def test_drive_scene():
           settings.root is not None and settings.root.name == "DRIVE_Root",
           str(settings.root))
     check("panels would show", scenes_mod.has_scene(bpy.context, definition))
+
+    # the clip quality presets: only the render cost changes, so they must get
+    # cheaper from high to draft while the output size stays untouched
+    draft = properties.clip_quality_preset("draft")
+    balanced = properties.clip_quality_preset("balanced")
+    high = properties.clip_quality_preset("high")
+    check("the clip defaults to the draft quality",
+          settings.clip_quality == "draft", settings.clip_quality)
+    check("the clip quality presets get cheaper towards draft",
+          draft["samples"] < balanced["samples"] < high["samples"],
+          f"{draft['samples']} / {balanced['samples']} / {high['samples']}")
+    check("the draft / balanced presets denoise and cap the bounces",
+          draft["denoise"] and balanced["denoise"]
+          and draft["max_bounces"] < balanced["max_bounces"])
+    check("the draft / balanced presets raise the adaptive threshold and drop caustics",
+          draft["adaptive_threshold"] > balanced["adaptive_threshold"]
+          and draft["caustics"] is False and balanced["caustics"] is False)
+    check("the high preset keeps the historical sample count",
+          high == {"samples": 64}, str(high))
+    check("an unknown quality falls back to balanced",
+          properties.clip_quality_preset("nonsense") == balanced)
+    check("the export default file name is stable, not the .blend's",
+          recording.default_filename() == "drive_scene.zip",
+          recording.default_filename())
+    check("the export defaults to the CPU device",
+          settings.clip_device == "cpu", settings.clip_device)
+    check("the drive defaults to a constant speed (no acceleration)",
+          settings.drive_profile == "constant", settings.drive_profile)
+    check("only OptiX may render the OSL camera on a GPU",
+          recording.gpu_can_render_osl_camera("OPTIX") is True
+          and recording.gpu_can_render_osl_camera("METAL") is False
+          and recording.gpu_can_render_osl_camera("CUDA") is False)
+    device_messages = []
+    check("asking for CPU never warns",
+          recording.resolve_device("cpu", device_messages) == "CPU"
+          and device_messages == [])
+    device_messages = []
+    device_type = recording.compute_device_type()
+    requested = recording.resolve_device("gpu", device_messages)
+    expected_device = ("GPU" if (recording.gpu_can_render_osl_camera(device_type)
+                                 and recording.enabled_osl_gpu_available())
+                       else "CPU")
+    check("a GPU request resolves against the running backend",
+          requested == expected_device, f"{device_type} -> {requested}")
+    check("a GPU request that cannot run the OSL camera warns",
+          expected_device == "GPU" or bool(device_messages),
+          str(device_messages))
+    check("format_duration formats an ETA",
+          recording.format_duration(0) == "0:00"
+          and recording.format_duration(65) == "1:05"
+          and recording.format_duration(3725) == "1:02:05"
+          and recording.format_duration(None) == "--:--",
+          recording.format_duration(65))
+    check("progress_text shows the frame, percent and ETA",
+          recording.progress_text(5, 10, 61) == "frame 5/10 · 50% · ETA 1:01",
+          recording.progress_text(5, 10, 61))
 
     target = bpy.data.collections.get("Drive Scene")
     names = sorted(obj.name for obj in target.objects)
@@ -1768,15 +1824,45 @@ def test_drive_scene():
 
     scene.render.resolution_x, scene.render.resolution_y = 96, 72
     scene.render.filepath = "//keep-me"
+    # deliberately non-default render / timeline settings, to prove the recording
+    # restores every knob it touches (device, adaptive, caustics, threads, frames)
+    scene.frame_start, scene.frame_end = 3, 5
+    scene.frame_step = 2
+    scene.cycles.use_adaptive_sampling = False
+    scene.cycles.adaptive_threshold = 0.42
+    scene.cycles.caustics_reflective = True
+    scene.cycles.caustics_refractive = True
+    scene.render.threads_mode = "FIXED"
+    scene.render.threads = 3
     before = (scene.render.filepath, scene.camera, scene.cycles.samples,
-              scene.render.image_settings.file_format)
+              scene.render.image_settings.file_format,
+              scene.cycles.device, scene.cycles.use_denoising,
+              scene.cycles.max_bounces, scene.cycles.diffuse_bounces,
+              scene.cycles.glossy_bounces, scene.render.use_persistent_data,
+              scene.cycles.use_adaptive_sampling, scene.cycles.adaptive_threshold,
+              scene.cycles.caustics_reflective,
+              scene.cycles.caustics_refractive,
+              scene.render.threads_mode, scene.render.threads,
+              scene.frame_start, scene.frame_end, scene.frame_step)
+    settings.clip_device = "gpu"
     directory = tempfile.mkdtemp(prefix="opencv_cam_drive_")
     report = recording.render_clip(bpy.context, settings, directory, samples=2)
+    settings.clip_device = "cpu"
+    expected_device = ("GPU" if (recording.gpu_can_render_osl_camera(
+        recording.compute_device_type()) and recording.enabled_osl_gpu_available())
+        else "CPU")
+    check("the render clip resolves the requested device",
+          report["device"] == expected_device,
+          f"{recording.compute_device_type()} -> {report['device']}")
     check("render clip writes every frame", report["frames"] == len(plan.frames),
           str(report["frames"]))
     check("one png per frame",
           all(os.path.exists(os.path.join(directory, recording.frame_name(frame.index)))
               for frame in plan.frames), str(directory))
+    check("the per-frame render names the pngs exactly like frame_name()",
+          sorted(name for name in os.listdir(directory) if name.endswith(".png"))
+          == [recording.frame_name(frame.index) for frame in plan.frames],
+          str(sorted(os.listdir(directory))))
     rows = open(os.path.join(directory, "frames.csv"), encoding="utf-8").read().rstrip("\n").split("\n")
     check("frames.csv: header plus one row per frame",
           rows[0] == ",".join(drive_path.CSV_HEADER) and len(rows) == len(plan.frames) + 1,
@@ -1800,15 +1886,31 @@ def test_drive_scene():
           and meta["camera"]["K"][0] > 0
           and tuple(meta["render"]["resolution"]) == (96, 72),
           str(meta["render"]))
+    check("clip.json records the quality, device and sample override",
+          meta["render"]["quality"] == "draft"
+          and meta["render"]["device"] == expected_device
+          and meta["render"]["samples"] == 2,
+          str(meta["render"]))
     check("recording restored the render settings",
           (scene.render.filepath, scene.camera, scene.cycles.samples,
-           scene.render.image_settings.file_format) == before,
-          str((scene.render.filepath, scene.cycles.samples)))
+           scene.render.image_settings.file_format,
+           scene.cycles.device, scene.cycles.use_denoising,
+           scene.cycles.max_bounces, scene.cycles.diffuse_bounces,
+           scene.cycles.glossy_bounces, scene.render.use_persistent_data,
+           scene.cycles.use_adaptive_sampling, scene.cycles.adaptive_threshold,
+           scene.cycles.caustics_reflective,
+           scene.cycles.caustics_refractive,
+           scene.render.threads_mode, scene.render.threads,
+           scene.frame_start, scene.frame_end, scene.frame_step) == before,
+          str((scene.render.filepath, scene.cycles.samples,
+               scene.cycles.device, scene.cycles.adaptive_threshold)))
 
-    # export: the same clip plus an mp4, packed into one zip
+    # export: the same clip plus an mp4, packed into one zip; no explicit
+    # samples here, so the operator must take the selected quality preset
+    settings.clip_quality = "balanced"
     zip_path = os.path.join(tempfile.mkdtemp(prefix="opencv_cam_zip_"), "clip.zip")
     check("export clip operator",
-          bpy.ops.opencv_cam.drive_export_zip(filepath=zip_path, samples=2) == {"FINISHED"})
+          bpy.ops.opencv_cam.drive_export_zip(filepath=zip_path) == {"FINISHED"})
     check("the export status is reported", settings.clip_status.startswith("9 frames"),
           settings.clip_status)
     with zipfile.ZipFile(zip_path) as archive:
@@ -1817,8 +1919,32 @@ def test_drive_scene():
           {"frames.csv", "clip.json", "clip.mp4"} <= names
           and all(recording.frame_name(frame.index) in names for frame in plan.frames),
           str(sorted(names)))
+    export_meta = json.loads(zipfile.ZipFile(zip_path).read("clip.json"))
     check("clip.json inside the zip names the video",
-          json.loads(zipfile.ZipFile(zip_path).read("clip.json"))["video"] == "clip.mp4")
+          export_meta["video"] == "clip.mp4")
+    check("the export used the selected quality preset",
+          export_meta["render"]["quality"] == "balanced"
+          and export_meta["render"]["samples"] == 24
+          and export_meta["render"]["device"] == "CPU",
+          str(export_meta["render"]))
+
+    # cancel: a cancelled render must be reported and must leave no zip behind
+    original_step = recording.ClipJob.step
+
+    def _cancelled_step(self):
+        raise recording.RenderCancelled("test cancel")
+
+    recording.ClipJob.step = _cancelled_step
+    cancel_path = os.path.join(tempfile.mkdtemp(prefix="opencv_cam_cancel_"),
+                               "cancel.zip")
+    try:
+        cancelled = bpy.ops.opencv_cam.drive_export_zip(filepath=cancel_path)
+    finally:
+        recording.ClipJob.step = original_step
+    check("a cancelled export is reported and leaves no zip",
+          cancelled == {"CANCELLED"} and not os.path.exists(cancel_path)
+          and settings.clip_status == "cancelled",
+          f"{cancelled} {settings.clip_status!r}")
 
     check("remove scene", bpy.ops.opencv_cam.drive_remove_scene() == {"FINISHED"})
     check("the panels hide after the remove",

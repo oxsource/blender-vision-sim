@@ -16,6 +16,10 @@
 | 渲染后端 | 仅 CPU / OptiX |
 | 缺失功能 | 无射线→像素逆映射（Vector pass、Window 纹理坐标不可用）；自定义相机下自适应细分有已知崩溃规避 |
 
+> **GPU 后端**：OSL 只在 **CPU 与 NVIDIA OptiX** 上求值（Cycles 源码里只有 OptiX 设备处理
+> `KERNEL_FEATURE_OSL_CAMERA`）。macOS 的 **Metal** 以及 CUDA / HIP / oneAPI 都不支持，选 GPU
+> 只会回退 CPU 或得到错误的相机。Drive Scene 的 `clip_device` 因此会拒绝非 OptiX 的 GPU。
+
 着色器契约：输入 `camera_shader_raster_position()`（0–1，像素中心，Y 向上），输出
 `position`（射线起点）、`direction`（**归一化**方向）、`throughput`（黑色即丢弃该射线）。
 相机坐标系：+X 右、+Y 上、+Z 为视线方向。
