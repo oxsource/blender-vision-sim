@@ -19,7 +19,7 @@ from mathutils import Matrix
 from ....core import paths
 from ....core.scenes import avm_coverage, avm_layout
 from ... import apply as apply_mod
-from ... import camera_factory, shader
+from ... import camera_factory, compat, shader
 from ..base import collection, link_to_collection, remove_collection_objects
 
 ROOT_NAME = "AVM_Root"
@@ -166,19 +166,6 @@ def ground_model_key(settings) -> str:
     return (f"{path}\x00{settings.ground_radius:g}\x00{settings.ground_rim_height:g}")
 
 
-def _import_model(path: str) -> None:
-    """Import a model by extension (raises on an unsupported / missing add-on)."""
-    suffix = os.path.splitext(path)[1].lower()
-    if suffix in (".glb", ".gltf"):
-        bpy.ops.import_scene.gltf(filepath=path)
-    elif suffix == ".fbx":
-        bpy.ops.import_scene.fbx(filepath=path)
-    elif suffix == ".obj":
-        bpy.ops.wm.obj_import(filepath=path)
-    else:
-        raise ValueError(f"unsupported ground model format {suffix!r}")
-
-
 def _collect_meshes(objects) -> Optional[tuple]:
     """Merge mesh objects into ``(verts, faces)`` with world transforms baked."""
     verts: List = []
@@ -213,7 +200,7 @@ def _model_geometry(path: str) -> Optional[tuple]:
     imported: List = []
     geometry: Optional[tuple] = None
     try:
-        _import_model(path)
+        compat.import_model(path)
         imported = [obj for obj in bpy.data.objects if obj.name not in before]
         geometry = _collect_meshes(imported)
     except Exception:
@@ -712,13 +699,7 @@ def _logo_material(image) -> bpy.types.Material:
         links.new(texture.outputs["Alpha"], principled.inputs["Alpha"])
     links.new(principled.outputs["BSDF"], output.inputs["Surface"])
     material.diffuse_color = (1.0, 1.0, 1.0, 1.0)
-    # EEVEE transparency (the property was renamed in 4.2)
-    for attribute, value in (("blend_method", "BLEND"), ("surface_render_method", "BLENDED")):
-        if hasattr(material, attribute):
-            try:
-                setattr(material, attribute, value)
-            except Exception:
-                pass
+    compat.set_material_blend(material)
     return material
 
 

@@ -274,6 +274,9 @@ Object Data Properties
 - 插件采用 Blender 4.2+ **Extension** 规范（`blender_manifest.toml`），不使用 `bl_info`；
 - 插件内部**只用相对导入**（扩展模式下包名是 `bl_ext.<repo>.<id>`，绝对导入会失效）；
 - `core/` 不得 `import bpy`；`bl/` 才可以访问 `bpy` / `mathutils`；
+- **版本适配是全局机制**：同一套代码要跑 Blender 4.5 LTS 与 5.x，所有跨版本 API 差异只写在
+  `bl/compat.py`（**特性探测优先**，禁止 `bpy.app.version` 分支、禁止写死改名后的枚举/算子/节点名），
+  由 `tests/test_version_policy.py` 静态强制；新增差异只动 `compat.py` 与它的用例（见 §2.3）；
 - 插件自有 PropertyGroup 是参数的唯一真源，`camera.cycles_custom[...]` 只作为写入目标；
 - 任何写 Cycles 参数的路径都必须校验 `custom_bytecode` 非空（编译失败会**静默沿用旧着色器**）；
 - 新增/修改行为都要有测试：核心逻辑进 `tests/test_core.py`，需要渲染的进 `tests/run_blender_tests.py`。

@@ -71,6 +71,7 @@ jobs:
           set -euo pipefail
           python -m compileall -q addons tests scripts
           python tests/test_core.py
+          python tests/test_version_policy.py
           python tests/test_release_scripts.py
 
       - name: Build the extension zip

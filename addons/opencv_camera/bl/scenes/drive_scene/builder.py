@@ -22,7 +22,7 @@ from mathutils import Matrix
 
 from ....core.scenes import drive_lot
 from ... import apply as apply_mod
-from ... import camera_factory
+from ... import camera_factory, compat
 from ..base import collection, link_to_collection, remove_collection_objects
 
 ROOT_NAME = "DRIVE_Root"
@@ -708,7 +708,7 @@ def apply_drive(scene: bpy.types.Scene, vehicle: bpy.types.Object, settings) -> 
         vehicle.keyframe_insert("rotation_euler", frame=frame.index)
     animation = vehicle.animation_data
     if animation is not None and animation.action is not None:
-        for curve in animation.action.fcurves:
+        for curve in compat.action_fcurves(animation.action):
             for key in curve.keyframe_points:
                 key.interpolation = "LINEAR"
     scene.frame_start = plan.frames[0].index
@@ -733,7 +733,7 @@ def _ensure_render_setup(scene: bpy.types.Scene, messages: List[str]) -> None:
     if scene.world is None:
         scene.world = bpy.data.worlds.new("World")
     scene.world.use_nodes = True
-    background = scene.world.node_tree.nodes.get("Background")
+    background = compat.node_of_type(scene.world.node_tree, "BACKGROUND")
     if background is not None:
         # a dim ambient: the car park is lit by its own ceiling lamps
         background.inputs[0].default_value = (0.045, 0.047, 0.05, 1.0)
