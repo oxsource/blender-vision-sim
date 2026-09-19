@@ -64,7 +64,7 @@
 
 `core/scenes/drive_path.py` —— 不依赖 `bpy`，可单测：
 
-- **速度曲线**：`constant`（整段匀速）/ `trapezoid`（加速 → 巡航 → 刹停）；
+- **速度曲线**：`constant`（整段匀速，**默认**）/ `trapezoid`（加速 → 巡航 → 刹停）；
   里程不够跑满两条斜坡时自动退化为**三角形**（峰值降到刚好停在该里程上，绝不冲过头）；
 - **采样**：`t_n = n / fps`，帧数 `ceil(T·fps) + 1`，末帧落在**精确的 T**（`T·fps` 不是整数时最后一步略短，CSV 里的 `time_s` 才是权威）；
 - **每帧真值**：`Frame(index, time, distance, speed, x, y, yaw)`，位姿 = 起点 + 前向 × 里程，前向 = `(-sin(yaw), cos(yaw))`（与 Blender 的 Z 欧拉一致）。
@@ -85,10 +85,13 @@ Blender 侧把**同一份 plan** 写进关键帧（每帧一个 key，LINEAR）�
 ```
 
 - **分辨率用 Blender 自带的 `Render ▸ Output`**（插件不另设输出尺寸），`clip.json` 记录实际尺寸；内参按渲染分辨率换算后写入 `K`。
+- **默认文件名** `drive_scene.zip`（固定值，与当前 .blend 的文件名无关）。
+- **质量档位** `clip_quality`：`draft`（默认）/ `balanced` / `high`。只改**渲染成本**（采样数、降噪、光追反弹上限、自适应采样阈值、焦散、跨帧持久化缓存），**输出尺寸与相机 K/D 完全不变**；`high` 等于历史行为（64 采样、不改降噪/反弹）。当前实际采样数写进 `clip.json` 的 `render.samples`，档位名写进 `render.quality`。
+- **渲染设备** `clip_device`：`cpu`（默认）/ `gpu`（仅 NVIDIA OptiX）。OpenCV 相机是 **OSL 着色器**，Cycles 只在 **CPU 与 OptiX** 上求值；macOS 的 **Metal**、以及 CUDA/HIP/oneAPI 都不支持，选 `gpu` 会被**拒绝并回退 CPU**（状态里给出原因），保证相机正确。实际使用的设备写进 `clip.json` 的 `render.device`。
 - `frames.csv` 的 `cam_*` 列是**每帧相机的世界位姿**（车体位姿 × 固定安装位姿，由 `core/scenes/drive_path.camera_world_pose` 纯 Python 算出），下游不必自己组合。
 - **视频**用 Blender 内置 FFmpeg（H.264/mp4）：把已渲染的 PNG 序列喂给一个临时序列编辑器场景编码，**不重渲染** 3D 场景，编完即删。
-- 录制时**临时屏蔽场景里不属于本场景的灯**（新建 Blender 场景自带点光，否则每段素材的光照都不一样），渲染设置（filepath / 格式 / 采样 / 相机 / 当前帧）整体保存并恢复。
-- P0 是**阻塞式**整段渲染（与 `Export Falcon` 一致）；长片段建议先小尺寸试跑，可中断/进度条见 P1。
+- 录制时**临时屏蔽场景里不属于本场景的灯**（新建 Blender 场景自带点光，否则每段素材的光照都不一样），渲染设置（引擎 / 设备 / 格式 / 采样 / 降噪 / 自适应 / 焦散 / 反弹 / 线程 / 持久化 / 时间轴 / 相机 / 当前帧）整体保存并恢复。
+- **进度与中断**：`[Export Clip…]` 在 GUI 里是**模态逐帧渲染**（`ClipJob` 每 tick 渲一帧），面板与状态栏实时显示 `frame k/N · xx% · ETA m:ss`，**按 ESC 中断**；中断时不编码、不打包，`clip_status` 记为 `cancelled`。无头 / 脚本路径走同一个 `ClipJob` 的同步驱动。单帧渲染期间面板仍不刷新（Blender 主线程限制），帧与帧之间持续更新。
 
 ## 6. 参数与面板
 
@@ -97,8 +100,9 @@ Blender 侧把**同一份 plan** 写进关键帧（每帧一个 key，LINEAR）�
 - **概览**：地块尺寸 + `N frames @ fps`、时长、里程、峰值速度 + 「巡航速度下每帧位移 = v / fps」（选速度与帧率时最实用的一个数）；
 - **Car park**：`aisle_length` / `aisle_width` / `bay_depth` / `bay_width` / `ground_texture`(concrete/asphalt/epoxy/checker/plain) / `show_bays` / `bay_numbers` / `parked_cars` / `pillar_count` / `light_energy` / `shadows`；
 - **Vehicle**：长 / 宽 / 高 / 离地间隙；
-- **Drive**：`drive_distance` / `drive_speed` / `drive_profile` / `drive_accel` / `drive_fps` / `drive_heading`；
+- **Drive**：`drive_distance` / `drive_speed` / `drive_profile`（默认 `constant` 匀速）/ `drive_accel`（仅 `trapezoid` 显示）/ `drive_fps` / `drive_heading`；
 - **Show / Hide**：地面（含编号）/ 围墙（含立柱）/ 停放的车 / 自车（只切显隐、不重建；顶灯不属于任何图层，隐藏围墙不会把画面弄黑）；
+- **Record**：`clip_quality`（draft / balanced / high，默认 draft）与 `clip_device`（cpu / gpu，默认 cpu）—— 只影响渲染成本与后端，输出尺寸与相机参数不变；导出中面板显示进度与 ETA，**ESC 取消**；
 - **动作**：`[Rebuild]` `[Reset Defaults]` `[Frame View]` `[Export Clip…]`（PNG + mp4 + csv + json 打包成 zip）`[Remove Drive Scene]`。
 
 ## 7. 模块划分
@@ -111,8 +115,8 @@ bl/scenes/drive_scene/
 ├── properties.py                    # scene.drive_scene（地块 / 车辆 / 行驶 / 图层）
 ├── builder.py                       # 地坪+标线、立柱、围墙、顶灯、车模、相机、关键帧
 ├── controller.py                    # 去抖重建
-├── recording.py                     # 逐帧渲染 → PNG + frames.csv + clip.json；PNG → mp4；打包 zip
-├── operators.py                     # opencv_cam.drive_*
+├── recording.py                     # ClipJob（逐帧渲染/进度/ETA/设备）→ PNG + frames.csv + clip.json；PNG → mp4；打包 zip
+├── operators.py                     # opencv_cam.drive_*（含模态 Export Clip，ESC 取消）
 └── ui.py                            # 两个面板
 ```
 
@@ -120,7 +124,7 @@ bl/scenes/drive_scene/
 
 - `tests/test_core.py::test_drive_path`：速度曲线（匀速/梯形/退化三角形）、采样（`v = ds/dt`、单调性、末帧落在精确 T）、CSV 契约（表头、行数、精度、**每帧相机世界位姿列**、零里程）；
 - `tests/test_core.py::test_drive_lot`：车位数量/编号（A01…/B01…）/位置、分隔线等距且铺满地块、立柱落在车位排内、**停放车不杵进立柱、不超车位、车头朝墙、均匀铺开、可复现**；
-- `tests/run_blender_tests.py::test_drive_scene`：对象命名与集合、地坪材质槽与**程序化噪声**、中线标线存在、地块覆盖里程、停放车（数量/朝向/车漆表/图层开关）、编号（数量、FONT 平铺、在车道内、开关会增删对象）、相机（Custom + bytecode + minibus K + 车体系位姿）、**关键帧与纯 Python 位姿逐帧一致**、时间轴、小尺寸录 9 帧（PNG 数、CSV 行与速度/相机位姿列、clip.json 的 K/尺寸/挂载系）、**Export Clip 产出的 zip 含 PNG+mp4+csv+json**、渲染设置与外部灯光的恢复、移除后对象清理。
+- `tests/run_blender_tests.py::test_drive_scene`：对象命名与集合、地坪材质槽与**程序化噪声**、中线标线存在、地块覆盖里程、停放车（数量/朝向/车漆表/图层开关）、编号（数量、FONT 平铺、在车道内、开关会增删对象）、相机（Custom + bytecode + minibus K + 车体系位姿）、**关键帧与纯 Python 位姿逐帧一致**、时间轴、小尺寸录 9 帧（PNG 数、CSV 行与速度/相机位姿列、clip.json 的 K/尺寸/挂载系）、**质量档位（draft < balanced < high 的成本、自适应/焦散、未知档回退）**、**设备解析（OptiX 才允许 GPU、其余回退 CPU 并告警、`render.device` 落盘）**、**`format_duration` / `progress_text`**、**Export Clip 产出的 zip 含 PNG+mp4+csv+json**、**逐帧 PNG 命名与 `frame_name` 逐一致、取消时报告 `cancelled` 且不留下 zip**、渲染设置（含设备/降噪/自适应/焦散/反弹/线程/持久化/时间轴）与外部灯光的恢复、移除后对象清理。
 
 ## 9. 分期
 
@@ -133,7 +137,8 @@ bl/scenes/drive_scene/
 
 ## 10. 风险与注意点
 
-- **渲染耗时**：1280×960 × 上百帧的 Cycles CPU 不便宜 —— 默认只录前摄，先小尺寸试跑；
+- **渲染耗时**：1280×960 × 上百帧的 Cycles CPU 不便宜 —— 默认只录前摄，`clip_quality` 默认 `draft`（8 采样 + 降噪 + 2 次反弹 + 自适应采样 + 关焦散 + 跨帧持久化缓存），出片要更干净可升到 `balanced` / `high`，先小尺寸试跑；
+- **GPU 基本用不上（macOS）**：相机是 OSL 自定义相机，Cycles 的 OSL 只在 **CPU 与 NVIDIA OptiX** 上求值，macOS 的 Metal 不支持 —— 所以 `clip_device=gpu` 在本机只会回退 CPU；想用 GPU 需要带 NVIDIA 显卡（OptiX）的机器。导出会强制/校验设备，绝不让 GPU 破坏相机；
 - **纹理要像真实停车场、但要有信号**：纯棋盘等于"送分"（对齐误差天然小），单一尺度的噪声又**自相似**
   （很多平移都拟合得差不多）；而裂缝网格、高对比斑点又太花、不像真地面。`ground_texture` 提供三种真实
   地坪——`concrete`（水泥，中灰哑光）、`asphalt`（柏油，近黑哑光 + 骨料亮点）、`epoxy`（环氧，浅灰半光）

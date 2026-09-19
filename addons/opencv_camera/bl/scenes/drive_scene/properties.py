@@ -37,9 +37,55 @@ GROUND_TEXTURES = [
 ]
 
 DRIVE_PROFILES = [
-    ("trapezoid", "Trapezoid", "Accelerate to the cruise speed, cruise, brake to a stop"),
     ("constant", "Constant", "Hold one speed for the whole drive"),
+    ("trapezoid", "Trapezoid", "Accelerate to the cruise speed, cruise, brake to a stop"),
 ]
+
+#: Clip export quality presets.  Only the render *cost* changes - the output
+#: size and the camera (K / D) are identical at every setting.  ``high`` pins
+#: nothing but the sample count, i.e. it reproduces the historical export.
+CLIP_QUALITIES = [
+    ("draft", "Draft", "Fastest: 8 samples, denoised, 2 light bounces"),
+    ("balanced", "Balanced", "24 samples, denoised, 4 light bounces"),
+    ("high", "High", "64 samples, the scene's own denoise / bounce settings"),
+]
+
+CLIP_QUALITY_PRESETS = {
+    "draft": {
+        "samples": 8,
+        "denoise": True,
+        "max_bounces": 2,
+        "diffuse_bounces": 1,
+        "glossy_bounces": 1,
+        "adaptive_threshold": 0.1,
+        "caustics": False,
+    },
+    "balanced": {
+        "samples": 24,
+        "denoise": True,
+        "max_bounces": 4,
+        "diffuse_bounces": 2,
+        "glossy_bounces": 2,
+        "adaptive_threshold": 0.05,
+        "caustics": False,
+    },
+    "high": {
+        "samples": 64,
+    },
+}
+
+#: Render devices the export may ask for.  The OpenCV camera is an OSL shader,
+#: which Cycles only evaluates on CPU and NVIDIA OptiX, so ``gpu`` is a no-op
+#: (with a warning) on every other backend.
+CLIP_DEVICES = [
+    ("cpu", "CPU", "Always correct - the only backend on macOS / Metal"),
+    ("gpu", "GPU (OptiX)", "Faster, but only NVIDIA OptiX can run the OSL camera"),
+]
+
+
+def clip_quality_preset(key: str) -> dict:
+    """The Cycles settings for a quality key (unknown keys fall back to balanced)."""
+    return dict(CLIP_QUALITY_PRESETS.get(str(key), CLIP_QUALITY_PRESETS["balanced"]))
 
 
 def _schedule(self, context) -> None:
@@ -137,10 +183,13 @@ class DriveSceneSettings(bpy.types.PropertyGroup):
         update=_schedule)
     drive_accel: FloatProperty(
         name="Accel", default=1.0, min=0.05, max=10.0, unit="ACCELERATION",
-        description="Acceleration and braking of the trapezoid profile",
+        description="Acceleration and braking of the trapezoid profile; unused "
+                    "by the constant profile",
         update=_schedule)
     drive_profile: EnumProperty(
-        name="Profile", items=DRIVE_PROFILES, default="trapezoid",
+        name="Profile", items=DRIVE_PROFILES, default="constant",
+        description="constant holds one speed; trapezoid accelerates to the "
+                    "cruise speed, cruises, then brakes to a stop",
         update=_schedule)
     drive_fps: IntProperty(
         name="FPS", default=10, min=1, max=120,
@@ -151,6 +200,18 @@ class DriveSceneSettings(bpy.types.PropertyGroup):
         name="Heading", default=0.0, min=-180.0, max=180.0,
         description="Driving direction [deg]; 0 = +Y (the aisle), the vehicle's nose",
         update=_schedule)
+
+    # -- clip export --------------------------------------------------------
+    clip_quality: EnumProperty(
+        name="Quality", items=CLIP_QUALITIES, default="draft",
+        description="Render quality of the exported clip; the image size and the "
+                    "camera stay the same at every setting, only the render cost "
+                    "changes (the video is always H.264)")
+    clip_device: EnumProperty(
+        name="Device", items=CLIP_DEVICES, default="cpu",
+        description="Cycles render device for the export. The OpenCV camera is an "
+                    "OSL shader, which Cycles only evaluates on CPU and NVIDIA "
+                    "OptiX; asking for GPU on any other backend falls back to CPU")
 
     # -- layers (toggle visibility only, no rebuild) ------------------------
     show_ground: BoolProperty(name="Floor", default=True, update=_update_visibility)

@@ -59,8 +59,11 @@ def _drive(layout, settings) -> None:
     column = layout.column(align=True)
     column.use_property_split = True
     column.label(text="Drive")
-    for name in ("drive_distance", "drive_speed", "drive_profile", "drive_accel",
-                 "drive_fps", "drive_heading"):
+    for name in ("drive_distance", "drive_speed", "drive_profile"):
+        column.prop(settings, name)
+    if settings.drive_profile == "trapezoid":
+        column.prop(settings, "drive_accel")
+    for name in ("drive_fps", "drive_heading"):
         column.prop(settings, name)
 
 
@@ -75,9 +78,17 @@ def _layers(layout, settings) -> None:
 def _record(layout, settings) -> None:
     box = layout.box()
     box.label(text="Record", icon="RENDER_ANIMATION")
+    column = box.column(align=True)
+    column.use_property_split = True
+    column.prop(settings, "clip_quality")
+    column.prop(settings, "clip_device")
     box.operator("opencv_cam.drive_export_zip", text="Export Clip…", icon="EXPORT")
     if settings.clip_status:
-        box.label(text=settings.clip_status, icon="CHECKMARK")
+        running = settings.clip_status.startswith("frame ")
+        box.label(text=settings.clip_status,
+                  icon="TIME" if running else "CHECKMARK")
+        if running:
+            box.label(text="press ESC to cancel", icon="INFO")
 
 
 class _DrivePanel(ScenePanel):

@@ -41,7 +41,7 @@ _RESET_KEYS = (
     "light_energy", "shadows",
     "car_length", "car_width", "car_height", "car_clearance",
     "drive_distance", "drive_speed", "drive_accel", "drive_profile",
-    "drive_fps", "drive_heading",
+    "drive_fps", "drive_heading", "clip_quality", "clip_device",
 )
 
 
@@ -136,18 +136,35 @@ class OPENCV_CAM_OT_drive_export_zip(_DriveSceneOperator, bpy.types.Operator, Ex
         "Render the whole drive and pack it into one zip: frame_%04d.png, "
         "clip.mp4 (H.264), frames.csv (per-frame speed, vehicle and camera pose) "
         "and clip.json (K / D, mount pose, drive and render parameters). The "
-        "render resolution is Blender's own Render ▸ Output; the scene's render "
-        "settings are restored afterwards"
+        "render cost comes from the Clip Quality setting and the device from "
+        "Clip Device; the render resolution is Blender's own Render ▸ Output and "
+        "the scene's render settings are restored afterwards. In the UI the "
+        "export renders frame by frame with a progress bar, an ETA and ESC to "
+        "cancel; in background mode it runs synchronously"
     )
     bl_options = {"REGISTER"}
 
     filename_ext = ".zip"
     filter_glob: StringProperty(default="*.zip", options={"HIDDEN"})
-    samples: IntProperty(name="Samples", default=64, min=1, max=4096)
+    samples: IntProperty(
+        name="Samples", default=0, min=0, max=4096,
+        description="Override the Clip Quality sample count; 0 uses the quality "
+                    "preset as-is")
+
+    def invoke(self, context, event):
+        if not self.filepath:
+            self.filepath = recording.default_filename()
+        return super().invoke(context, event)
 
     def execute(self, context):
         settings = _settings(context)
         plan = settings.plan()
+        if bpy.app.background or getattr(context, "window", None) is None:
+            return self._run_sync(context, settings, plan)
+        return self._start_modal(context, settings, plan)
+
+    # -- background / script path (synchronous) -----------------------------
+    def _run_sync(self, context, settings, plan):
         try:
             report = recording.export_zip(context, settings, self.filepath,
                                           samples=self.samples)
@@ -155,10 +172,90 @@ class OPENCV_CAM_OT_drive_export_zip(_DriveSceneOperator, bpy.types.Operator, Ex
             settings.clip_status = f"error: {exc}"
             self.report({"ERROR"}, f"{type(exc).__name__}: {exc}")
             return {"CANCELLED"}
+        return self._report_result(settings, plan, report)
+
+    # -- UI path (modal, one frame per timer tick) --------------------------
+    def _start_modal(self, context, settings, plan):
+        try:
+            job = recording.ClipJob(context, settings, filepath=self.filepath,
+                                    samples=self.samples, encode=True, pack=True)
+            job.start()
+        except Exception as exc:
+            settings.clip_status = f"error: {exc}"
+            self.report({"ERROR"}, f"{type(exc).__name__}: {exc}")
+            return {"CANCELLED"}
+        self._job = job
+        self._settings = settings
+        self._plan = plan
+        self._timer = context.window_manager.event_timer_add(0.01, window=context.window)
+        context.window_manager.modal_handler_add(self)
+        context.window_manager.progress_begin(0, max(1, job.total))
+        settings.clip_status = job.status_text()
+        for message in job.messages:
+            self.report({"WARNING"}, message)
+        return {"RUNNING_MODAL"}
+
+    def modal(self, context, event):
+        window_manager = context.window_manager
+        if event.type == "ESC":
+            return self._cancel(context, "cancelled by ESC")
+        if event.type == "TIMER":
+            job = self._job
+            try:
+                if job.done >= job.total:
+                    report = job.finish()
+                    self._teardown(context)
+                    return self._report_result(self._settings, self._plan, report)
+                job.step()
+            except recording.RenderCancelled:
+                return self._cancel(context, "render cancelled")
+            except Exception as exc:
+                self._job.cancel()
+                self._teardown(context)
+                self._settings.clip_status = f"error: {exc}"
+                self.report({"ERROR"}, f"{type(exc).__name__}: {exc}")
+                return {"CANCELLED"}
+            window_manager.progress_update(job.done)
+            self._settings.clip_status = job.status_text()
+            _redraw_ui(context)
+        return {"RUNNING_MODAL"}
+
+    def _cancel(self, context, reason):
+        self._job.cancel()
+        self._teardown(context)
+        self._settings.clip_status = "cancelled"
+        self.report({"INFO"}, f"Export cancelled ({reason})")
+        return {"CANCELLED"}
+
+    def _teardown(self, context):
+        window_manager = context.window_manager
+        window_manager.progress_end()
+        timer = getattr(self, "_timer", None)
+        if timer is not None:
+            window_manager.event_timer_remove(timer)
+            self._timer = None
+
+    def _report_result(self, settings, plan, report):
+        if report.get("cancelled"):
+            settings.clip_status = "cancelled"
+            self.report({"INFO"}, "Export cancelled")
+            return {"CANCELLED"}
         settings.clip_status = (f"{report['frames']} frames -> {report['filepath']} "
                                 f"({drive_path.summary(plan)})")
+        for message in report.get("messages") or []:
+            self.report({"WARNING"}, message)
         self.report({"INFO"}, settings.clip_status)
         return {"FINISHED"}
+
+
+def _redraw_ui(context) -> None:
+    """Repaint every window so the panel's progress label updates during a modal run."""
+    try:
+        for window in context.window_manager.windows:
+            for area in window.screen.areas:
+                area.tag_redraw()
+    except Exception:
+        pass
 
 
 _CLASSES = (
