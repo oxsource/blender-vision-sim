@@ -1,8 +1,6 @@
-"""Drive Scene operators: add / rebuild / reset / remove / render clip / export."""
+"""Drive Scene operators: add / rebuild / reset / remove / export clip."""
 
 from __future__ import annotations
-
-import os
 
 import bpy
 from bpy.props import BoolProperty, IntProperty, StringProperty
@@ -129,44 +127,6 @@ class OPENCV_CAM_OT_drive_remove_scene(_DriveSceneOperator, bpy.types.Operator):
         return {"FINISHED"}
 
 
-class OPENCV_CAM_OT_drive_render_clip(_DriveSceneOperator, bpy.types.Operator):
-    """Render the drive clip: one PNG per frame, plus frames.csv and clip.json"""
-
-    bl_idname = "opencv_cam.drive_render_clip"
-    bl_label = "Render Clip"
-    bl_description = (
-        "Render the whole drive to <directory>/frame_%04d.png and write "
-        "frames.csv (per-frame speed and pose) and clip.json next to it. The "
-        "render resolution is Blender's own Render ▸ Output; the scene's render "
-        "settings are restored afterwards"
-    )
-    bl_options = {"REGISTER"}
-
-    directory: StringProperty(name="Directory", subtype="DIR_PATH")
-    samples: IntProperty(name="Samples", default=64, min=1, max=4096)
-
-    def invoke(self, context, event):
-        if not self.directory:
-            self.directory = bpy.path.abspath("//") or os.path.expanduser("~")
-        context.window_manager.fileselect_add(self)
-        return {"RUNNING_MODAL"}
-
-    def execute(self, context):
-        settings = _settings(context)
-        plan = settings.plan()
-        try:
-            report = recording.render_clip(context, settings, self.directory,
-                                           samples=self.samples)
-        except Exception as exc:
-            settings.clip_status = f"error: {exc}"
-            self.report({"ERROR"}, f"{type(exc).__name__}: {exc}")
-            return {"CANCELLED"}
-        settings.clip_status = (f"{report['frames']} frames -> {report['directory']} "
-                                f"({drive_path.summary(plan)})")
-        self.report({"INFO"}, settings.clip_status)
-        return {"FINISHED"}
-
-
 class OPENCV_CAM_OT_drive_export_zip(_DriveSceneOperator, bpy.types.Operator, ExportHelper):
     """Export the whole clip - PNG sequence, video, CSV and JSON - as one zip"""
 
@@ -206,7 +166,6 @@ _CLASSES = (
     OPENCV_CAM_OT_drive_rebuild,
     OPENCV_CAM_OT_drive_reset_defaults,
     OPENCV_CAM_OT_drive_remove_scene,
-    OPENCV_CAM_OT_drive_render_clip,
     OPENCV_CAM_OT_drive_export_zip,
 )
 

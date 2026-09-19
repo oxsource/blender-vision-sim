@@ -273,8 +273,8 @@ Object Data Properties
 - **运动**：`DRIVE_Vehicle` 空物体承载世界位姿（车与相机挂在它下面，相机永远保持车体系安装位姿），
   逐帧关键帧由纯 Python 的运动模型给出：`constant` 匀速或 `trapezoid` 加速-巡航-刹停
   （里程不够跑满会退化成三角形，仍停在精确里程上）。
-- **录制 / 导出**：`[Render Clip…]` 逐帧渲染前摄，写出 PNG 序列 + `frames.csv` + `clip.json`；
-  `[Export Clip…]` 在同一份内容上加 **H.264 mp4**（Blender 内置 FFmpeg，不重渲染 3D）并**打包成一个 zip**。
+- **导出**：`[Export Clip…]` 逐帧渲染前摄，把 PNG 序列 + **H.264 mp4**（Blender 内置 FFmpeg，
+  不重渲染 3D）+ `frames.csv` + `clip.json` **打包成一个 zip**。
   `frames.csv` 的 `cam_*` 列是每帧相机的世界位姿（车体位姿 × 固定安装位姿，纯 Python 算出）。
   分辨率用 Blender 自带的 `Render ▸ Output`，渲染设置会自动还原，场景里其它灯光录制时临时屏蔽。
 - 完整设计见 [`docs/drive-scene.md`](docs/drive-scene.md)。

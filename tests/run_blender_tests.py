@@ -1771,8 +1771,9 @@ def test_drive_scene():
     before = (scene.render.filepath, scene.camera, scene.cycles.samples,
               scene.render.image_settings.file_format)
     directory = tempfile.mkdtemp(prefix="opencv_cam_drive_")
-    check("render clip operator",
-          bpy.ops.opencv_cam.drive_render_clip(directory=directory, samples=2) == {"FINISHED"})
+    report = recording.render_clip(bpy.context, settings, directory, samples=2)
+    check("render clip writes every frame", report["frames"] == len(plan.frames),
+          str(report["frames"]))
     check("one png per frame",
           all(os.path.exists(os.path.join(directory, recording.frame_name(frame.index)))
               for frame in plan.frames), str(directory))
@@ -1803,13 +1804,13 @@ def test_drive_scene():
           (scene.render.filepath, scene.camera, scene.cycles.samples,
            scene.render.image_settings.file_format) == before,
           str((scene.render.filepath, scene.cycles.samples)))
-    check("the clip status is reported", settings.clip_status.startswith("9 frames"),
-          settings.clip_status)
 
     # export: the same clip plus an mp4, packed into one zip
     zip_path = os.path.join(tempfile.mkdtemp(prefix="opencv_cam_zip_"), "clip.zip")
     check("export clip operator",
           bpy.ops.opencv_cam.drive_export_zip(filepath=zip_path, samples=2) == {"FINISHED"})
+    check("the export status is reported", settings.clip_status.startswith("9 frames"),
+          settings.clip_status)
     with zipfile.ZipFile(zip_path) as archive:
         names = set(archive.namelist())
     check("the zip holds the pngs, csv, json and mp4",
