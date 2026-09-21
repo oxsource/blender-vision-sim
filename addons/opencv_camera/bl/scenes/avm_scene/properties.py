@@ -24,17 +24,16 @@ from bpy.props import (
     StringProperty,
 )
 
+from ....core.scenes import avm_cameras, vehicle
 from .. import base
 from ..base import SceneDefinition  # noqa: F401  (re-exported for convenience)
 from . import DEFINITION
 
-#: enum items must be a plain module level list (annotations are re-evaluated)
-CAMERA_ITEMS = [
-    ("front", "Front", "Front camera"),
-    ("back", "Back", "Rear camera"),
-    ("left", "Left", "Left camera"),
-    ("right", "Right", "Right camera"),
-]
+#: enum items must be a plain module level list (annotations are re-evaluated).
+#: The four rig roles come from ``core.scenes.avm_cameras`` - the Drive Scene
+#: reads the same list, so the two panels cannot offer different cameras
+#: (``docs/drive-scene-multicam.md`` section 4).
+CAMERA_ITEMS = avm_cameras.enum_items()
 
 
 def _schedule(self, context) -> None:
@@ -104,21 +103,25 @@ class AVMSceneSettings(bpy.types.PropertyGroup):
                           update=_schedule)
 
     # -- car ----------------------------------------------------------------
+    # The defaults are the shared minibus (:mod:`core.scenes.vehicle`) so the AVM
+    # car and the Drive car are the same car by construction; ``build()`` still
+    # overwrites the height with the preset's camera mount height.
     car_follow_core: BoolProperty(
         name="Follow Core", default=True,
         description="Use the core footprint as the car length/width",
         update=_schedule)
-    car_length: FloatProperty(name="Length", default=4.8, min=0.1, max=30.0,
-                              unit="LENGTH", update=_schedule)
-    car_width: FloatProperty(name="Width", default=2.4, min=0.1, max=30.0,
-                             unit="LENGTH", update=_schedule)
+    car_length: FloatProperty(name="Length", default=vehicle.BODY_LENGTH_M,
+                              min=0.1, max=30.0, unit="LENGTH", update=_schedule)
+    car_width: FloatProperty(name="Width", default=vehicle.BODY_WIDTH_M,
+                             min=0.1, max=30.0, unit="LENGTH", update=_schedule)
     car_height: FloatProperty(
-        name="Height", default=2.9, min=0.05, max=10.0, unit="LENGTH",
+        name="Height", default=vehicle.BODY_HEIGHT_M, min=0.05, max=10.0,
+        unit="LENGTH",
         description="Body height; keep it at or above the camera mount height so "
                     "the cameras sit on the body",
         update=_schedule)
-    car_clearance: FloatProperty(name="Clearance", default=0.0, min=0.0, max=2.0,
-                                 unit="LENGTH", update=_schedule)
+    car_clearance: FloatProperty(name="Clearance", default=vehicle.GROUND_CLEARANCE_M,
+                                 min=0.0, max=2.0, unit="LENGTH", update=_schedule)
 
     # -- ground / blocks ----------------------------------------------------
     use_ground_model: BoolProperty(

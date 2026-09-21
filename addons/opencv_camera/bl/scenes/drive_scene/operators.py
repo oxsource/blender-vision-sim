@@ -34,26 +34,30 @@ class _DriveSceneOperator(_DriveOperator):
         return _scene(context) is not None and has_scene(context, DEFINITION)
 
 
-#: every setting :class:`OPENCV_CAM_OT_drive_reset_defaults` puts back
+#: every setting :class:`OPENCV_CAM_OT_drive_reset_defaults` puts back.  The
+#: per-camera record switches are a collection, so they are reset separately
+#: through ``settings.reset_cameras()``.
 _RESET_KEYS = (
     "aisle_length", "aisle_width", "bay_depth", "bay_width", "show_bays",
     "bay_numbers", "parked_cars", "pillar_count", "ground_texture",
     "light_energy", "shadows",
     "car_length", "car_width", "car_height", "car_clearance",
     "drive_distance", "drive_speed", "drive_accel", "drive_profile",
-    "drive_fps", "drive_heading", "clip_quality", "clip_device",
+    "drive_fps", "drive_heading", "active_camera", "clip_quality", "clip_device",
+    "clip_keep_frames",
 )
 
 
 class OPENCV_CAM_OT_drive_add_scene(_DriveOperator, bpy.types.Operator):
-    """Create the Drive Scene (car park, minibus, front camera, keyframed drive)"""
+    """Create the Drive Scene (car park, minibus, four cameras, keyframed drive)"""
 
     bl_idname = "opencv_cam.drive_add_scene"
     bl_label = "Drive Scene"
     bl_description = (
         "Create the Drive Scene: an indoor car park with lane markings, a "
-        "minibus carrying the OpenCV front camera at its real mount pose, and "
-        "the planned drive keyframed on the vehicle"
+        "minibus carrying the four OpenCV cameras at their real mount poses "
+        "(front / back / left / right, the same calibration as the AVM Scene), "
+        "and the planned drive keyframed on the vehicle"
     )
     bl_options = {"REGISTER", "UNDO"}
 
@@ -109,8 +113,39 @@ class OPENCV_CAM_OT_drive_reset_defaults(_DriveSceneOperator, bpy.types.Operator
         settings = _settings(context)
         for name in _RESET_KEYS:
             settings.property_unset(name)
+        settings.reset_cameras()
         controller.rebuild_now(context)
         self.report({"INFO"}, "Drive Scene defaults restored")
+        return {"FINISHED"}
+
+
+class OPENCV_CAM_OT_drive_sync_cameras(_DriveSceneOperator, bpy.types.Operator):
+    """Copy the live AVM Scene cameras onto the Drive Scene cameras"""
+
+    bl_idname = "opencv_cam.drive_sync_cameras"
+    bl_label = "Sync Cameras from AVM Scene"
+    bl_description = (
+        "Overwrite the four Drive cameras' intrinsics and mount poses with those "
+        "of the AVM_Cam_* objects in this file. Use it after adjusting the AVM "
+        "Scene by hand; the reproducible source stays the bundled calibration "
+        "preset, so a fresh Drive Scene reads that instead"
+    )
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        from ....core.scenes import avm_cameras
+        scene = _scene(context)
+        settings = _settings(context)
+        if not any(bpy.data.objects.get(avm_cameras.object_name("AVM_Cam_", key))
+                   for key in avm_cameras.CAMERAS):
+            # a warning, not an error: this is "nothing to do", not a failure,
+            # and it keeps bpy.ops from raising at the caller (same style as
+            # drive_add_scene's "already exists")
+            self.report({"WARNING"}, "no AVM Scene in this file - nothing to sync from")
+            return {"CANCELLED"}
+        messages = builder.sync_cameras_from_avm(settings, scene)
+        for message in messages:
+            self.report({"INFO"}, message)
         return {"FINISHED"}
 
 
@@ -133,9 +168,10 @@ class OPENCV_CAM_OT_drive_export_zip(_DriveSceneOperator, bpy.types.Operator, Ex
     bl_idname = "opencv_cam.drive_export_zip"
     bl_label = "Export Clip"
     bl_description = (
-        "Render the whole drive and pack it into one zip: frame_%04d.png, "
-        "clip.mp4 (H.264), frames.csv (per-frame speed, vehicle and camera pose) "
-        "and clip.json (K / D, mount pose, drive and render parameters). The "
+        "Render the whole drive and pack it into one zip: clip.mp4 (H.264), "
+        "frames.csv (per-frame speed, vehicle and camera pose), clip.json "
+        "(K / D, mount pose, drive and render parameters, mp4 encode recipe) and "
+        "- while Clip Keep Frames is on - the frame_%04d.png sequence. The "
         "render cost comes from the Clip Quality setting and the device from "
         "Clip Device; the render resolution is Blender's own Render ▸ Output and "
         "the scene's render settings are restored afterwards. In the UI the "
@@ -263,6 +299,7 @@ _CLASSES = (
     OPENCV_CAM_OT_drive_rebuild,
     OPENCV_CAM_OT_drive_reset_defaults,
     OPENCV_CAM_OT_drive_remove_scene,
+    OPENCV_CAM_OT_drive_sync_cameras,
     OPENCV_CAM_OT_drive_export_zip,
 )
 

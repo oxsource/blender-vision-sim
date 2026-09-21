@@ -5,17 +5,26 @@ panels need no selected object.  Camera *intrinsics* are deliberately **not**
 here: they stay on ``camera.data.opencv_cam`` and are edited in the existing
 ``CV Intrinsics`` / ``CV Presets`` panels, exactly like in the AVM Scene.
 
+The same boundary governs :attr:`DriveSceneSettings.cameras`: an entry holds
+**only** "is this camera recorded?" and nothing else.  ``K`` / ``D`` / ``output``
+and the mount pose are the camera's *calibration*, and calibration has a single
+source - the AVM Scene's bundled preset, read through
+``bl.camera_factory.configure_from_record`` (``docs/drive-scene-multicam.md``
+sections 3-4).  A second copy here is exactly the drift this scene is built to
+avoid, so there is not one.
+
 Every editable value schedules a debounced rebuild (dragging a slider fires one
 update per mouse move, so the rebuild has to wait until the user stops).
 """
 
 from __future__ import annotations
 
-from typing import Tuple
+from typing import List, Optional, Tuple
 
 import bpy
 from bpy.props import (
     BoolProperty,
+    CollectionProperty,
     EnumProperty,
     FloatProperty,
     IntProperty,
@@ -23,9 +32,15 @@ from bpy.props import (
     StringProperty,
 )
 
+from ....core.scenes import avm_cameras, vehicle
 from .. import base
 from ..base import SceneDefinition  # noqa: F401  (re-exported for convenience)
 from . import DEFINITION
+
+#: enum items must be a plain module level list (annotations are re-evaluated).
+#: The four rig roles come from ``core.scenes.avm_cameras``, i.e. the very list
+#: the AVM Scene builds its cameras from.
+CAMERA_ITEMS = avm_cameras.enum_items()
 
 #: enum items must be a plain module level list (annotations are re-evaluated)
 GROUND_TEXTURES = [
@@ -100,6 +115,58 @@ def _update_visibility(self, context) -> None:
     builder.apply_visibility(self)
 
 
+def _schedule_active(self, context) -> None:
+    """``active_camera`` switches the render camera straight away.
+
+    Only ``scene.camera`` changes - no camera parameter and no geometry - so the
+    debounced rebuild would be pure latency here.  It is still scheduled: the
+    active camera is part of what a rebuild restores.
+    """
+    from . import builder, controller
+    builder.apply_active_camera(getattr(context, "scene", None), self)
+    controller.schedule_rebuild(context)
+
+
+class DriveCameraSettings(bpy.types.PropertyGroup):
+    """One camera's Drive-Scene state: **only** whether it is recorded.
+
+    Anything that describes the camera itself (K / D / output / mount pose) is
+    deliberately absent - see the module docstring.
+    """
+
+    name: StringProperty(name="Name", default="camera")
+    enable: BoolProperty(
+        name="Record", default=True,
+        description="Record this camera: one PNG per frame and one mp4 per "
+                    "camera. The transparent-chassis algorithm needs all four, "
+                    "so they are on by default; every extra camera costs one "
+                    "more render per frame")
+
+
+def _ensure_camera_entries(settings) -> None:
+    """Keep ``settings.cameras`` in step with :data:`avm_cameras.CAMERAS`.
+
+    The rig roles are code-level constants, not user data, so the collection is
+    a mirror of them rather than something the user adds to.  Entries are added
+    (enabled) and stale names dropped.
+
+    Called from the **builder**, never from a panel's ``draw()``: a panel may be
+    repainted while Blender holds the file in a state where writing to an ID is
+    not allowed, and a UI pass has no business changing the scene anyway.  The
+    readers below therefore tolerate a not-yet-populated collection instead of
+    filling it themselves.
+    """
+    wanted = list(avm_cameras.CAMERAS)
+    known = [entry.name for entry in settings.cameras]
+    for index in range(len(known) - 1, -1, -1):
+        if known[index] not in wanted:
+            settings.cameras.remove(index)
+    known = {entry.name for entry in settings.cameras}
+    for key in wanted:
+        if key not in known:
+            settings.cameras.add().name = key
+
+
 class DriveSceneSettings(bpy.types.PropertyGroup):
     """The whole Drive Scene layout (Scene level)."""
 
@@ -162,16 +229,16 @@ class DriveSceneSettings(bpy.types.PropertyGroup):
                     "the lighting a real car park has)",
         update=_schedule)
 
-    # -- vehicle (m) - the defaults mirror the AVM Scene's minibus (its height is
-    # derived from the preset mount heights as round(max(mount)+0.05, 2) = 2.88)
-    car_length: FloatProperty(name="Length", default=4.8, min=1.0, max=30.0,
-                              unit="LENGTH", update=_schedule)
-    car_width: FloatProperty(name="Width", default=2.4, min=0.5, max=10.0,
-                             unit="LENGTH", update=_schedule)
-    car_height: FloatProperty(name="Height", default=2.88, min=0.5, max=10.0,
-                              unit="LENGTH", update=_schedule)
-    car_clearance: FloatProperty(name="Clearance", default=0.0, min=0.0, max=2.0,
-                                 unit="LENGTH", update=_schedule)
+    # -- vehicle (m) - the shared minibus geometry (:mod:`core.scenes.vehicle`),
+    # the same numbers the AVM Scene's car is built from
+    car_length: FloatProperty(name="Length", default=vehicle.BODY_LENGTH_M,
+                              min=1.0, max=30.0, unit="LENGTH", update=_schedule)
+    car_width: FloatProperty(name="Width", default=vehicle.BODY_WIDTH_M,
+                             min=0.5, max=10.0, unit="LENGTH", update=_schedule)
+    car_height: FloatProperty(name="Height", default=vehicle.BODY_HEIGHT_M,
+                              min=0.5, max=10.0, unit="LENGTH", update=_schedule)
+    car_clearance: FloatProperty(name="Clearance", default=vehicle.GROUND_CLEARANCE_M,
+                                 min=0.0, max=2.0, unit="LENGTH", update=_schedule)
 
     # -- drive --------------------------------------------------------------
     drive_distance: FloatProperty(
@@ -212,6 +279,24 @@ class DriveSceneSettings(bpy.types.PropertyGroup):
         description="Cycles render device for the export. The OpenCV camera is an "
                     "OSL shader, which Cycles only evaluates on CPU and NVIDIA "
                     "OptiX; asking for GPU on any other backend falls back to CPU")
+    clip_keep_frames: BoolProperty(
+        name="Keep Frames", default=True,
+        description="Also keep the PNG sequence in the export. A validation run "
+                    "consumes the video, and the stills are only the encoder's "
+                    "input, so turning this off leaves a clip that is ~100x "
+                    "smaller (measured on the default clip: 138 MB of PNG against "
+                    "1.0 MB of H.264). The scenario in clip.json can re-render "
+                    "them at any time")
+
+    # -- cameras ------------------------------------------------------------
+    # Which camera the viewport / F12 shows, and which ones a clip records.  No
+    # calibration here - see the module docstring.
+    active_camera: EnumProperty(
+        name="Active Camera", items=CAMERA_ITEMS, default=avm_cameras.FRONT,
+        description="Camera the viewport and F12 render; the clip records every "
+                    "camera whose Record box is ticked, in a fixed order",
+        update=_schedule_active)
+    cameras: CollectionProperty(type=DriveCameraSettings)
 
     # -- layers (toggle visibility only, no rebuild) ------------------------
     show_ground: BoolProperty(name="Floor", default=True, update=_update_visibility)
@@ -231,6 +316,40 @@ class DriveSceneSettings(bpy.types.PropertyGroup):
     clip_status: StringProperty(name="Clip", default="", options={"HIDDEN"})
 
     # -- helpers ------------------------------------------------------------
+    def ensure_cameras(self) -> None:
+        """Mirror :data:`avm_cameras.CAMERAS` into :attr:`cameras`.
+
+        The builder calls this on every rebuild; the panel and the recorder only
+        read, so neither can write to the file from a ``draw()``.
+        """
+        _ensure_camera_entries(self)
+
+    def camera(self, key: str) -> Optional[DriveCameraSettings]:
+        """The record switch of one camera (``None`` for an unknown key)."""
+        for entry in self.cameras:
+            if entry.name == key:
+                return entry
+        return None
+
+    def recorded_cameras(self) -> List[str]:
+        """The camera keys a clip records, in :data:`avm_cameras.CAMERAS` order.
+
+        Order is the contract: it is the order of ``frames.csv``'s column groups
+        and of ``clip.json``'s ``cameras`` array, so "which column belongs to
+        which camera" is answerable without counting.
+
+        A role with no entry counts as **enabled** - that is the switch's own
+        default - so a scene that has not been rebuilt since the collection was
+        introduced records all four rather than silently recording none.
+        """
+        disabled = {entry.name for entry in self.cameras if not entry.enable}
+        return [key for key in avm_cameras.CAMERAS if key not in disabled]
+
+    def reset_cameras(self) -> None:
+        """Put the per-camera record switches back to their defaults (all on)."""
+        self.cameras.clear()
+        _ensure_camera_entries(self)
+
     def lot_size(self) -> Tuple[float, float]:
         """``(length, width)`` of the slab [m].
 
@@ -257,7 +376,7 @@ class DriveSceneSettings(bpy.types.PropertyGroup):
             start=self.start_point())
 
 
-_CLASSES = (DriveSceneSettings,)
+_CLASSES = (DriveCameraSettings, DriveSceneSettings)
 
 
 def register() -> None:

@@ -245,13 +245,15 @@ Object Data Properties
 
 ### Drive Scene（停车场行驶素材）
 
-`Add ▸ VisionSim ▸ Drive Scene` 搭出「室内停车场 + 车辆按计划行驶」，用来给**透明底盘**算法造素材：
-一键把整段行驶**逐帧渲染**出来，并同步导出每帧的车速与真值位姿。
+`Add ▸ VisionSim ▸ Drive Scene` 搭出「室内停车场 + 车辆按计划行驶」，用来给**透明底盘**与
+**AVM 渲染通路**造素材：一键把整段行驶**逐帧 × 逐相机渲染**出来，并同步导出每帧的车速与真值位姿。
 
 ```text
-输入：停车场地参数 + 车辆尺寸 + 行驶参数（里程 / 速度曲线 / 帧率）
-输出：frame_%04d.png 序列 + clip.mp4 + frames.csv（逐帧时间/里程/车速/车体与相机世界位姿）
-      + clip.json（整段规格，含相机 K/D/安装位姿）；[Export Clip…] 打包成一个 zip
+输入：停车场地参数 + 车辆尺寸 + 行驶参数（里程 / 速度曲线 / 帧率）+ 录哪几路相机
+输出：每路一条 front/back/left/right.mp4 + frames.csv（逐帧时间/里程/车速/
+      车体世界位姿 + 每台相机的世界位姿）+ clip.json（cameras[] 的 K/D/安装位姿、
+      车体几何、文件名契约与 mp4 编码处方）
+      + frame_%04d_<camera>.png 序列（clip_keep_frames，默认开）；[Export Clip…] 打包成一个 zip
 ```
 
 - **停车场**：地坪可切 **水泥 / 柏油 / 环氧**（`ground_texture`，程序化低对比度斑驳——宽污渍 + 细颗粒
@@ -265,25 +267,33 @@ Object Data Properties
 - **车位与停放车**：每侧车位都刷**编号**（`A01…` / `B01…`，平铺在车道上正对该车位，行驶时相机
   一直看得见——对着编号就能核对那块区域重建得对不对）；`parked_cars` 按排停放若干辆车
   （车头朝墙、车型与车漆循环、紧邻立柱的车位留空），`show_parked` 可整组隐藏。
-- **相机**：`DRIVE_Cam_Front` 就是插件的 **OpenCV Camera 组件**（fisheye），内参/安装位姿取内置
-  minibus 标定预设，画面与真机可比；内参照旧在 `CV Intrinsics` / `CV Presets` 里改。
-- **与 AVM Scene 一致**：车漆与 AVM Scene 共用同一份 minibus 调色板（`avm_layout.MINIBUS_MATERIALS`），
-  前摄的 **K/D/输出与安装位姿**也与 AVM 默认逐项相等（`test_drive_matches_avm_defaults` 断言），
-  两场景的实验参数不会漂移。
-- **运动**：`DRIVE_Vehicle` 空物体承载世界位姿（车与相机挂在它下面，相机永远保持车体系安装位姿），
-  逐帧关键帧由纯 Python 的运动模型给出：`constant` 匀速（**默认**，无加速度）或 `trapezoid`
-  加速-巡航-刹停（里程不够跑满会退化成三角形，仍停在精确里程上）。
-- **导出**：`[Export Clip…]` 逐帧渲染前摄，把 PNG 序列 + **H.264 mp4**（Blender 内置 FFmpeg，
-  不重渲染 3D）+ `frames.csv` + `clip.json` **打包成一个 zip**。
-  `frames.csv` 的 `cam_*` 列是每帧相机的世界位姿（车体位姿 × 固定安装位姿，纯 Python 算出）。
+- **相机**：`DRIVE_Cam_{Front,Back,Left,Right}` 就是插件的 **OpenCV Camera 组件**（fisheye），
+  内参/安装位姿取**与 AVM Scene 同一份** minibus 标定预设，画面与真机可比；
+  `active_camera` 选视口/F12 用哪台，`cameras[].enable` 选录哪几路（**默认四路全开**，
+  只想看前摄时关掉另外三台即可）；内参照旧在 `CV Intrinsics` / `CV Presets` 里改。
+- **与 AVM Scene 一致（单一真源）**：四台相机的角色/顺序/命名在 `core/scenes/avm_cameras.py`，
+  车体几何（车身盒 + 轴距/轮距/后轴偏移）在 `core/scenes/vehicle.py`，车漆共用同一份 minibus
+  调色板 —— 相机内外参、车色与车体在两个场景之间**不可能漂移**（不是"两处各写一遍再靠测试对齐"）。
+  在 AVM 面板里手调过相机时，`[Sync Cameras from AVM Scene]` 把活的 AVM 相机单向抄到 Drive 四台上；
+  `test_drive_matches_avm_defaults` 对**四台逐项**断言 K/D/输出/挂载矩阵。
+- **运动**：`DRIVE_Vehicle` 空物体承载世界位姿（车与**四台相机**挂在它下面，相机永远保持车体系
+  安装位姿），逐帧关键帧由纯 Python 的运动模型给出：`constant` 匀速（**默认**，无加速度）或
+  `trapezoid` 加速-巡航-刹停（里程不够跑满会退化成三角形，仍停在精确里程上）。
+- **导出**：`[Export Clip…]` 逐帧渲染**每一台被录相机**，把 PNG 序列 + **每路一条 H.264 mp4**
+  （Blender 内置 FFmpeg，不重渲染 3D，画布自动取静帧的像素尺寸）+ `frames.csv` + `clip.json`
+  **打包成一个 zip**。
+  `frames.csv` 是 `7 + 6 × N` 列：车体 7 列 + 每台相机一组 6 列（`cam_front_x_m`…，列名带相机名，
+  `roll/pitch/yaw` 是 Blender XYZ 欧拉角）。
   分辨率用 Blender 自带的 `Render ▸ Output`，渲染设置会自动还原，场景里其它灯光录制时临时屏蔽。
   **`clip_quality`**（draft / balanced / high，默认 draft）只改渲染成本（采样 / 降噪 / 反弹 /
   自适应 / 焦散 / 跨帧持久化缓存），**输出尺寸与相机 K/D 完全不变**，`high` 等于历史行为（64 采样）。
   导出对话框默认文件名为 `drive_scene.zip`（固定值，与 .blend 名无关）。
-  GUI 导出是**逐帧模态渲染**：面板与状态栏显示 `frame k/N · xx% · ETA`，**ESC 取消**。
+  GUI 导出是**逐帧模态渲染**（一帧渲完全部被录相机再进下一帧）：面板与状态栏显示
+  `frame k/N · xx% · ETA`，**ESC 取消**。
   **`clip_device`**（cpu / gpu，默认 cpu）：相机是 OSL 自定义相机，Cycles 只在 CPU 与 NVIDIA
   **OptiX** 上求值，macOS 的 **Metal** 选 GPU 会回退 CPU（保证相机正确）。
-- 完整设计见 [`docs/drive-scene.md`](docs/drive-scene.md)。
+- 完整设计见 [`docs/drive-scene.md`](docs/drive-scene.md)；四路改造的设计与证据见
+  [`docs/drive-scene-multicam.md`](docs/drive-scene-multicam.md)。
 
 ## 开发约定
 

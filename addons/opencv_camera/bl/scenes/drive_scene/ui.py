@@ -9,13 +9,14 @@ Two panels, both shown **only while the scene is built** (``has_scene``):
 
 Camera intrinsics are deliberately absent: they stay on ``camera.data.opencv_cam``
 and are edited in ``CV Intrinsics`` / ``CV Presets``, like in every other scene.
+The only camera setting this scene owns is *which ones a clip records*.
 """
 
 from __future__ import annotations
 
 import bpy
 
-from ....core.scenes import drive_path
+from ....core.scenes import avm_cameras, drive_path
 from ..base import ScenePanel
 from . import DEFINITION
 
@@ -75,6 +76,29 @@ def _layers(layout, settings) -> None:
         row.prop(settings, name, toggle=True)
 
 
+def _cameras(layout, settings) -> None:
+    """The four cameras: which one the viewport shows, which ones a clip records.
+
+    The switches are the only camera setting this scene owns - K / D / output and
+    the mount pose come from the AVM Scene's calibration preset, so they are
+    edited in ``CV Intrinsics`` / ``CV Presets``, not here.
+    """
+    box = layout.box()
+    box.label(text="Cameras", icon="CAMERA_DATA")
+    box.use_property_split = True
+    box.prop(settings, "active_camera")
+    recorded = settings.recorded_cameras()
+    row = box.row(align=True)
+    for key in avm_cameras.CAMERAS:
+        entry = settings.camera(key)
+        if entry is not None:
+            row.prop(entry, "enable", toggle=True, text=avm_cameras.LABEL[key])
+    box.label(text=f"{len(recorded)} of {len(avm_cameras.CAMERAS)} recorded",
+              icon="RENDER_STILL" if recorded else "ERROR")
+    box.label(text="K / D / mount come from the AVM calibration", icon="INFO")
+    box.operator("opencv_cam.drive_sync_cameras", icon="IMPORT")
+
+
 def _record(layout, settings) -> None:
     box = layout.box()
     box.label(text="Record", icon="RENDER_ANIMATION")
@@ -82,6 +106,7 @@ def _record(layout, settings) -> None:
     column.use_property_split = True
     column.prop(settings, "clip_quality")
     column.prop(settings, "clip_device")
+    column.prop(settings, "clip_keep_frames")
     box.operator("opencv_cam.drive_export_zip", text="Export Clip…", icon="EXPORT")
     if settings.clip_status:
         running = settings.clip_status.startswith("frame ")

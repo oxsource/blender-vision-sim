@@ -17,7 +17,7 @@ import bpy
 from mathutils import Matrix
 
 from ....core import paths
-from ....core.scenes import avm_coverage, avm_layout
+from ....core.scenes import avm_cameras, avm_coverage, avm_layout
 from ... import apply as apply_mod
 from ... import camera_factory, compat, shader
 from ..base import collection, link_to_collection, remove_collection_objects
@@ -63,7 +63,7 @@ BLOCK_SUFFIX = {
     avm_layout.BLOCK_BACK_LEFT: "BackLeft",
     avm_layout.BLOCK_BACK_RIGHT: "BackRight",
 }
-CAMERA_SUFFIX = {"front": "Front", "back": "Back", "left": "Left", "right": "Right"}
+CAMERA_SUFFIX = avm_cameras.SUFFIX
 
 #: The rendered ground sits this far below the nominal ``z = 0`` plane.  The
 #: blocks (and every calibration quantity: ``points_3d``, the coverage maths)
@@ -911,7 +911,7 @@ def _ensure_cameras(scene: bpy.types.Scene, settings, target: bpy.types.Collecti
     cameras: Dict[str, bpy.types.Object] = {}
     messages: List[str] = []
     for name in avm_layout.CAMERAS:
-        object_name = f"{CAMERA_PREFIX}{CAMERA_SUFFIX[name]}"
+        object_name = avm_cameras.object_name(CAMERA_PREFIX, name)
         camera = bpy.data.objects.get(object_name)
         if camera is None:
             record = preset_cameras.get(name, {})

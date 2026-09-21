@@ -32,6 +32,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .. import paths
 from .. import camera_model
+from . import avm_cameras
 
 __all__ = [
     "CM_TO_M",
@@ -48,8 +49,12 @@ __all__ = [
 
 CM_TO_M = 0.01
 
-FRONT, BACK, LEFT, RIGHT = "front", "back", "left", "right"
-CAMERAS: Tuple[str, ...] = (FRONT, BACK, LEFT, RIGHT)
+FRONT, BACK, LEFT, RIGHT = avm_cameras.FRONT, avm_cameras.BACK, \
+    avm_cameras.LEFT, avm_cameras.RIGHT
+#: re-exported from :mod:`.avm_cameras` - the four rig roles live there now, so
+#: the AVM Scene and the Drive Scene cannot disagree about which cameras exist
+#: (``docs/drive-scene-multicam.md`` section 4).  Existing imports keep working.
+CAMERAS: Tuple[str, ...] = avm_cameras.CAMERAS
 
 #: the default minibus materials as ``name -> (rgba, roughness)``.  The AVM Scene
 #: and the Drive Scene both paint their ego car from this one palette, so the

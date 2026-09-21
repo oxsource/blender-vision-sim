@@ -1,4 +1,4 @@
-"""Drive Scene builder: the car park, the vehicle, the camera and the keyframes.
+"""Drive Scene builder: the car park, the vehicle, the cameras and the keyframes.
 
 The objects are created once and then **updated in place** (idempotent rebuild),
 so a slider drag never destroys the user's selection or their camera tweaks.
@@ -6,9 +6,13 @@ Every mesh is generated at its real size (object scale stays 1).
 
 World convention (shared with the AVM Scene): metres, Z up, the aisle runs along
 ``+Y`` and the vehicle's nose is ``+Y``.  ``DRIVE_Vehicle`` is the moving frame -
-the car and the front camera hang off it, so the camera keeps its **vehicle
-frame** mount pose while the empty carries the world pose that
-``frames.csv`` records.
+the car and the cameras hang off it, so a camera keeps its **vehicle frame**
+mount pose while the empty carries the world pose that ``frames.csv`` records.
+
+The four cameras are the AVM Scene's four rig roles (``core.scenes.avm_cameras``),
+named ``DRIVE_Cam_<Suffix>`` and configured from the same minibus calibration
+preset, so this scene never holds a camera parameter of its own
+(``docs/drive-scene-multicam.md`` sections 3-4).
 """
 
 from __future__ import annotations
@@ -20,7 +24,7 @@ import bmesh
 import bpy
 from mathutils import Matrix
 
-from ....core.scenes import avm_layout, drive_lot
+from ....core.scenes import avm_cameras, avm_layout, drive_lot
 from ... import camera_factory, compat
 from ..base import collection, link_to_collection, remove_collection_objects
 
@@ -30,7 +34,10 @@ COLLECTION_NAME = "Drive Scene"
 
 GROUND_NAME = "DRIVE_Ground"
 CAR_NAME = "DRIVE_Car"
-CAMERA_NAME = "DRIVE_Cam_Front"
+#: the four cameras are ``DRIVE_Cam_<Suffix>``, built from
+#: :data:`core.scenes.avm_cameras.CAMERAS` - the same rig roles the AVM Scene
+#: uses, so the two scenes coexist (``docs/drive-scene.md`` section 2)
+CAMERA_PREFIX = "DRIVE_Cam_"
 PILLAR_PREFIX = "DRIVE_Pillar_"
 WALL_PREFIX = "DRIVE_Wall_"
 LIGHT_PREFIX = "DRIVE_Light_"
@@ -682,18 +689,25 @@ def _ensure_lights(scene: bpy.types.Scene, target: bpy.types.Collection,
 
 
 # ---------------------------------------------------------------------------
-# camera (the add-on's own OpenCV camera, mounted in the vehicle frame)
+# cameras (the add-on's own OpenCV cameras, mounted in the vehicle frame)
 # ---------------------------------------------------------------------------
-def preset_camera(name: str = "front") -> Dict:
+def camera_name(key: str) -> str:
+    """The object name of a Drive Scene camera: ``front`` -> ``DRIVE_Cam_Front``."""
+    return avm_cameras.object_name(CAMERA_PREFIX, key)
+
+
+def preset_camera(key: str = avm_cameras.FRONT) -> Dict:
     """One camera record of the bundled minibus calibration.
 
     The Drive Scene has no calibration of its own: it drives the same vehicle as
-    the AVM Scene, so its camera is the same fisheye (K / D / output) at the same
-    mount pose - that is what makes the footage comparable to the real car.
+    the AVM Scene, so each of its cameras is the same fisheye (K / D / output) at
+    the same mount pose as the AVM camera of that name - that is what makes the
+    footage comparable to the real car, and what makes "adjust the AVM Scene and
+    the Drive Scene follows" true (``docs/drive-scene-multicam.md`` section 3).
     """
     from ....core.scenes import avm_layout
     for record in avm_layout.cameras_from_preset(avm_layout.load_preset()):
-        if record["name"] == name:
+        if record["name"] == key:
             return record
     return {}
 
@@ -706,25 +720,87 @@ def _apply_camera_pose(camera: bpy.types.Object, record: Dict) -> None:
                                   for value in record.get("rotation", (0.0, 0.0, 0.0)))
 
 
-def _ensure_camera(scene: bpy.types.Scene, target: bpy.types.Collection,
-                   vehicle: bpy.types.Object, messages: List[str]) -> bpy.types.Object:
-    """Create the front camera once and keep the user's later tweaks."""
-    camera = bpy.data.objects.get(CAMERA_NAME)
-    if camera is None:
-        record = preset_camera("front")
-        camera, _ = camera_factory.add_camera(
-            scene, model="fisheye", preset=None, name=CAMERA_NAME,
-            location=tuple(record.get("location", (0.0, 0.0, 0.0))))
-        camera.name = CAMERA_NAME  # a lingering data-block could suffix it
-        camera.data.name = CAMERA_NAME
-        ok, apply_messages = camera_factory.configure_from_record(camera, record, scene)
-        if not ok:
-            messages.append("front camera: " + "; ".join(apply_messages))
-        _apply_camera_pose(camera, record)
-    if target not in camera.users_collection:
-        link_to_collection(camera, target)
-    _parent_local(camera, vehicle)
+def _ensure_cameras(scene: bpy.types.Scene, target: bpy.types.Collection,
+                    vehicle_obj: bpy.types.Object,
+                    messages: List[str]) -> Dict[str, bpy.types.Object]:
+    """Create the four cameras once and keep the user's later tweaks.
+
+    A camera that already exists is left alone (mount pose and intrinsics alike):
+    re-applying the preset on every rebuild would silently undo a pose the user
+    adjusted in ``CV Extrinsics``.  ``[Sync Cameras from AVM Scene]`` is the
+    explicit way to overwrite them.
+    """
+    cameras: Dict[str, bpy.types.Object] = {}
+    for key in avm_cameras.CAMERAS:
+        name = camera_name(key)
+        camera = bpy.data.objects.get(name)
+        if camera is None:
+            record = preset_camera(key)
+            camera, _ = camera_factory.add_camera(
+                scene, model="fisheye", preset=None, name=name,
+                location=tuple(record.get("location", (0.0, 0.0, 0.0))))
+            camera.name = name  # a lingering data-block could suffix it
+            camera.data.name = name
+            ok, apply_messages = camera_factory.configure_from_record(camera, record, scene)
+            if not ok:
+                messages.append(f"{key} camera: " + "; ".join(apply_messages))
+            _apply_camera_pose(camera, record)
+        if target not in camera.users_collection:
+            link_to_collection(camera, target)
+        _parent_local(camera, vehicle_obj)
+        cameras[key] = camera
+    return cameras
+
+
+def apply_active_camera(scene: bpy.types.Scene,
+                        settings) -> Optional[bpy.types.Object]:
+    """Make the active camera the render camera (F12 uses ``scene.camera``)."""
+    camera = bpy.data.objects.get(camera_name(settings.active_camera))
+    if camera is not None and scene is not None:
+        scene.camera = camera
     return camera
+
+
+def sync_cameras_from_avm(settings, scene: bpy.types.Scene) -> List[str]:
+    """Copy the **live** ``AVM_Cam_*`` objects onto the matching Drive cameras.
+
+    An explicit, one-way, non-default path (``docs/drive-scene-multicam.md``
+    section 3, approach B demoted to an operator): the reproducible source stays
+    the bundled preset, so this is for the case where the user has adjusted the
+    AVM Scene by hand and wants to see the same thing from the driving car
+    without exporting and re-importing a preset first.
+
+    Intrinsics and mount pose are both copied - the two together are "the camera"
+    - and the Drive cameras are left parented to ``DRIVE_Vehicle`` so the copy
+    stays a *vehicle frame* mount pose.  Returns one message per camera.
+    """
+    messages: List[str] = []
+    for key in avm_cameras.CAMERAS:
+        source = bpy.data.objects.get(avm_cameras.object_name(
+            "AVM_Cam_", key))
+        camera = bpy.data.objects.get(camera_name(key))
+        if source is None or camera is None:
+            messages.append(f"{key}: no AVM camera to copy from")
+            continue
+        record = {
+            "location": tuple(float(value) for value in source.location),
+            "rotation": tuple(math.degrees(float(value)) for value in source.rotation_euler),
+            "K": [float(source.data.opencv_cam.intrinsics.fx),
+                  float(source.data.opencv_cam.intrinsics.fy),
+                  float(source.data.opencv_cam.intrinsics.cx),
+                  float(source.data.opencv_cam.intrinsics.cy)],
+            "D": [float(source.data.opencv_cam.distortion.k1),
+                  float(source.data.opencv_cam.distortion.k2),
+                  float(source.data.opencv_cam.distortion.k3),
+                  float(source.data.opencv_cam.distortion.k4)],
+            "output": [int(source.data.opencv_cam.intrinsics.image_width),
+                       int(source.data.opencv_cam.intrinsics.image_height)],
+        }
+        ok, apply_messages = camera_factory.configure_from_record(camera, record, scene)
+        _apply_camera_pose(camera, record)
+        messages.append(f"{key}: copied from {source.name}"
+                        + ("" if ok else " (" + "; ".join(apply_messages) + ")"))
+    return messages
 
 
 # ---------------------------------------------------------------------------
@@ -798,13 +874,16 @@ def _ensure_render_setup(scene: bpy.types.Scene, messages: List[str]) -> None:
 
 
 def view_targets(scene: bpy.types.Scene) -> List[bpy.types.Object]:
-    """The default view subject: the vehicle and its camera.
+    """The default view subject: the vehicle and its cameras.
 
     Not the whole slab: a 48 m car park would shrink the car to a few percent of
-    the viewport, and the interesting part of this scene is the vehicle.
+    the viewport, and the interesting part of this scene is the vehicle.  All
+    four cameras join the fit - they sit within the car's own footprint, so the
+    framing only grows by their tiny mount offsets
+    (``docs/drive-scene-multicam.md`` section 9, C5).
     """
-    return [obj for obj in (bpy.data.objects.get(CAR_NAME),
-                            bpy.data.objects.get(CAMERA_NAME))
+    names = [CAR_NAME] + [camera_name(key) for key in avm_cameras.CAMERAS]
+    return [obj for obj in (bpy.data.objects.get(name) for name in names)
             if obj is not None]
 
 
@@ -824,6 +903,10 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict:
     """Update every object in place; creates anything that is missing."""
     messages: List[str] = []
     _ensure_render_setup(scene, messages)
+    # the per-camera record switches mirror ``avm_cameras.CAMERAS``; the builder
+    # is the only place they are filled in (a panel's draw() must not write to
+    # the file, and the readers tolerate an empty collection)
+    settings.ensure_cameras()
 
     target = collection(COLLECTION_NAME, scene, create=True)
     root = _ensure_root(scene, target)
@@ -865,7 +948,7 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict:
         drive_lot.pillar_positions(lot_length, settings.aisle_width,
                                    int(settings.pillar_count)))
 
-    # the vehicle and its camera ------------------------------------------
+    # the vehicle and its cameras ------------------------------------------
     car = _ensure_mesh_object(CAR_NAME, target)
     _assign_mesh(car, _car_mesh("DRIVE_Car", settings.car_length, settings.car_width,
                                 settings.car_height), _car_materials())
@@ -873,9 +956,8 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict:
     _parent_local(car, vehicle)
     car.hide_render = not settings.show_car
 
-    camera = _ensure_camera(scene, target, vehicle, messages)
-    _parent_local(camera, vehicle)
-    scene.camera = camera
+    cameras = _ensure_cameras(scene, target, vehicle, messages)
+    apply_active_camera(scene, settings)
 
     lights = _ensure_lights(scene, target, lot_length, lot_width, settings)
     for light in lights:
@@ -894,7 +976,7 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict:
         "parked": parked,
         "bays": lot_bays,
         "car": car,
-        "camera": camera,
+        "cameras": cameras,
         "lights": lights,
         "plan": plan,
         "messages": messages,
@@ -909,10 +991,13 @@ def remove(scene: bpy.types.Scene, settings) -> int:
         bpy.data.objects.remove(root, do_unlink=True)
         removed += 1
     settings.root = None
-    camera = bpy.data.objects.get(CAMERA_NAME)
-    if camera is not None:
-        bpy.data.objects.remove(camera, do_unlink=True)
-        removed += 1
+    # a camera whose data-block lingered may have been unlinked from the
+    # collection already; remove it by name either way
+    for key in avm_cameras.CAMERAS:
+        camera = bpy.data.objects.get(camera_name(key))
+        if camera is not None:
+            bpy.data.objects.remove(camera, do_unlink=True)
+            removed += 1
     target = bpy.data.collections.get(COLLECTION_NAME)
     if target is not None and not target.objects and not target.children:
         bpy.data.collections.remove(target)

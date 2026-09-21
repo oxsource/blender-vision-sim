@@ -14,19 +14,26 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import List, Sequence, Tuple
+from typing import List, Mapping, Sequence, Tuple
 
 #: speed profiles
 CONSTANT = "constant"    #: hold one speed for the whole drive
 TRAPEZOID = "trapezoid"  #: accelerate to the cruise speed, cruise, brake to a stop
 PROFILES = (CONSTANT, TRAPEZOID)
 
-#: the per-frame truth, one row per rendered frame.  The ``cam_*`` columns are the
-#: camera's **world** pose at that frame (vehicle pose composed with the fixed
-#: mount pose), so the algorithm side does not have to compose it itself.
-CSV_HEADER = ("frame", "time_s", "distance_m", "speed_mps", "x_m", "y_m", "yaw_deg",
-              "cam_x_m", "cam_y_m", "cam_z_m", "cam_roll_deg", "cam_pitch_deg",
-              "cam_yaw_deg")
+#: the per-frame truth, one row per rendered frame.  The leading columns describe
+#: the vehicle; after them comes **one group of six columns per recorded camera**,
+#: in the order the caller lists them (``core.scenes.avm_cameras.CAMERAS``), each
+#: naming the camera it belongs to.  See :func:`csv_header`.
+CSV_VEHICLE_COLUMNS = ("frame", "time_s", "distance_m", "speed_mps",
+                       "x_m", "y_m", "yaw_deg")
+
+#: the six columns of one camera's group, suffixed onto ``cam_<camera>_``.  The
+#: last three are **Blender XYZ Euler angles in degrees**, not a camera
+#: pitch/yaw pair: the renderer's pose is an object transform, and pretending
+#: otherwise is how a downstream consumer ends up applying them to the wrong
+#: axes (``docs/drive-scene-multicam.md`` section 5.1).
+CSV_CAMERA_COLUMNS = ("x_m", "y_m", "z_m", "roll_deg", "pitch_deg", "yaw_deg")
 
 #: the speed profile can never need a smaller acceleration than this
 MIN_ACCEL = 0.05
@@ -196,20 +203,39 @@ def plan(distance: float, speed: float, accel: float = 1.0,
                 start=(float(start[0]), float(start[1])))
 
 
-def csv_text(plan_: Plan, mount: Mount = Mount()) -> str:
+def csv_header(cameras: Sequence[str]) -> Tuple[str, ...]:
+    """The CSV's columns: the vehicle's, then one group of six per camera.
+
+    ``7 + 6 * N`` columns.  The camera name is **in** the column name, so "which
+    column belongs to which camera" is answerable by reading it - the previous
+    single ``cam_*`` group only described one camera and never said which
+    (``docs/drive-scene-multicam.md`` section 5.1).
+    """
+    columns = list(CSV_VEHICLE_COLUMNS)
+    for camera in cameras:
+        columns.extend(f"cam_{camera}_{name}" for name in CSV_CAMERA_COLUMNS)
+    return tuple(columns)
+
+
+def csv_text(plan_: Plan, mounts: Mapping[str, Mount]) -> str:
     """The per-frame truth as CSV: header plus one row per frame.
 
-    ``mount`` is the camera's vehicle-frame pose; each row carries the camera's
-    world pose it implies (see :func:`camera_world_pose`).
+    ``mounts`` is ``{camera: vehicle-frame mount pose}``; the camera groups appear
+    in the mapping's iteration order and every row carries each camera's **world**
+    pose (vehicle pose composed with that fixed mount pose - see
+    :func:`camera_world_pose`).
     """
-    lines = [",".join(CSV_HEADER)]
+    cameras = list(mounts)
+    lines = [",".join(csv_header(cameras))]
     for frame in plan_.frames:
-        camera = camera_world_pose(frame, mount)
-        lines.append(
-            f"{frame.index},{frame.time:.6f},{frame.distance:.6f},{frame.speed:.6f},"
-            f"{frame.x:.6f},{frame.y:.6f},{frame.yaw:.4f},"
-            f"{camera[0]:.6f},{camera[1]:.6f},{camera[2]:.6f},"
-            f"{camera[3]:.4f},{camera[4]:.4f},{camera[5]:.4f}")
+        cells = [str(frame.index), f"{frame.time:.6f}", f"{frame.distance:.6f}",
+                 f"{frame.speed:.6f}", f"{frame.x:.6f}", f"{frame.y:.6f}",
+                 f"{frame.yaw:.4f}"]
+        for camera in cameras:
+            x, y, z, roll, pitch, yaw = camera_world_pose(frame, mounts[camera])
+            cells.extend((f"{x:.6f}", f"{y:.6f}", f"{z:.6f}",
+                          f"{roll:.4f}", f"{pitch:.4f}", f"{yaw:.4f}"))
+        lines.append(",".join(cells))
     return "\n".join(lines) + "\n"
 
 

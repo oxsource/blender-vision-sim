@@ -16,6 +16,7 @@ import re
 from typing import Dict, Iterable, List, Sequence, Tuple
 
 from . import avm_layout
+from . import vehicle
 
 __all__ = [
     "ASSETS", "BOWL_RADIUS", "MASK_PADDING", "MASK_SCALE",
@@ -59,21 +60,25 @@ ORBIT = {
     "far": 100.0,
 }
 
-#: ``SteeringPerfs`` defaults (``res/values/steering.xml``)
+#: ``SteeringPerfs`` defaults (``res/values/steering.xml``).  The vehicle
+#: dimensions read :mod:`.vehicle`: the app already ships the same numbers, and
+#: an ego mask or a vehicle projection anchored on them must be anchored on the
+#: *rendered* car, not on a second copy of it (``docs/drive-scene-multicam.md``
+#: section 5.6.3).
 STEERING = {
     "enable": True,
     "filamat_path": "/vendor/etc/avmconfig/falcon/steering_line_material.filamat",
-    "wheel_base": 3.2,
-    "rear_track": 1.8,
+    "wheel_base": vehicle.WHEEL_BASE_M,
+    "rear_track": vehicle.REAR_TRACK_M,
     "length": [3.6, 0.0, 0.0],
     "segments": 64,
     "thickness": [0.04, 0.02, 0.03],
     "ground_above": 0.01,
     "steering_range": [-45.0, 45.0],
-    "rear_center_offset": 2.8,
+    "rear_center_offset": vehicle.REAR_CENTER_OFFSET_M,
     "color": ["#1010FF", "#FF1010", "#FFB000"],
     "blend_order": [32767, 32766, 32765],
-    "body_width": 2.4,
+    "body_width": vehicle.BODY_WIDTH_M,
     "back_prewarp": True,
 }
 

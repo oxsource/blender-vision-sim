@@ -1585,10 +1585,10 @@ def test_avm_export_bowl():
 
 
 def test_drive_scene():
-    """The Drive Scene: car park, OpenCV camera, keyframed drive and a clip."""
+    """The Drive Scene: car park, four OpenCV cameras, keyframed drive and a clip."""
     from opencv_camera.bl import scenes as scenes_mod
     from opencv_camera.bl.scenes.drive_scene import builder, properties, recording
-    from opencv_camera.core.scenes import drive_lot, drive_path
+    from opencv_camera.core.scenes import avm_cameras, avm_falcon, drive_lot, drive_path, vehicle
 
     scene = setup_scene(resolution=64, samples=1)
     clear_scene()
@@ -1630,6 +1630,8 @@ def test_drive_scene():
           recording.default_filename())
     check("the export defaults to the CPU device",
           settings.clip_device == "cpu", settings.clip_device)
+    check("the export keeps the PNG frames unless asked otherwise",
+          settings.clip_keep_frames is True, settings.clip_keep_frames)
     check("the drive defaults to a constant speed (no acceleration)",
           settings.drive_profile == "constant", settings.drive_profile)
     check("only OptiX may render the OSL camera on a GPU",
@@ -1665,9 +1667,59 @@ def test_drive_scene():
     names = sorted(obj.name for obj in target.objects)
     check("collection has the core objects",
           {"DRIVE_Car", "DRIVE_Ground", "DRIVE_Root", "DRIVE_Vehicle",
-           "DRIVE_Cam_Front"} <= set(names), str(names))
+           "DRIVE_Cam_Front", "DRIVE_Cam_Back", "DRIVE_Cam_Left",
+           "DRIVE_Cam_Right"} <= set(names), str(names))
     check("every object is namespaced",
           all(name.startswith("DRIVE_") for name in names), str(names))
+    check("the four cameras are the same four rig roles the AVM Scene uses",
+          sorted(name for name in names if name.startswith("DRIVE_Cam_"))
+          == sorted(avm_cameras.object_name("DRIVE_Cam_", key)
+                    for key in avm_cameras.CAMERAS),
+          str(sorted(name for name in names if name.startswith("DRIVE_Cam_"))))
+    cameras = {key: bpy.data.objects[avm_cameras.object_name("DRIVE_Cam_", key)]
+               for key in avm_cameras.CAMERAS}
+    for key, camera in cameras.items():
+        check(f"the {key} camera is a compiled custom fisheye",
+              camera.data.type == "CUSTOM" and len(camera.data.custom_bytecode) > 0
+              and camera.data.opencv_cam.distortion.model == "fisheye",
+              f"{camera.data.type}, {len(camera.data.custom_bytecode)} bytes")
+        check(f"the {key} camera hangs off DRIVE_Vehicle with a vehicle-frame pose",
+              camera.parent is not None and camera.parent.name == "DRIVE_Vehicle",
+              str(camera.parent))
+    check("all four cameras carry the same minibus calibration",
+          len({round(c.data.opencv_cam.intrinsics.fx, 6) for c in cameras.values()}) == 1
+          and approx(cameras["front"].data.opencv_cam.intrinsics.fx,
+                     317.77563818112867, 1e-3),
+          str([round(c.data.opencv_cam.intrinsics.fx, 4) for c in cameras.values()]))
+    check("the front camera keeps its vehicle-frame mount pose",
+          approx(cameras["front"].location.y, 2.466796, 1e-4)
+          and approx(cameras["front"].location.z, 2.69068, 1e-4),
+          str(tuple(round(v, 4) for v in cameras["front"].location)))
+    check("every camera sits somewhere different (no copied pose)",
+          len({tuple(round(v, 4) for v in c.location) for c in cameras.values()}) == 4,
+          str([tuple(round(v, 3) for v in c.location) for c in cameras.values()]))
+    check("the car and the cameras all hang off the vehicle empty",
+          bpy.data.objects["DRIVE_Car"].parent.name == "DRIVE_Vehicle")
+
+    # the camera record switches: four roles, all on by default, and the active
+    # one drives the render camera
+    check("the record switches mirror the four rig roles",
+          [entry.name for entry in settings.cameras] == list(avm_cameras.CAMERAS),
+          str([entry.name for entry in settings.cameras]))
+    check("every camera is recorded by default",
+          settings.recorded_cameras() == list(avm_cameras.CAMERAS),
+          str(settings.recorded_cameras()))
+    check("the active camera defaults to the front one and drives scene.camera",
+          settings.active_camera == "front" and scene.camera.name == "DRIVE_Cam_Front",
+          f"{settings.active_camera} -> {scene.camera.name}")
+    settings.active_camera = "left"
+    check("switching the active camera switches the render camera",
+          scene.camera.name == "DRIVE_Cam_Left", scene.camera.name)
+    settings.active_camera = "front"
+    check("the default view frames the car and all four cameras",
+          len(builder.view_targets(scene)) == 1 + len(avm_cameras.CAMERAS),
+          str([obj.name for obj in builder.view_targets(scene)]))
+
     check("the car park is built (walls / pillars / one soft ceiling panel)",
           len([n for n in names if n.startswith("DRIVE_Wall_")]) == 4
           and len([n for n in names if n.startswith("DRIVE_Pillar_")]) == 4
@@ -1773,26 +1825,13 @@ def test_drive_scene():
           len([obj for obj in target.objects
                if obj.name.startswith("DRIVE_Number_")]) == number_count)
 
-    # the add-on's own camera, mounted in the vehicle frame
-    camera = bpy.data.objects["DRIVE_Cam_Front"]
-    check("the camera is a compiled custom fisheye",
-          camera.data.type == "CUSTOM" and len(camera.data.custom_bytecode) > 0
-          and camera.data.opencv_cam.distortion.model == "fisheye")
-    check("the camera carries the minibus calibration",
-          approx(camera.data.opencv_cam.intrinsics.fx, 317.77563818112867, 1e-3),
-          f"{camera.data.opencv_cam.intrinsics.fx:.4f}")
-    check("the camera keeps its vehicle-frame mount pose",
-          camera.parent is not None and camera.parent.name == "DRIVE_Vehicle"
-          and approx(camera.location.y, 2.466796, 1e-4)
-          and approx(camera.location.z, 2.69068, 1e-4),
-          str(camera.parent))
-    check("the car and the camera both hang off the vehicle empty",
-          bpy.data.objects["DRIVE_Car"].parent.name == "DRIVE_Vehicle")
+    # the add-on's own cameras, checked above; from here on just the front one
+    camera = cameras["front"]
 
     # the keyframes are the plan, frame for frame
     plan = settings.plan()
-    vehicle = bpy.data.objects["DRIVE_Vehicle"]
-    curves = compat.action_fcurves(vehicle.animation_data.action)
+    vehicle_empty = bpy.data.objects["DRIVE_Vehicle"]
+    curves = compat.action_fcurves(vehicle_empty.animation_data.action)
     check("one key per frame on every curve",
           curves and all(len(curve.keyframe_points) == len(plan.frames) for curve in curves),
           str([len(curve.keyframe_points) for curve in curves]))
@@ -1802,7 +1841,7 @@ def test_drive_scene():
     worst = 0.0
     for frame in plan.frames[::max(1, len(plan.frames) // 7)]:
         scene.frame_set(frame.index)
-        location = vehicle.matrix_world.translation
+        location = vehicle_empty.matrix_world.translation
         worst = max(worst, abs(location.x - frame.x), abs(location.y - frame.y))
     check("the keyframed vehicle follows the pure plan", worst < 1e-4, f"{worst:.2e}")
     check("the timeline is the clip",
@@ -1856,57 +1895,196 @@ def test_drive_scene():
           f"{recording.compute_device_type()} -> {report['device']}")
     check("render clip writes every frame", report["frames"] == len(plan.frames),
           str(report["frames"]))
-    check("one png per frame",
-          all(os.path.exists(os.path.join(directory, recording.frame_name(frame.index)))
-              for frame in plan.frames), str(directory))
+    recorded = settings.recorded_cameras()
+    check("the clip records the four rig roles",
+          report["cameras"] == list(avm_cameras.CAMERAS),
+          str(report["cameras"]))
+    check("every recorded camera renders a png in every frame",
+          all(os.path.exists(os.path.join(directory,
+                                          recording.frame_name(frame.index, key)))
+              for frame in plan.frames for key in recorded),
+          str(sorted(os.listdir(directory))[:4]))
     check("the per-frame render names the pngs exactly like frame_name()",
           sorted(name for name in os.listdir(directory) if name.endswith(".png"))
-          == [recording.frame_name(frame.index) for frame in plan.frames],
-          str(sorted(os.listdir(directory))))
+          == sorted(recording.frame_name(frame.index, key)
+                    for frame in plan.frames for key in recorded),
+          str(sorted(os.listdir(directory))[:4]))
+    check("the still count is frames x cameras, not frames",
+          len([name for name in os.listdir(directory) if name.endswith(".png")])
+          == len(plan.frames) * len(recorded),
+          f"{len([n for n in os.listdir(directory) if n.endswith('.png')])} "
+          f"vs {len(plan.frames)} x {len(recorded)}")
     rows = open(os.path.join(directory, "frames.csv"), encoding="utf-8").read().rstrip("\n").split("\n")
     check("frames.csv: header plus one row per frame",
-          rows[0] == ",".join(drive_path.CSV_HEADER) and len(rows) == len(plan.frames) + 1,
+          rows[0] == ",".join(drive_path.csv_header(recorded))
+          and len(rows) == len(plan.frames) + 1,
           f"{len(rows)} rows")
+    check("frames.csv carries one named group of six columns per camera",
+          all(len(row.split(",")) == 7 + 6 * len(recorded) for row in rows[1:])
+          and all(f"cam_{key}_x_m" in rows[0] and f"cam_{key}_yaw_deg" in rows[0]
+                  for key in recorded),
+          rows[0])
     check("frames.csv carries the speed column",
-          all(len(row.split(",")) == 13 and float(row.split(",")[3]) > 0.0 for row in rows[1:]),
+          all(float(row.split(",")[3]) > 0.0 for row in rows[1:]),
           rows[1] if len(rows) > 1 else "")
-    expected = drive_path.camera_world_pose(plan.frames[0], recording.camera_mount())
+    mounts = recording.camera_mounts(recorded)
     first = rows[1].split(",")
-    check("frames.csv carries the camera world pose",
-          all(approx(float(first[7 + i]), expected[i], 1e-3) for i in range(6)),
-          rows[1])
+    for index, key in enumerate(recorded):
+        expected = drive_path.camera_world_pose(plan.frames[0], mounts[key])
+        start = 7 + 6 * index
+        check(f"frames.csv carries the {key} camera world pose",
+              all(approx(float(first[start + i]), expected[i], 1e-3) for i in range(6)),
+              first[start:start + 6])
+    check("the four cameras' poses really do differ (no shared column group)",
+          len({tuple(round(v, 3) for v in mounts[key].location) for key in recorded}) == 4,
+          str({key: tuple(round(v, 3) for v in mounts[key].location)
+               for key in recorded}))
     meta = json.load(open(os.path.join(directory, "clip.json"), encoding="utf-8"))
     check("clip.json describes the clip",
           meta["format"] == "drive_clip" and meta["frames"] == len(plan.frames)
           and meta["drive"]["profile"] == "constant"
           and approx(meta["drive"]["cruise_speed_mps"], 3.0, 1e-9),
           str({k: meta[k] for k in ("format", "frames")}))
-    check("clip.json carries the camera and the real render size",
-          meta["camera"]["mount"]["frame"] == "vehicle"
-          and meta["camera"]["K"][0] > 0
-          and tuple(meta["render"]["resolution"]) == (96, 72),
+    check("clip.json is version 2 and lists one entry per recorded camera",
+          meta["version"] == 2 and len(meta["cameras"]) == len(recorded)
+          and [entry["camera"] for entry in meta["cameras"]] == recorded,
+          str([entry.get("camera") for entry in meta["cameras"]]))
+    check("each camera entry names its object and carries K / D / mount",
+          all(entry["name"] == avm_cameras.object_name("DRIVE_Cam_", entry["camera"])
+              and entry["mount"]["frame"] == "vehicle"
+              and len(entry["K"]) == 4 and len(entry["D"]) == 4
+              and len(entry["mount"]["location"]) == 3
+              and len(entry["mount"]["rotation_deg"]) == 3
+              for entry in meta["cameras"]),
+          str(meta["cameras"][0]))
+    check("the single unnamed camera block is gone",
+          "camera" not in meta, str(sorted(meta)))
+    # K is recorded for the *render* resolution (the calibration is stored at the
+    # camera's own output size), so it is compared against the effective values,
+    # not against the stored ones
+    effective = {key: apply_mod.effective_intrinsics(
+        bpy.data.objects[avm_cameras.object_name("DRIVE_Cam_", key)].data.opencv_cam,
+        96, 72) for key in recorded}
+    check("each entry's K / D / mount equals the camera object it names",
+          all(entry["K"] == [float(effective[entry["camera"]].fx),
+                             float(effective[entry["camera"]].fy),
+                             float(effective[entry["camera"]].cx),
+                             float(effective[entry["camera"]].cy)]
+              and entry["output"] == [96, 72]
+              and entry["mount"]["location"] == [
+                  float(v) for v in bpy.data.objects[entry["name"]].location]
+              for entry in meta["cameras"]),
+          str([entry["K"] for entry in meta["cameras"]]))
+    check("the recorded K really did follow the render resolution",
+          all(entry["K"][0] < 317.77563818112867 for entry in meta["cameras"]),
+          str(meta["cameras"][0]["K"]))
+    check("clip.json names the camera keys, in recording order",
+          meta["camera_names"] == recorded, str(meta["camera_names"]))
+    check("clip.json states the file-name contract for stills and videos",
+          meta["frame_pattern"] == "frame_%04d_<camera>.png"
+          and meta["video_pattern"] == "<camera>.mp4",
+          f"{meta['frame_pattern']!r} {meta['video_pattern']!r}")
+    check("a multi-camera clip names no single video",
+          meta["video"] == "", repr(meta["video"]))
+    check("clip.json carries the real render size",
+          tuple(meta["render"]["resolution"]) == (96, 72),
           str(meta["render"]))
     check("clip.json records the quality, device and sample override",
           meta["render"]["quality"] == "draft"
           and meta["render"]["device"] == expected_device
           and meta["render"]["samples"] == 2,
           str(meta["render"]))
-    check("recording restored the render settings",
-          (scene.render.filepath, scene.camera, scene.cycles.samples,
-           scene.render.image_settings.file_format,
-           scene.cycles.device, scene.cycles.use_denoising,
-           scene.cycles.max_bounces, scene.cycles.diffuse_bounces,
-           scene.cycles.glossy_bounces, scene.render.use_persistent_data,
-           scene.cycles.use_adaptive_sampling, scene.cycles.adaptive_threshold,
-           scene.cycles.caustics_reflective,
-           scene.cycles.caustics_refractive,
-           scene.render.threads_mode, scene.render.threads,
-           scene.frame_start, scene.frame_end, scene.frame_step) == before,
-          str((scene.render.filepath, scene.cycles.samples,
-               scene.cycles.device, scene.cycles.adaptive_threshold)))
 
-    # export: the same clip plus an mp4, packed into one zip; no explicit
-    # samples here, so the operator must take the selected quality preset
+    # the vehicle block: the geometry a consumer needs to build an ego mask, with
+    # its frame named and exactly one copy per clip
+    body = meta["vehicle"]["body"]
+    car = bpy.data.objects["DRIVE_Car"]
+    check("clip.json carries one vehicle block, in the vehicle frame",
+          meta["vehicle"]["frame"] == "vehicle"
+          and meta["vehicle"]["ground_clearance_m"] == settings.car_clearance,
+          str(meta["vehicle"]))
+    check("the vehicle block is the shared minibus geometry, at a readable precision",
+          body == {"length_m": 4.8, "width_m": 2.4, "height_m": 2.88},
+          str(body))
+    check("the vehicle block carries the axle anchors",
+          meta["vehicle"]["axles"] == {"wheel_base_m": 3.2, "rear_track_m": 1.8,
+                                       "rear_center_offset_m": 2.8},
+          str(meta["vehicle"]["axles"]))
+    check("the exported width is the AVM-era body width, from the one source",
+          body["width_m"] == avm_falcon.STEERING["body_width"] == vehicle.BODY_WIDTH_M,
+          f"{body['width_m']} / {avm_falcon.STEERING['body_width']} / {vehicle.BODY_WIDTH_M}")
+    # ... and the mesh really was built at that size: measure the body slab out
+    # of the mesh's own body-material faces rather than re-reading the setting
+    # (the wheels and the lamps are added proud of it, so car.dimensions is not it)
+    body_verts = {index for polygon in car.data.polygons
+                  if polygon.material_index == builder.CAR_BODY
+                  for index in polygon.vertices}
+    slab_x = max(abs(car.data.vertices[i].co.x) for i in body_verts)
+    slab_y = max(abs(car.data.vertices[i].co.y) for i in body_verts)
+    check("the rendered car mesh's body slab is exactly the exported box",
+          approx(slab_x, body["width_m"] / 2.0, 1e-5)
+          and approx(slab_y, body["length_m"] / 2.0, 1e-5),
+          f"mesh {slab_x:.4f} x {slab_y:.4f} vs "
+          f"{body['width_m'] / 2:.4f} x {body['length_m'] / 2:.4f}")
+    check("the wheels and lamps do protrude, so the object is larger than the body",
+          car.dimensions.x > body["width_m"] and car.dimensions.y > body["length_m"],
+          f"{tuple(round(v, 4) for v in car.dimensions)} vs body {body}")
+
+    # changing the Drive car's width must change the exported block: proof that
+    # the export reads the scene, not a hardcoded 2.4
+    settings.car_width = 2.1
+    bpy.ops.opencv_cam.drive_rebuild()
+    wide_dir = tempfile.mkdtemp(prefix="opencv_cam_width_")
+    recording.render_clip(bpy.context, settings, wide_dir, samples=1)
+    wider = json.load(open(os.path.join(wide_dir, "clip.json"), encoding="utf-8"))
+    check("the exported vehicle block follows the scene's car width",
+          wider["vehicle"]["body"]["width_m"] == 2.1,
+          str(wider["vehicle"]["body"]))
+    settings.car_width = 2.4
+    bpy.ops.opencv_cam.drive_rebuild()
+    # a rebuild re-applies the drive's own timeline (the clip IS the timeline),
+    # so the deliberately odd 3..5 the restore check below uses has to go back
+    scene.frame_start, scene.frame_end = 3, 5
+
+    check("a render-only clip has no video and so no encode recipe",
+          meta["video"] == "" and meta["video_encode"] == {},
+          f"{meta['video']!r} {meta['video_encode']!r}")
+
+    # a render-only clip never drops its stills - with no video they *are* the
+    # artifact, whatever Keep Frames says
+    settings.clip_keep_frames = False
+    keep_dir = tempfile.mkdtemp(prefix="opencv_cam_keep_")
+    try:
+        kept = recording.render_clip(bpy.context, settings, keep_dir, samples=2)
+    finally:
+        settings.clip_keep_frames = True
+    check("a render-only clip keeps its stills even with Keep Frames off",
+          kept["frames"] == len(plan.frames)
+          and all(os.path.exists(name) for name in kept["files"]),
+          str(kept["files"][:3]))
+    restored = (scene.render.filepath, scene.camera, scene.cycles.samples,
+                scene.render.image_settings.file_format,
+                scene.cycles.device, scene.cycles.use_denoising,
+                scene.cycles.max_bounces, scene.cycles.diffuse_bounces,
+                scene.cycles.glossy_bounces, scene.render.use_persistent_data,
+                scene.cycles.use_adaptive_sampling, scene.cycles.adaptive_threshold,
+                scene.cycles.caustics_reflective,
+                scene.cycles.caustics_refractive,
+                scene.render.threads_mode, scene.render.threads,
+                scene.frame_start, scene.frame_end, scene.frame_step)
+    # name the knobs that did not come back - a bare tuple comparison makes the
+    # one that drifted indistinguishable from the eighteen that did not
+    knob_names = ("filepath", "camera", "samples", "file_format", "device",
+                  "denoising", "max_bounces", "diffuse_bounces", "glossy_bounces",
+                  "persistent", "adaptive", "adaptive_threshold", "caustics_reflective",
+                  "caustics_refractive", "threads_mode", "threads", "frame_start",
+                  "frame_end", "frame_step")
+    drifted = [f"{name}: {b!r} -> {a!r}" for name, b, a in zip(knob_names, before, restored)
+               if b != a]
+    check("recording restored the render settings", not drifted, "; ".join(drifted))
+
+    # export: the same clip plus one mp4 per camera, packed into one zip; no
+    # explicit samples here, so the operator must take the selected quality preset
     settings.clip_quality = "balanced"
     zip_path = os.path.join(tempfile.mkdtemp(prefix="opencv_cam_zip_"), "clip.zip")
     check("export clip operator",
@@ -1915,18 +2093,136 @@ def test_drive_scene():
           settings.clip_status)
     with zipfile.ZipFile(zip_path) as archive:
         names = set(archive.namelist())
-    check("the zip holds the pngs, csv, json and mp4",
-          {"frames.csv", "clip.json", "clip.mp4"} <= names
-          and all(recording.frame_name(frame.index) in names for frame in plan.frames),
-          str(sorted(names)))
+    videos = [recording.video_name(key) for key in recorded]
+    check("the zip holds one mp4 per recorded camera, named after it",
+          set(videos) == {"front.mp4", "back.mp4", "left.mp4", "right.mp4"}
+          and set(videos) <= names,
+          str(sorted(n for n in names if n.endswith(".mp4"))))
+    check("the zip does not carry a single clip.mp4",
+          "clip.mp4" not in names, str(sorted(n for n in names if n.endswith(".mp4"))))
+    check("the zip holds the pngs, csv and json",
+          {"frames.csv", "clip.json"} <= names
+          and all(recording.frame_name(frame.index, key) in names
+                  for frame in plan.frames for key in recorded),
+          str(sorted(names)[:4]))
     export_meta = json.loads(zipfile.ZipFile(zip_path).read("clip.json"))
-    check("clip.json inside the zip names the video",
-          export_meta["video"] == "clip.mp4")
+    check("a multi-camera clip.json names no single video",
+          export_meta["video"] == "" and export_meta["video_pattern"] == "<camera>.mp4",
+          f"{export_meta['video']!r} {export_meta.get('video_pattern')!r}")
     check("the export used the selected quality preset",
           export_meta["render"]["quality"] == "balanced"
           and export_meta["render"]["samples"] == 24
           and export_meta["render"]["device"] == "CPU",
           str(export_meta["render"]))
+
+    # the encode recipe: what lets a harness tell "the algorithm drifted" from
+    # "the encoder drifted" without shipping the stills
+    recipe = export_meta.get("video_encode") or {}
+    check("clip.json records the mp4's encode recipe",
+          recipe.get("container") == "MPEG4" and recipe.get("codec") == "H264"
+          and recipe.get("constant_rate_factor") == "HIGH"
+          and recipe.get("fps") == plan.fps and bool(recipe.get("blender")),
+          str(recipe))
+    check("clip.json records the view transform the mp4 was encoded with",
+          recipe.get("view_transform") == "Standard",
+          str(recipe))
+
+    # frame integrity, per lane: what the container reports is what the CSV has.
+    # Blender's own movie reader is the decoder here, which is the same thing a
+    # consumer does with OpenCV - the point is that the count survives encoding.
+    movie_dir = tempfile.mkdtemp(prefix="opencv_cam_movie_")
+    with zipfile.ZipFile(zip_path) as archive:
+        for key in recorded:
+            with open(os.path.join(movie_dir, recording.video_name(key)), "wb") as handle:
+                handle.write(archive.read(recording.video_name(key)))
+    for key in recorded:
+        path = os.path.join(movie_dir, recording.video_name(key))
+        movie = bpy.data.movieclips.load(path)
+        try:
+            check(f"the {key} mp4 decodes to as many frames as frames.csv has rows",
+                  movie.frame_duration == len(rows) - 1,
+                  f"{movie.frame_duration} vs {len(rows) - 1}")
+            # the container is the stills' size, not the encoder scene's default
+            check(f"the {key} mp4 is the render's resolution, not 1920x1080",
+                  tuple(movie.size[:2]) == (96, 72),
+                  str(tuple(movie.size[:2])))
+            check(f"the {key} mp4 carries the clip's fps",
+                  approx(movie.fps, plan.fps, 1e-6), str(movie.fps))
+        finally:
+            bpy.data.movieclips.remove(movie)
+
+    # the stills are the encoder's input, not an artifact: dropping them leaves
+    # the same clip minus the bytes nobody in the video pipeline reads
+    settings.clip_keep_frames = False
+    lean_path = os.path.join(tempfile.mkdtemp(prefix="opencv_cam_lean_"), "lean.zip")
+    try:
+        result = bpy.ops.opencv_cam.drive_export_zip(filepath=lean_path, samples=2)
+    finally:
+        settings.clip_keep_frames = True
+    check("export clip without the frames", result == {"FINISHED"}, str(result))
+    with zipfile.ZipFile(lean_path) as archive:
+        lean_names = set(archive.namelist())
+    check("the lean zip holds every video, the csv and the json but no pngs",
+          {"frames.csv", "clip.json"} | set(videos) <= lean_names
+          and not any(name.endswith(".png") for name in lean_names),
+          str(sorted(lean_names)))
+    check("dropping the frames shrinks the zip",
+          os.path.getsize(lean_path) < os.path.getsize(zip_path),
+          f"{os.path.getsize(lean_path)} vs {os.path.getsize(zip_path)}")
+    lean_meta = json.loads(zipfile.ZipFile(lean_path).read("clip.json"))
+    check("the lean export still carries the recipe and the per-camera entries",
+          lean_meta["video_encode"]["view_transform"] == "Standard"
+          and len(lean_meta["cameras"]) == len(recorded),
+          str(lean_meta.get("video_encode")))
+
+    # the recorded set is a setting, not a constant: dropping one camera must
+    # drop one video, one CSV column group and one clip.json entry - and must
+    # leave the vehicle block alone (the vehicle does not depend on the cameras)
+    settings.camera("back").enable = False
+    three_dir = tempfile.mkdtemp(prefix="opencv_cam_three_")
+    three = recording.render_clip(bpy.context, settings, three_dir, samples=1)
+    try:
+        check("disabling a camera leaves three lanes",
+              three["cameras"] == ["front", "left", "right"], str(three["cameras"]))
+        three_rows = open(os.path.join(three_dir, "frames.csv"),
+                          encoding="utf-8").read().rstrip("\n").split("\n")
+        check("the csv follows the reduced set: 7 + 6 x 3 columns",
+              len(three_rows[0].split(",")) == 7 + 6 * 3
+              and "cam_back_x_m" not in three_rows[0],
+              str(len(three_rows[0].split(","))))
+        three_meta = json.load(open(os.path.join(three_dir, "clip.json"),
+                                    encoding="utf-8"))
+        check("clip.json follows the reduced set too",
+              [entry["camera"] for entry in three_meta["cameras"]]
+              == ["front", "left", "right"],
+              str([entry["camera"] for entry in three_meta["cameras"]]))
+        check("the unrecorded camera really rendered nothing",
+              not any(name.endswith("_back.png") for name in os.listdir(three_dir)),
+              str(sorted(os.listdir(three_dir))[:4]))
+        check("the vehicle block is still a single copy",
+              "vehicle" in three_meta
+              and three_meta["vehicle"]["body"]["width_m"] == 2.4,
+              str(three_meta["vehicle"]["body"]))
+    finally:
+        settings.camera("back").enable = True
+        bpy.ops.opencv_cam.drive_rebuild()
+
+    # a clip with no camera enabled cannot be recorded, and says so
+    for key in avm_cameras.CAMERAS:
+        settings.camera(key).enable = False
+    no_lane_dir = tempfile.mkdtemp(prefix="opencv_cam_nolane_")
+    try:
+        recording.render_clip(bpy.context, settings, no_lane_dir, samples=1)
+        check("a clip with no camera enabled is refused", False, "no error raised")
+    except RuntimeError as exc:
+        check("a clip with no camera enabled is refused",
+              "no camera is enabled" in str(exc), str(exc))
+    finally:
+        settings.reset_cameras()
+        bpy.ops.opencv_cam.drive_rebuild()
+        check("Reset Defaults puts every camera back on record",
+              settings.recorded_cameras() == list(avm_cameras.CAMERAS),
+              str(settings.recorded_cameras()))
 
     # cancel: a cancelled render must be reported and must leave no zip behind
     original_step = recording.ClipJob.step
@@ -1949,18 +2245,25 @@ def test_drive_scene():
     check("remove scene", bpy.ops.opencv_cam.drive_remove_scene() == {"FINISHED"})
     check("the panels hide after the remove",
           scenes_mod.has_scene(bpy.context, definition) is False)
-    check("the camera object is gone too",
-          bpy.data.objects.get("DRIVE_Cam_Front") is None)
+    check("every camera object is gone too",
+          not [obj for obj in bpy.data.objects if obj.name.startswith("DRIVE_Cam_")],
+          str([obj.name for obj in bpy.data.objects
+               if obj.name.startswith("DRIVE_Cam_")]))
 
 
 def test_drive_matches_avm_defaults():
-    """The Drive Scene must reproduce the AVM Scene's car colour and front camera.
+    """The Drive Scene must reproduce the AVM Scene's car and all four cameras.
 
     The two scenes are the same vehicle from the same calibration; this pins that
-    the Drive Scene does not drift from the AVM defaults (body colour, K, D,
-    output size and mount pose), which is what makes the footage comparable.
+    the Drive Scene does not drift from the AVM defaults (car size and colour,
+    and every camera's K / D / output size and mount pose), which is what makes
+    the footage comparable and what lets the AVM renderer consume a clip.
+
+    It is also the evidence for "adjust the AVM Scene and the Drive Scene
+    follows": both read one source - the bundled calibration preset - so what is
+    compared here is two readers of that source, not two copies of a number.
     """
-    from opencv_camera.core.scenes import avm_layout
+    from opencv_camera.core.scenes import avm_cameras, avm_layout, vehicle
 
     def rgb_close(a, b, tol=1e-6):
         return all(abs(x - y) <= tol for x, y in zip(a[:3], b[:3]))
@@ -1970,16 +2273,14 @@ def test_drive_matches_avm_defaults():
 
     check("build the AVM scene for comparison",
           bpy.ops.opencv_cam.avm_add_scene() == {"FINISHED"})
-    avm_cam = bpy.data.objects["AVM_Cam_Front"]
-    avm = avm_cam.data.opencv_cam
-    avm_pose = avm_cam.matrix_world.copy()
+    avm = {key: bpy.data.objects[avm_cameras.object_name("AVM_Cam_", key)]
+           for key in avm_cameras.CAMERAS}
     avm_body = tuple(bpy.data.materials["AVM_Car_Mat"].diffuse_color)
 
     check("build the Drive scene for comparison",
           bpy.ops.opencv_cam.drive_add_scene() == {"FINISHED"})
-    drive_cam = bpy.data.objects["DRIVE_Cam_Front"]
-    drive = drive_cam.data.opencv_cam
-    drive_pose = drive_cam.matrix_basis.copy()
+    drive = {key: bpy.data.objects[avm_cameras.object_name("DRIVE_Cam_", key)]
+             for key in avm_cameras.CAMERAS}
     drive_body = tuple(bpy.data.materials["DRIVE_Car_Mat"].diffuse_color)
 
     palette = avm_layout.MINIBUS_MATERIALS["body"][0]
@@ -1993,30 +2294,107 @@ def test_drive_matches_avm_defaults():
         d = getattr(scene.drive_scene, attribute)
         check(f"the car {attribute} matches the AVM default", approx(a, d, 1e-9),
               f"{a} vs {d}")
+    check("both cars are built from the shared geometry module",
+          approx(scene.drive_scene.car_length, vehicle.BODY_LENGTH_M, 1e-6)
+          and approx(scene.drive_scene.car_width, vehicle.BODY_WIDTH_M, 1e-6)
+          and approx(scene.drive_scene.car_height, vehicle.BODY_HEIGHT_M, 1e-6),
+          str((scene.drive_scene.car_length, scene.drive_scene.car_width,
+               scene.drive_scene.car_height)))
 
-    for attribute in ("fx", "fy", "cx", "cy"):
-        a, d = getattr(avm.intrinsics, attribute), getattr(drive.intrinsics, attribute)
-        check(f"the front camera {attribute} matches the AVM default",
-              approx(a, d, 1e-9), f"{a} vs {d}")
-    check("the front camera calibration size matches the AVM default",
-          (avm.intrinsics.image_width, avm.intrinsics.image_height)
-          == (drive.intrinsics.image_width, drive.intrinsics.image_height),
-          f"{avm.intrinsics.image_width}x{avm.intrinsics.image_height} vs "
-          f"{drive.intrinsics.image_width}x{drive.intrinsics.image_height}")
-    check("the front camera distortion matches the AVM default",
-          (avm.distortion.model, avm.distortion.k1, avm.distortion.k2,
-           avm.distortion.k3, avm.distortion.k4)
-          == (drive.distortion.model, drive.distortion.k1, drive.distortion.k2,
-              drive.distortion.k3, drive.distortion.k4),
-          f"{avm.distortion.model} vs {drive.distortion.model}")
+    for key in avm_cameras.CAMERAS:
+        a, d = avm[key].data.opencv_cam, drive[key].data.opencv_cam
+        for attribute in ("fx", "fy", "cx", "cy"):
+            check(f"the {key} camera {attribute} matches the AVM default",
+                  approx(getattr(a.intrinsics, attribute),
+                         getattr(d.intrinsics, attribute), 1e-9),
+                  f"{getattr(a.intrinsics, attribute)} vs "
+                  f"{getattr(d.intrinsics, attribute)}")
+        check(f"the {key} camera calibration size matches the AVM default",
+              (a.intrinsics.image_width, a.intrinsics.image_height)
+              == (d.intrinsics.image_width, d.intrinsics.image_height),
+              f"{a.intrinsics.image_width}x{a.intrinsics.image_height} vs "
+              f"{d.intrinsics.image_width}x{d.intrinsics.image_height}")
+        check(f"the {key} camera distortion matches the AVM default",
+              (a.distortion.model, a.distortion.k1, a.distortion.k2,
+               a.distortion.k3, a.distortion.k4)
+              == (d.distortion.model, d.distortion.k1, d.distortion.k2,
+                  d.distortion.k3, d.distortion.k4),
+              f"{a.distortion.model} vs {d.distortion.model}")
+        # AVM camera world pose == Drive camera vehicle-frame (local) pose
+        worst = max(abs(avm[key].matrix_world[i][j] - drive[key].matrix_basis[i][j])
+                    for i in range(4) for j in range(4))
+        check(f"the {key} camera mount pose matches the AVM default", worst < 1e-6,
+              f"max|delta|={worst:.2e}")
 
-    # AVM camera world pose == Drive camera vehicle-frame (local) pose
-    worst = max(abs(avm_pose[i][j] - drive_pose[i][j])
-                for i in range(4) for j in range(4))
-    check("the front camera mount pose matches the AVM default", worst < 1e-6,
-          f"max|delta|={worst:.2e}")
+    # the AVM preset is the source both read; this is the proof that the Drive
+    # Scene did not carry a second copy of any of the four poses
+    records = avm_layout.cameras_from_preset(avm_layout.load_preset())
+    check("the four Drive cameras carry the preset's four mount poses",
+          all(approx(min(abs(drive[record["name"]].location[i]
+                             - record["location"][i]) for i in (0, 1, 2)), 0.0, 1e-6)
+              for record in records),
+          str({record["name"]: tuple(round(v, 3) for v in record["location"])
+               for record in records}))
 
     bpy.ops.opencv_cam.avm_remove_scene()
+    bpy.ops.opencv_cam.drive_remove_scene()
+
+
+def test_drive_sync_from_avm():
+    """[Sync Cameras from AVM Scene] copies the live AVM cameras, one way.
+
+    The reproducible source stays the bundled preset (the test above proves the
+    Drive Scene reads it); this operator exists for the case where someone has
+    adjusted the AVM Scene by hand and wants to see the same thing from the
+    driving car without exporting and re-importing a preset first.
+    """
+    from opencv_camera.core.scenes import avm_cameras
+
+    clear_scene()
+    scene = setup_scene(resolution=64, samples=1)
+    check("build both scenes",
+          bpy.ops.opencv_cam.avm_add_scene() == {"FINISHED"}
+          and bpy.ops.opencv_cam.drive_add_scene() == {"FINISHED"})
+
+    nudge = {key: (0.11 * (index + 1), 0.0, 2.4 + 0.05 * index)
+             for index, key in enumerate(avm_cameras.CAMERAS)}
+    for key, location in nudge.items():
+        camera = bpy.data.objects[avm_cameras.object_name("AVM_Cam_", key)]
+        camera.location = location
+        camera.data.opencv_cam.intrinsics.fx = 300.0 + len(key)
+
+    check("the Drive cameras start on the preset, not on the nudged AVM poses",
+          not any(abs(bpy.data.objects[avm_cameras.object_name("DRIVE_Cam_", key)]
+                      .location.x - nudge[key][0]) < 1e-6
+                  for key in avm_cameras.CAMERAS))
+
+    check("sync from the AVM scene", bpy.ops.opencv_cam.drive_sync_cameras() == {"FINISHED"})
+    for key in avm_cameras.CAMERAS:
+        a = bpy.data.objects[avm_cameras.object_name("AVM_Cam_", key)]
+        d = bpy.data.objects[avm_cameras.object_name("DRIVE_Cam_", key)]
+        check(f"the {key} Drive camera took the AVM mount pose",
+              approx(d.location.x, a.location.x, 1e-6)
+              and approx(d.location.z, a.location.z, 1e-6),
+              f"{tuple(round(v, 4) for v in d.location)} vs "
+              f"{tuple(round(v, 4) for v in a.location)}")
+        check(f"the {key} Drive camera took the AVM intrinsics",
+              approx(d.data.opencv_cam.intrinsics.fx,
+                     a.data.opencv_cam.intrinsics.fx, 1e-6),
+              f"{d.data.opencv_cam.intrinsics.fx} vs {a.data.opencv_cam.intrinsics.fx}")
+        check(f"the {key} Drive camera stays parented to the vehicle empty",
+              d.parent is not None and d.parent.name == "DRIVE_Vehicle",
+              str(d.parent))
+
+    check("a rebuild keeps the synced poses (they are the objects' own)",
+          bpy.ops.opencv_cam.drive_rebuild() == {"FINISHED"}
+          and approx(bpy.data.objects["DRIVE_Cam_Front"].location.x,
+                     nudge["front"][0], 1e-6),
+          str(tuple(round(v, 4) for v in
+                    bpy.data.objects["DRIVE_Cam_Front"].location)))
+
+    bpy.ops.opencv_cam.avm_remove_scene()
+    check("sync without an AVM scene is refused",
+          bpy.ops.opencv_cam.drive_sync_cameras() == {"CANCELLED"})
     bpy.ops.opencv_cam.drive_remove_scene()
 
 
@@ -2476,6 +2854,7 @@ def main():
         test_avm_export_bowl,
         test_drive_scene,
         test_drive_matches_avm_defaults,
+        test_drive_sync_from_avm,
         test_scene_default_view,
         test_shader_force_compile,
         test_presets,

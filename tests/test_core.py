@@ -17,8 +17,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "addons", "opencv_camera"))
 
 from core import calibration_io, camera_model, transform  # noqa: E402
-from core.scenes import (avm_coverage, avm_falcon, avm_layout, drive_lot,  # noqa: E402
-                         drive_path)
+from core.scenes import (avm_cameras, avm_coverage, avm_falcon, avm_layout,  # noqa: E402
+                         drive_lot, drive_path, vehicle)
 
 FAILURES = []
 
@@ -534,31 +534,143 @@ def test_drive_path():
           and approx(odd.duration, 10.0 / 3.0, 1e-12),
           f"{odd.frames[-1].time:.6f} vs {odd.duration:.6f}")
 
-    # the CSV is the contract with the algorithm side
+    # the CSV is the contract with the algorithm side: one group of six columns
+    # per recorded camera, named after it, in the order the caller lists them
     mount = drive_path.Mount(location=(-0.03, 2.47, 2.69),
                              rotation_deg=(20.0, -1.0, 2.0))
-    text = drive_path.csv_text(drive, mount)
+    cameras = ["front", "back", "left", "right"]
+    text = drive_path.csv_text(drive, {name: mount for name in cameras})
     rows = text.rstrip("\n").split("\n")
-    check("csv header", rows[0] == ",".join(drive_path.CSV_HEADER), rows[0])
+    check("csv header", rows[0] == ",".join(drive_path.csv_header(cameras)), rows[0])
     check("csv has one row per frame", len(rows) == len(drive.frames) + 1,
           f"{len(rows)} rows for {len(drive.frames)} frames")
-    check("every csv row carries 13 columns",
-          all(len(row.split(",")) == 13 for row in rows[1:]))
+    check("every csv row carries one group of six per camera",
+          all(len(row.split(",")) == 7 + 6 * len(cameras) for row in rows[1:]),
+          f"{len(rows[1].split(','))} columns")
     third = rows[3].split(",")
     check("csv rows carry the frame's truth",
           int(third[0]) == drive.frames[2].index
           and approx(float(third[1]), drive.frames[2].time, 1e-6)
           and approx(float(third[3]), drive.frames[2].speed, 1e-6)
           and approx(float(third[6]), drive.frames[2].yaw, 1e-4), rows[3])
-    expected = drive_path.camera_world_pose(drive.frames[2], mount)
-    check("csv rows carry the camera world pose",
-          all(approx(float(third[7 + i]), expected[i], 1e-4) for i in range(6)),
-          rows[3])
+    for index, camera in enumerate(cameras):
+        start = 7 + 6 * index
+        expected = drive_path.camera_world_pose(drive.frames[2], mount)
+        check(f"csv rows carry the {camera} camera world pose",
+              all(approx(float(third[start + i]), expected[i], 1e-4) for i in range(6)),
+              rows[3])
+
+    # distinct mounts must land in their own column group - a shared pose would
+    # hide a "the groups all came from one camera" mistake
+    mounts = {name: drive_path.Mount(location=(0.1 * step, 0.2 * step, 2.0 + step))
+              for step, name in enumerate(cameras)}
+    mixed = drive_path.csv_text(drive, mounts).rstrip("\n").split("\n")
+    for index, camera in enumerate(cameras):
+        start = 7 + 6 * index
+        expected = drive_path.camera_world_pose(drive.frames[2], mounts[camera])
+        check(f"the {camera} group follows its own mount",
+              all(approx(float(mixed[3].split(",")[start + i]), expected[i], 1e-4)
+                  for i in range(6)),
+              mixed[3].split(",")[start:start + 6])
+    check("the column count follows the recorded set, not a fixed four",
+          len(drive_path.csv_header(["front", "back"])) == 7 + 6 * 2
+          and len(drive_path.csv_header(["left"])) == 7 + 6 * 1)
+
     check("a zero-length drive is a single frame",
           len(drive_path.plan(0.0, 5.0, fps=10.0).frames) == 1)
     check("summary mentions the frame count and fps",
           f"{len(drive.frames)} frames" in drive_path.summary(drive),
           drive_path.summary(drive))
+
+
+def test_avm_cameras():
+    """The four rig roles: one definition, and the clip contract's spelling."""
+    check("the four roles are front/back/left/right",
+          avm_cameras.CAMERAS == ("front", "back", "left", "right"),
+          str(avm_cameras.CAMERAS))
+    check("avm_layout re-exports the same tuple",
+          avm_layout.CAMERAS is avm_cameras.CAMERAS,
+          f"{avm_layout.CAMERAS} vs {avm_cameras.CAMERAS}")
+    check("avm_layout's role constants come from the same source",
+          (avm_layout.FRONT, avm_layout.BACK, avm_layout.LEFT, avm_layout.RIGHT)
+          == avm_cameras.CAMERAS)
+    check("object_name builds the AVM and Drive spellings",
+          avm_cameras.object_name("AVM_Cam_", "front") == "AVM_Cam_Front"
+          and avm_cameras.object_name("DRIVE_Cam_", "right") == "DRIVE_Cam_Right",
+          avm_cameras.object_name("DRIVE_Cam_", "right"))
+    check("enum_items covers every role in order",
+          [item[0] for item in avm_cameras.enum_items()] == list(avm_cameras.CAMERAS),
+          str(avm_cameras.enum_items()))
+    check("every enum item has a label and a description",
+          all(len(item) == 3 and item[1] and item[2]
+              for item in avm_cameras.enum_items()),
+          str(avm_cameras.enum_items()))
+
+    # the key is what a clip's file names use; the renderer normalises a camera
+    # name to it with FrameSource::NormalizeCameraKey() on the consuming side
+    check("key_of strips the rig prefix and lowercases",
+          avm_cameras.key_of("DRIVE_Cam_Front") == "front"
+          and avm_cameras.key_of("AVM_Cam_Left") == "left"
+          and avm_cameras.key_of("Back") == "back",
+          avm_cameras.key_of("AVM_Cam_Left"))
+    check("key_of is idempotent on a bare key",
+          all(avm_cameras.key_of(key) == key for key in avm_cameras.CAMERAS))
+
+    preset = avm_layout.load_preset()
+    records = avm_layout.cameras_from_preset(preset)
+    mounts = avm_cameras.mounts_of(records)
+    check("a preset maps to one mount per role, in preset order",
+          list(mounts) == list(avm_cameras.CAMERAS) and len(mounts) == 4,
+          str(list(mounts)))
+    front = next(r for r in records if r["name"] == "front")
+    check("mount_of reads location and rotation_deg off the record",
+          mounts["front"] == drive_path.Mount(
+              location=tuple(front["location"]),
+              rotation_deg=tuple(front["rotation"])),
+          str(mounts["front"]))
+    check("mounts_of skips a name that is not a rig role",
+          avm_cameras.mounts_of([{"name": "top", "location": [1, 2, 3],
+                                  "rotation": [0, 0, 0]}]) == {})
+
+
+def test_vehicle():
+    """The ego vehicle's geometry: one source, and the export's shape."""
+    check("the body box is the minibus the presets calibrate",
+          (vehicle.BODY_LENGTH_M, vehicle.BODY_WIDTH_M, vehicle.BODY_HEIGHT_M)
+          == (4.8, 2.4, 2.88),
+          str((vehicle.BODY_LENGTH_M, vehicle.BODY_WIDTH_M, vehicle.BODY_HEIGHT_M)))
+    check("the axles are the app's steering geometry",
+          (vehicle.WHEEL_BASE_M, vehicle.REAR_TRACK_M, vehicle.REAR_CENTER_OFFSET_M)
+          == (3.2, 1.8, 2.8),
+          str((vehicle.WHEEL_BASE_M, vehicle.REAR_TRACK_M, vehicle.REAR_CENTER_OFFSET_M)))
+    check("the Falcon steering config reads the shared body width",
+          avm_falcon.STEERING["body_width"] == vehicle.BODY_WIDTH_M
+          and avm_falcon.STEERING["wheel_base"] == vehicle.WHEEL_BASE_M
+          and avm_falcon.STEERING["rear_track"] == vehicle.REAR_TRACK_M
+          and avm_falcon.STEERING["rear_center_offset"] == vehicle.REAR_CENTER_OFFSET_M,
+          str({k: avm_falcon.STEERING[k] for k in
+               ("body_width", "wheel_base", "rear_track", "rear_center_offset")}))
+
+    defaults = vehicle.block()
+    check("the clip block names its frame",
+          defaults["frame"] == "vehicle" and defaults["frame"] == vehicle.FRAME,
+          str(defaults["frame"]))
+    check("the clip block carries the body box in metres",
+          defaults["body"] == {"length_m": 4.8, "width_m": 2.4, "height_m": 2.88},
+          str(defaults["body"]))
+    check("the clip block carries the clearance and the axles",
+          defaults["ground_clearance_m"] == 0.0
+          and defaults["axles"] == {"wheel_base_m": 3.2, "rear_track_m": 1.8,
+                                    "rear_center_offset_m": 2.8},
+          str(defaults["axles"]))
+    overridden = vehicle.block(length=5.5, width=2.1, height=3.0, clearance=0.2)
+    check("an override flows into the block",
+          overridden["body"] == {"length_m": 5.5, "width_m": 2.1, "height_m": 3.0}
+          and overridden["ground_clearance_m"] == 0.2,
+          str(overridden["body"]))
+    check("the block has no per-camera dimension",
+          set(defaults) == {"frame", "body", "ground_clearance_m", "axles"},
+          str(sorted(defaults)))
 
 
 def test_drive_lot():
@@ -628,7 +740,7 @@ def main():
                  test_transform, test_lens_conversion, test_bundled_preset,
                  test_filament_avm_config, test_avm_layout, test_avm_coverage,
                  test_avm_falcon_config, test_drive_path, test_drive_lot,
-                 test_calibration_io):
+                 test_avm_cameras, test_vehicle, test_calibration_io):
         test()
     print()
     if FAILURES:
