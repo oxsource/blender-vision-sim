@@ -27,6 +27,10 @@ COLLECTION_NAME = "AVM Scene"
 
 GROUND_NAME = "AVM_Ground"
 CAR_NAME = "AVM_Car"
+#: node name the car takes in an Export Bowl GLB; the Falcon app looks the
+#: vehicle up by this name, so the scene keeps its ``AVM_`` namespace and the
+#: export renames the object only for the duration of the export
+VEHICLE_EXPORT_NAME = "vehicle"
 SUN_NAME = "AVM_Sun"
 #: the fill light shares the SUN_NAME prefix on purpose: the ``show_sun`` layer
 #: toggle matches by prefix, so one flag hides both
@@ -222,9 +226,8 @@ def _model_geometry(path: str) -> Optional[tuple]:
     return geometry
 
 
-def _load_ground_model_mesh(path: str, radius: float,
-                            rim_height: float) -> Optional[bpy.types.Mesh]:
-    """Build the ground mesh from ``path``, scaled to ``radius`` x ``rim_height``.
+def _ground_scale(verts, radius: float, rim_height: float) -> tuple:
+    """``(centre_x, centre_y, floor, scale_h, scale_z)`` for the bowl geometry.
 
     The real bowl is a flat floor whose raised rim follows a rounded-square
     boundary (~15 m radius on the axes, ~17.1 m at the corners) and climbs ~5 m
@@ -234,10 +237,6 @@ def _load_ground_model_mesh(path: str, radius: float,
     independently.  The geometry is centred on the vehicle and its floor sits on
     ``z = 0``, so the calibration blocks stay on the flat part.
     """
-    geometry = _model_geometry(path)
-    if geometry is None:
-        return None
-    verts, faces = geometry
     xs = [vertex[0] for vertex in verts]
     ys = [vertex[1] for vertex in verts]
     zs = [vertex[2] for vertex in verts]
@@ -250,6 +249,21 @@ def _load_ground_model_mesh(path: str, radius: float,
     centre_x = 0.5 * (max(xs) + min(xs))
     centre_y = 0.5 * (max(ys) + min(ys))
     floor = min(zs)
+    return centre_x, centre_y, floor, scale_h, scale_z
+
+
+def _load_ground_model_mesh(path: str, radius: float,
+                            rim_height: float) -> Optional[bpy.types.Mesh]:
+    """Build the ground mesh from ``path``, scaled to ``radius`` x ``rim_height``.
+
+    The model's meshes are merged into the single ``AVM_Ground`` object the scene
+    displays; :func:`import_ground_objects` keeps them separate for the export.
+    """
+    geometry = _model_geometry(path)
+    if geometry is None:
+        return None
+    verts, faces = geometry
+    centre_x, centre_y, floor, scale_h, scale_z = _ground_scale(verts, radius, rim_height)
     mesh = bpy.data.meshes.new("AVM_Ground")
     mesh.from_pydata(
         [((x - centre_x) * scale_h, (y - centre_y) * scale_h,
@@ -258,6 +272,58 @@ def _load_ground_model_mesh(path: str, radius: float,
         polygon.use_smooth = True
     mesh.update()
     return mesh
+
+
+def import_ground_objects(path: str, radius: float,
+                          rim_height: float) -> List[bpy.types.Object]:
+    """Import ``path`` and return its mesh objects, scaled like the scene ground.
+
+    Unlike :func:`_load_ground_model_mesh` (which merges everything into the one
+    ``AVM_Ground`` object the scene displays), this preserves the source objects
+    and their names: the Falcon app looks the ground up per camera by the model's
+    own node names (``NurbsPath.001`` .. ``NurbsPath.004``).  The geometry is
+    baked exactly as the merged ground is, so the export matches the scene.  The
+    caller owns the returned objects and must remove them once the export is done.
+    """
+    view_layer = bpy.context.view_layer
+    selected = list(bpy.context.selected_objects)
+    active = view_layer.objects.active
+    before = {obj.name for obj in bpy.data.objects}
+    try:
+        compat.import_model(path)
+    except Exception:
+        return []
+    imported = [obj for obj in bpy.data.objects if obj.name not in before]
+    meshes = [obj for obj in imported
+              if obj.type == "MESH" and obj.data is not None and len(obj.data.vertices)]
+    if not meshes:
+        for obj in imported:
+            bpy.data.objects.remove(obj, do_unlink=True)
+        return []
+    verts: List = []
+    for obj in meshes:
+        matrix = obj.matrix_world
+        verts.extend(tuple(matrix @ vertex.co) for vertex in obj.data.vertices)
+    centre_x, centre_y, floor, scale_h, scale_z = _ground_scale(verts, radius, rim_height)
+    bake = (Matrix.Diagonal((scale_h, scale_h, scale_z, 1.0))
+            @ Matrix.Translation((-centre_x, -centre_y, -floor)))
+    for obj in meshes:
+        obj.data.transform(bake @ obj.matrix_world)
+        obj.parent = None
+        obj.matrix_world = Matrix.Identity(4)
+    for obj in imported:
+        if obj not in meshes:
+            bpy.data.objects.remove(obj, do_unlink=True)
+    for obj in meshes:
+        obj.select_set(False)
+    try:
+        for obj in selected:
+            if obj.name in bpy.data.objects:
+                obj.select_set(True)
+        view_layer.objects.active = active
+    except Exception:
+        pass
+    return meshes
 
 
 #: object name prefix -> the setting that shows/hides it (one place to rule them

@@ -1068,6 +1068,7 @@ def test_avm_io_covers_every_setting():
     # parameters, so they are expected to stay out of the JSON
     skip = {"name", "root", "revision", "io_status",
             "coverage_status", "coverage_matrix", "corners_status",
+            "bowl_include_vehicle",
             "points_2d", "points_2d_ok", "points_2d_error",
             "points_2d_revision", "points_2d_signature"}
     props = [prop for prop in settings.bl_rna.properties
@@ -1572,7 +1573,9 @@ def test_avm_export_bowl():
         offset += 8 + chunk_len
     check("bowl glb parses", document is not None)
     names = [node.get("name") for node in document.get("nodes", [])]
-    check("bowl glb has a single ground node", names == ["AVM_Ground"], str(names))
+    check("bowl glb has the four ground faces",
+          sorted(names) == ["NurbsPath.001", "NurbsPath.002",
+                            "NurbsPath.003", "NurbsPath.004"], str(names))
     positions = [document["accessors"][primitive["attributes"]["POSITION"]]
                  for mesh in document["meshes"] for primitive in mesh["primitives"]]
     low = [min(a["min"][k] for a in positions) for k in range(3)]
@@ -1582,6 +1585,29 @@ def test_avm_export_bowl():
           abs(low[0] + 8.0) < 1e-3 and abs(high[0] - 8.0) < 1e-3
           and abs(low[1]) < 1e-3 and abs(high[1] - 3.0) < 1e-3,
           f"x[{low[0]:.2f},{high[0]:.2f}] y[{low[1]:.2f},{high[1]:.2f}]")
+
+    # with the vehicle included, the car is exported as a node named "vehicle"
+    # and the scene object keeps its AVM_Car name
+    settings.bowl_include_vehicle = True
+    with_vehicle = os.path.join(TMPDL, "bowl_vehicle.glb")
+    check("export bowl with vehicle operator",
+          bpy.ops.opencv_cam.avm_export_bowl(filepath=with_vehicle) == {"FINISHED"})
+    check("the scene car keeps its name",
+          bpy.data.objects.get("AVM_Car") is not None
+          and bpy.data.objects.get("vehicle") is None)
+    vehicle_data = open(with_vehicle, "rb").read()
+    _, _, vehicle_length = struct.unpack_from("<III", vehicle_data, 0)
+    offset, vehicle_document = 12, None
+    while offset < vehicle_length:
+        chunk_len, = struct.unpack_from("<I", vehicle_data, offset)
+        tag = vehicle_data[offset + 4:offset + 8]
+        if tag == b"JSON":
+            vehicle_document = json.loads(vehicle_data[offset + 8:offset + 8 + chunk_len])
+        offset += 8 + chunk_len
+    vehicle_names = [node.get("name") for node in vehicle_document.get("nodes", [])]
+    check("bowl glb with vehicle has the four ground faces and a 'vehicle' node",
+          set(vehicle_names) == {"NurbsPath.001", "NurbsPath.002", "NurbsPath.003",
+                                 "NurbsPath.004", "vehicle"}, str(vehicle_names))
 
 
 def test_drive_scene():

@@ -227,6 +227,7 @@ class OPENCV_CAM_PT_avm_scene_view3d(_AVMPanel, bpy.types.Panel):
                      text="Export Falcon", icon="EXPORT")
         row.operator("opencv_cam.avm_export_bowl",
                      text="Export Bowl", icon="MESH_DATA")
+        layout.prop(context.scene.avm_scene, "bowl_include_vehicle")
 
 
 _CLASSES = (OPENCV_CAM_PT_avm_scene, OPENCV_CAM_PT_avm_scene_view3d)

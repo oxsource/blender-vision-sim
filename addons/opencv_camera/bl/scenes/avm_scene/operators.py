@@ -381,25 +381,63 @@ class OPENCV_CAM_OT_avm_export_bowl(_AVMSceneOperator, bpy.types.Operator, Expor
         return super().invoke(context, event)
 
     def execute(self, context):
+        settings = _settings(context)
         ground = bpy.data.objects.get(builder.GROUND_NAME)
         if ground is None or ground.type != "MESH":
             self.report({"ERROR"}, "no AVM ground mesh to export")
             return {"CANCELLED"}
+        car = None
+        if settings.bowl_include_vehicle:
+            car = bpy.data.objects.get(builder.CAR_NAME)
+            if car is None:
+                self.report({"ERROR"}, "no AVM car to export")
+                return {"CANCELLED"}
+        # The Falcon app looks the ground up per camera by the source model's own
+        # node names (NurbsPath.001..004), so a loaded bowl model is re-imported
+        # and exported as its four faces instead of the merged AVM_Ground.
+        imported = []
+        ground_objects = [ground]
+        if ground.data is not None and ground.data.get(builder.GROUND_MODEL_KEY):
+            imported = builder.import_ground_objects(
+                builder.ground_model_path(settings),
+                settings.ground_radius, settings.ground_rim_height)
+            if imported:
+                ground_objects = imported
         view_layer = context.view_layer
         selected = list(context.selected_objects)
         active = view_layer.objects.active
+        car_name = car.name if car is not None else None
+        car_hidden = (car.hide_render, car.hide_get()) if car is not None else None
         try:
             for obj in selected:
                 obj.select_set(False)
-            ground.select_set(True)
-            view_layer.objects.active = ground
+            for obj in ground_objects:
+                obj.select_set(True)
+            if car is not None:
+                # the app finds the vehicle by this node name; rename only for
+                # the export and restore it afterwards.  An explicitly requested
+                # vehicle is exported even when the Car layer is hidden.
+                car.name = builder.VEHICLE_EXPORT_NAME
+                car.hide_render = False
+                car.hide_set(False)
+                car.select_set(True)
+            view_layer.objects.active = ground_objects[0]
             compat.export_gltf(self.filepath)
         except Exception as exc:
             self.report({"ERROR"}, f"{type(exc).__name__}: {exc}")
             return {"CANCELLED"}
         finally:
-            if ground.name in bpy.data.objects:
-                ground.select_set(False)
+            if car is not None and car.name in bpy.data.objects:
+                car.name = car_name
+                car.hide_render, hidden = car_hidden
+                car.hide_set(hidden)
+                car.select_set(False)
+            for obj in ground_objects:
+                if obj.name in bpy.data.objects:
+                    obj.select_set(False)
+            for obj in imported:
+                if obj.name in bpy.data.objects:
+                    bpy.data.objects.remove(obj, do_unlink=True)
             for obj in selected:
                 if obj.name in bpy.data.objects:
                     obj.select_set(True)

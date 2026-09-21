@@ -225,6 +225,12 @@ class AVMSceneSettings(bpy.types.PropertyGroup):
         update=_schedule_active)
     cameras: CollectionProperty(type=AVMCameraSettings)
 
+    # -- bowl export --------------------------------------------------------
+    bowl_include_vehicle: BoolProperty(
+        name="Include Vehicle", default=False,
+        description="Also export the vehicle in Export Bowl; the GLB node is named "
+                    "'vehicle' (the scene object stays AVM_Car)")
+
     # -- state --------------------------------------------------------------
     root: PointerProperty(
         name="Root",

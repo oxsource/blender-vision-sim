@@ -346,7 +346,7 @@ N ▸ VisionSim ▸ AVM Scene            （仅在 AVM Scene 存在时出现）
 ├── 地面文字：Show Logo / Logo size
 ├── 相机布局：active_camera + 4 台的 location / rotation / enable + [Detect Corners] / [Show Corners] / [X]
 ├── 图层开关：地面 / 标定块 / 车辆 / 相机 / 道具 / 地面文字 / 覆盖 / 太阳
-└── 动作：[重建] [还原默认] [Frame View] [Export Falcon] [Export Bowl]
+└── 动作：[重建] [还原默认] [Frame View] [Export Falcon] [Export Bowl] + Include Vehicle 勾选
 ```
 
 > - **相机内参**（K/D/标定尺寸）与**参数导出 / 导入**都**只在 Scene 面板**，
@@ -530,9 +530,14 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 改半径/高度只从缓存重新缩放、不重复导入；对象 mesh 上用 `avm_ground_model` 键记录
 `路径 + 半径 + 高度` 做缓存。导入过程会保存并恢复用户选择。`ground_model` 可指向自定义模型
 （`.glb/.gltf/.fbx/.obj`），为空即内置 bowl；文件缺失/导入失败时回退平面并在 `messages` /
-状态栏给出提示。N 面板的 `[Export Bowl]`（`opencv_cam.avm_export_bowl`）把当前 `AVM_Ground`
-（含 `ground_radius` / `ground_rim_height` 缩放）单独导出成 `.glb`（Y-up，底面在 y=0，单节点
-`AVM_Ground`），可回灌 `filament_avm` 或再作为自定义 `ground_model` 使用。
+状态栏给出提示。N 面板的 `[Export Bowl]`（`opencv_cam.avm_export_bowl`）把当前 bowl 导出成
+`.glb`（Y-up，底面在 y=0）：加载了真实模型时按**源模型的四个面**逐节点导出（节点名保持
+`NurbsPath.001` .. `NurbsPath.004`，app 每台相机按名字取地面对应面），并同样应用
+`ground_radius` / `ground_rim_height` 缩放；只有回退到平面时才导出单个 `AVM_Ground`。
+
+`bowl_include_vehicle`（N 面板的 **Include Vehicle** 勾选，默认关）打开后，导出还会带上车辆：
+`AVM_Car` 在导出期间临时改名为 **`vehicle`**，所以 GLB 里除四个地面面外多一个 `vehicle` 节点
+（app 按 `vehicle` 这个名字找车），导出结束立即恢复为 `AVM_Car`，场景对象命名不受影响。
 
 ---
 
@@ -659,7 +664,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | `opencv_cam.avm_clear_camera` | **清除单相机检测**：清空 `points_2d`、删除标注图与缓存渲染图（相机条目上的 `[X]`） |
 | `opencv_cam.avm_analyze_coverage` | **覆盖评估**（§16）：算 4 台相机的地面足迹、并集/重叠/盲区、标定块可见性矩阵；生成贴地覆盖曲线 |
 | `opencv_cam.avm_export_falcon` | **Export Falcon**（§16.8）：复用/渲染 4 张原始图 + 4 张角点标注图 + 完整 `vehicle_avm.json`，**打包为 zip** |
-| `opencv_cam.avm_export_bowl` | **Export Bowl**（§7，N 面板）：把 `AVM_Ground`（当前缩放后的真实碗形 mesh）单独导出成 `.glb` |
+| `opencv_cam.avm_export_bowl` | **Export Bowl**（§7，N 面板）：把碗形地面导出成 `.glb`；加载真实模型时按源模型的 `NurbsPath.001`..`004` 四个面逐节点导出，`bowl_include_vehicle` 打开时连带 `AVM_Car`，节点名写成 `vehicle` |
 
 ---
 
