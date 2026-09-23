@@ -362,18 +362,19 @@ PoC 的做法是从渲染图里按**颜色**切出"贴底边的深青色连通�
 ```json
 "vehicle": {
   "frame": "vehicle",
-  "body": { "length_m": 4.8, "width_m": 2.4, "height_m": 2.88 },
-  "ground_clearance_m": 0.0,
-  "center_to_rear_axle_m": [0.0, -1.488, 0.0],
-  "axles": { "wheel_base_m": 3.2, "rear_track_m": 1.8, "rear_center_offset_m": 2.8 }
+  "body": { "length": 4.8, "width": 2.4, "height": 2.88 },
+  "ground_clearance": 0.0,
+  "center_to_rear_axle": [0.0, -1.488, 0.0],
+  "axles": { "wheel_base": 3.2, "rear_track": 1.8, "rear_center_offset": 2.8 }
 }
 ```
 
-- `body` + `ground_clearance_m` 足够建 v1 的**静态轮廓掩码**（车体在鱼眼图中的固定轮廓）；
-- `center_to_rear_axle_m` 是**车体几何中心 → 后轴中心**的显式变换（车体系、米），
+- 块里**所有长度都是米**，所以键名不带单位后缀；坐标系只声明一次（`frame`）；
+- `body` + `ground_clearance` 足够建 v1 的**静态轮廓掩码**（车体在鱼眼图中的固定轮廓）；
+- `center_to_rear_axle` 是**车体几何中心 → 后轴中心**的显式变换（车体系、米），
   由 `vehicle.center_to_rear_axle()` 从 `AXLE_FRACTION` 算出、与两个车模 builder 的轮心同源；
   透明底盘以**后轴**锚定地面画布，必须拿到它，且**缺失时拒绝启用而不是默认 0**；
-  它与下面的 `axles` 是两回事——`axles` 是转向投影锚点，`rear_center_offset_m` 的参照点不同；
+  它与下面的 `axles` 是两回事——`axles` 是转向投影锚点，`rear_center_offset` 的参照点不同；
 - `axles` 取自 `avm_falcon.STEERING`，让 v2 的 3D 投影有轮位可锚；
 - **`frame: "vehicle"` 必须写出来**——与 §4.7「坐标系不钉死就一定出错」同一类风险；
 - 块只有**一份**，不随相机复制：车体不随相机走。
@@ -392,12 +393,12 @@ PoC 的做法是从渲染图里按**颜色**切出"贴底边的深青色连通�
 
 #### 5.6.4 落地后必须能证明
 
-1. `clip.json["vehicle"]["body"]["width_m"]` == Drive 车体 mesh 的**实际** X 向尺寸
+1. `clip.json["vehicle"]["body"]["width"]` == Drive 车体 mesh 的**实际** X 向尺寸
    （从 `car.dimensions` 读，而不是把设置再抄一遍——抄一遍就等于没验证真源）；
-2. `body.width_m` == `avm_falcon.STEERING["body_width"]`——同一真源的可测证据；
+2. `body.width` == `avm_falcon.STEERING["body_width"]`——同一真源的可测证据；
 3. 改 Drive 车宽设置后 `clip.json["vehicle"]` 跟着变（证明读的是真源而非硬编码）；
 4. 四路导出里 `vehicle` 块**只有一份**；
-5. `clip.json["vehicle"]["center_to_rear_axle_m"][1]` == Drive 车体 mesh 轮胎环的 y 中心
+5. `clip.json["vehicle"]["center_to_rear_axle"][1]` == Drive 车体 mesh 轮胎环的 y 中心
    （取 `(max + min) / 2`，而不是再抄一遍 `AXLE_FRACTION`）——透明底盘以它为后轴锚点。
 
 ## 6. 逐文件改造清单
@@ -440,7 +441,7 @@ PoC 的做法是从渲染图里按**颜色**切出"贴底边的深青色连通�
 8. 小尺寸录 9 帧 → 每帧 **4** 张 PNG，文件名逐个符合 `frame_name()`；
 9. `frames.csv` 表头 == `csv_header(recorded)`，行数 == 帧数 + 1；
 10. `clip.json` 有 4 条 `cameras`、`version == 2`、每条的 `K/D/mount` 与该相机对象一致；
-11. `clip.json` 有 `vehicle` 块、`frame == "vehicle"`，且 `body.width_m` == 车体 mesh 的 `dimensions.x`（§5.6.4 第 1 条）；
+11. `clip.json` 有 `vehicle` 块、`frame == "vehicle"`，且 `body.width` == 车体 mesh 的 `dimensions.x`（§5.6.4 第 1 条）；
 12. 关掉 `back.enable` → 只出 3 路、CSV 只 3 组、`cameras` 只 3 条；
 13. 录两路时 `vehicle` 块仍**只有一份**（§5.6.4 第 4 条）；
 14. **解码帧数 == `frames.csv` 行数**，四路**逐路**成立（把消费侧的 §4.6.4 契约在生产侧也钉一次）。

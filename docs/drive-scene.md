@@ -107,8 +107,9 @@ Blender 侧把**同一份 plan** 写进关键帧（每帧一个 key，LINEAR）�
   所以下游可以直接投影，不必自己重算缩放规则。`frame_pattern` / `video_pattern` 把文件名约定写进文件本身。
 - **`video` 只在单路时是文件名**；多路时为空字符串，契约是**每路一条 `<camera>.mp4`**（消费侧的
   `FrameSource` 正是按这个规则取路）。
-- **`vehicle` 块只有一份**（车体不随相机走）：`frame`（车体系，显式写出）+ `body{length_m,width_m,height_m}`
-  + `ground_clearance_m` + `axles{wheel_base_m,rear_track_m,rear_center_offset_m}`，供下游按几何解算自车掩码。
+- **`vehicle` 块只有一份**（车体不随相机走）：`frame`（车体系，显式写出）+ `body{length,width,height}`
+  + `ground_clearance` + `center_to_rear_axle` + `axles{wheel_base,rear_track,rear_center_offset}`，
+  块内长度统一为米、键名不带单位后缀；供下游按几何解算自车掩码与后轴锚定。
   数字来自 `core/scenes/vehicle.py`（AVM/Drive 两个 mesh 与 Falcon 的转向线配置同源）；`body` 是**名义车身盒**，
   车轮与灯箱略微凸出（每侧 +0.11 m / 每端 +0.02 m），所以对象 `dimensions` 比它大——这一点在测试里
   用**车体材质面的实际顶点**量出来验证，而不是把设置再抄一遍。

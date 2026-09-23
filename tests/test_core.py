@@ -661,25 +661,25 @@ def test_vehicle():
           defaults["frame"] == "vehicle" and defaults["frame"] == vehicle.FRAME,
           str(defaults["frame"]))
     check("the clip block carries the body box in metres",
-          defaults["body"] == {"length_m": 4.8, "width_m": 2.4, "height_m": 2.88},
+          defaults["body"] == {"length": 4.8, "width": 2.4, "height": 2.88},
           str(defaults["body"]))
     check("the clip block carries the centre -> rear-axle transform",
-          defaults["center_to_rear_axle_m"] == [0.0, -1.488, 0.0],
-          str(defaults.get("center_to_rear_axle_m")))
+          defaults["center_to_rear_axle"] == [0.0, -1.488, 0.0],
+          str(defaults.get("center_to_rear_axle")))
     check("the clip block carries the clearance and the axles",
-          defaults["ground_clearance_m"] == 0.0
-          and defaults["axles"] == {"wheel_base_m": 3.2, "rear_track_m": 1.8,
-                                    "rear_center_offset_m": 2.8},
+          defaults["ground_clearance"] == 0.0
+          and defaults["axles"] == {"wheel_base": 3.2, "rear_track": 1.8,
+                                    "rear_center_offset": 2.8},
           str(defaults["axles"]))
     overridden = vehicle.block(length=5.5, width=2.1, height=3.0, clearance=0.2)
     check("an override flows into the block",
-          overridden["body"] == {"length_m": 5.5, "width_m": 2.1, "height_m": 3.0}
-          and overridden["ground_clearance_m"] == 0.2
-          and overridden["center_to_rear_axle_m"] == [0.0, -1.705, 0.0],
+          overridden["body"] == {"length": 5.5, "width": 2.1, "height": 3.0}
+          and overridden["ground_clearance"] == 0.2
+          and overridden["center_to_rear_axle"] == [0.0, -1.705, 0.0],
           str(overridden["body"]))
     check("the block has no per-camera dimension",
-          set(defaults) == {"frame", "body", "ground_clearance_m",
-                            "center_to_rear_axle_m", "axles"},
+          set(defaults) == {"frame", "body", "ground_clearance",
+                            "center_to_rear_axle", "axles"},
           str(sorted(defaults)))
 
 

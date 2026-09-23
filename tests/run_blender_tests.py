@@ -2027,18 +2027,18 @@ def test_drive_scene():
     car = bpy.data.objects["DRIVE_Car"]
     check("clip.json carries one vehicle block, in the vehicle frame",
           meta["vehicle"]["frame"] == "vehicle"
-          and meta["vehicle"]["ground_clearance_m"] == settings.car_clearance,
+          and meta["vehicle"]["ground_clearance"] == settings.car_clearance,
           str(meta["vehicle"]))
     check("the vehicle block is the shared minibus geometry, at a readable precision",
-          body == {"length_m": 4.8, "width_m": 2.4, "height_m": 2.88},
+          body == {"length": 4.8, "width": 2.4, "height": 2.88},
           str(body))
     check("the vehicle block carries the axle anchors",
-          meta["vehicle"]["axles"] == {"wheel_base_m": 3.2, "rear_track_m": 1.8,
-                                       "rear_center_offset_m": 2.8},
+          meta["vehicle"]["axles"] == {"wheel_base": 3.2, "rear_track": 1.8,
+                                       "rear_center_offset": 2.8},
           str(meta["vehicle"]["axles"]))
     check("the exported width is the AVM-era body width, from the one source",
-          body["width_m"] == avm_falcon.STEERING["body_width"] == vehicle.BODY_WIDTH_M,
-          f"{body['width_m']} / {avm_falcon.STEERING['body_width']} / {vehicle.BODY_WIDTH_M}")
+          body["width"] == avm_falcon.STEERING["body_width"] == vehicle.BODY_WIDTH_M,
+          f"{body['width']} / {avm_falcon.STEERING['body_width']} / {vehicle.BODY_WIDTH_M}")
     # ... and the mesh really was built at that size: measure the body slab out
     # of the mesh's own body-material faces rather than re-reading the setting
     # (the wheels and the lamps are added proud of it, so car.dimensions is not it)
@@ -2048,12 +2048,12 @@ def test_drive_scene():
     slab_x = max(abs(car.data.vertices[i].co.x) for i in body_verts)
     slab_y = max(abs(car.data.vertices[i].co.y) for i in body_verts)
     check("the rendered car mesh's body slab is exactly the exported box",
-          approx(slab_x, body["width_m"] / 2.0, 1e-5)
-          and approx(slab_y, body["length_m"] / 2.0, 1e-5),
+          approx(slab_x, body["width"] / 2.0, 1e-5)
+          and approx(slab_y, body["length"] / 2.0, 1e-5),
           f"mesh {slab_x:.4f} x {slab_y:.4f} vs "
-          f"{body['width_m'] / 2:.4f} x {body['length_m'] / 2:.4f}")
+          f"{body['width'] / 2:.4f} x {body['length'] / 2:.4f}")
     check("the wheels and lamps do protrude, so the object is larger than the body",
-          car.dimensions.x > body["width_m"] and car.dimensions.y > body["length_m"],
+          car.dimensions.x > body["width"] and car.dimensions.y > body["length"],
           f"{tuple(round(v, 4) for v in car.dimensions)} vs body {body}")
     # ... and the exported centre -> rear-axle transform really is the mesh's
     # wheel centre: the tyre ring is symmetric about its axle, so (max + min)/2
@@ -2067,7 +2067,7 @@ def test_drive_scene():
     front_y = [y for y in tyre_y if y > 0]
     rear_axle = (max(rear_y) + min(rear_y)) / 2.0
     front_axle = (max(front_y) + min(front_y)) / 2.0
-    exported_axle = meta["vehicle"]["center_to_rear_axle_m"]
+    exported_axle = meta["vehicle"]["center_to_rear_axle"]
     check("the exported rear axle is the mesh's rear wheel centre",
           approx(rear_axle, exported_axle[1], 1e-4)
           and approx(front_axle, -exported_axle[1], 1e-4)
@@ -2082,7 +2082,7 @@ def test_drive_scene():
     recording.render_clip(bpy.context, settings, wide_dir, samples=1)
     wider = json.load(open(os.path.join(wide_dir, "clip.json"), encoding="utf-8"))
     check("the exported vehicle block follows the scene's car width",
-          wider["vehicle"]["body"]["width_m"] == 2.1,
+          wider["vehicle"]["body"]["width"] == 2.1,
           str(wider["vehicle"]["body"]))
     settings.car_width = 2.4
     bpy.ops.opencv_cam.drive_rebuild()
@@ -2245,7 +2245,7 @@ def test_drive_scene():
               str(sorted(os.listdir(three_dir))[:4]))
         check("the vehicle block is still a single copy",
               "vehicle" in three_meta
-              and three_meta["vehicle"]["body"]["width_m"] == 2.4,
+              and three_meta["vehicle"]["body"]["width"] == 2.4,
               str(three_meta["vehicle"]["body"]))
     finally:
         settings.camera("back").enable = True

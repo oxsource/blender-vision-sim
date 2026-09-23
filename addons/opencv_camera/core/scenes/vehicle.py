@@ -64,21 +64,21 @@ AXLE_FRACTION = 0.31
 
 def body(length: Optional[float] = None, width: Optional[float] = None,
          height: Optional[float] = None) -> Dict[str, float]:
-    """The body box as ``{"length_m", "width_m", "height_m"}``."""
+    """The body box as ``{"length", "width", "height"}`` (metres)."""
     return {
-        "length_m": _m(BODY_LENGTH_M if length is None else length),
-        "width_m": _m(BODY_WIDTH_M if width is None else width),
-        "height_m": _m(BODY_HEIGHT_M if height is None else height),
+        "length": _m(BODY_LENGTH_M if length is None else length),
+        "width": _m(BODY_WIDTH_M if width is None else width),
+        "height": _m(BODY_HEIGHT_M if height is None else height),
     }
 
 
 def axles(wheel_base: Optional[float] = None, rear_track: Optional[float] = None,
           rear_center_offset: Optional[float] = None) -> Dict[str, float]:
-    """The axle geometry as a ``clip.json``-shaped dict."""
+    """The axle geometry as a ``clip.json``-shaped dict (metres)."""
     return {
-        "wheel_base_m": _m(WHEEL_BASE_M if wheel_base is None else wheel_base),
-        "rear_track_m": _m(REAR_TRACK_M if rear_track is None else rear_track),
-        "rear_center_offset_m": _m(
+        "wheel_base": _m(WHEEL_BASE_M if wheel_base is None else wheel_base),
+        "rear_track": _m(REAR_TRACK_M if rear_track is None else rear_track),
+        "rear_center_offset": _m(
             REAR_CENTER_OFFSET_M if rear_center_offset is None else rear_center_offset),
     }
 
@@ -106,16 +106,17 @@ def block(length: Optional[float] = None, width: Optional[float] = None,
     (section 4.7).  The block describes the vehicle, so there is exactly **one**
     of it per clip - it does not repeat per camera.
 
-    ``center_to_rear_axle_m`` is the vehicle-centre -> rear-axle transform a
+    ``center_to_rear_axle`` is the vehicle-centre -> rear-axle transform a
     rear-axle-anchored consumer (the transparent chassis) needs; it is exported
     rather than left implicit so a missing calibration cannot silently become
-    zero.
+    zero.  Every length in the block is in metres, so the keys carry no unit
+    suffix; the frame is named once.
     """
     return {
         "frame": FRAME,
         "body": body(length, width, height),
-        "ground_clearance_m": _m(GROUND_CLEARANCE_M if clearance is None else clearance),
-        "center_to_rear_axle_m": center_to_rear_axle(length),
+        "ground_clearance": _m(GROUND_CLEARANCE_M if clearance is None else clearance),
+        "center_to_rear_axle": center_to_rear_axle(length),
         "axles": axles(),
     }
 
