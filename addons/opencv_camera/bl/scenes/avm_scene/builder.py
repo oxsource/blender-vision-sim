@@ -17,7 +17,7 @@ import bpy
 from mathutils import Matrix
 
 from ....core import paths
-from ....core.scenes import avm_cameras, avm_coverage, avm_layout
+from ....core.scenes import avm_cameras, avm_coverage, avm_layout, vehicle
 from ... import apply as apply_mod
 from ... import camera_factory, compat, shader
 from ..base import collection, link_to_collection, remove_collection_objects
@@ -495,7 +495,7 @@ def _minibus_mesh(name: str, length: float, width: float, height: float) -> bpy.
                  floor + height * 0.30, floor + height * 0.30 + 0.30, CAR_TAIL)
 
     # wheels: bottoms on the ground, outer faces proud of the body sides
-    wheelbase = length * 0.62
+    wheelbase = 2.0 * vehicle.AXLE_FRACTION * length
     wheel_x = width / 2 - 0.02
     for side in (-1.0, 1.0):
         for front in (-1.0, 1.0):

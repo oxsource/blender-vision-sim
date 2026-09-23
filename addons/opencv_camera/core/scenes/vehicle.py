@@ -27,12 +27,12 @@ was built at this size is asserted against the mesh's own vertices in
 
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 __all__ = [
     "FRAME", "BODY_LENGTH_M", "BODY_WIDTH_M", "BODY_HEIGHT_M", "GROUND_CLEARANCE_M",
-    "WHEEL_BASE_M", "REAR_TRACK_M", "REAR_CENTER_OFFSET_M",
-    "body", "axles", "block",
+    "WHEEL_BASE_M", "REAR_TRACK_M", "REAR_CENTER_OFFSET_M", "AXLE_FRACTION",
+    "body", "axles", "center_to_rear_axle", "block",
 ]
 
 #: the frame every number here is expressed in
@@ -52,6 +52,14 @@ GROUND_CLEARANCE_M = 0.0
 WHEEL_BASE_M = 3.2
 REAR_TRACK_M = 1.8
 REAR_CENTER_OFFSET_M = 2.8
+
+#: where the generated car meshes actually put the wheels: each axle sits
+#: ``AXLE_FRACTION`` of the body length ahead of / behind the centre.  The meshes
+#: in ``bl/scenes/*/builder.py`` read this, so the rendered axle and the exported
+#: :func:`center_to_rear_axle` cannot drift apart.  Note this is *not* the
+#: steering ``axles`` block above: ``SteeringPerfs`` is a projection anchor, while
+#: this is the physical wheel position in the vehicle frame.
+AXLE_FRACTION = 0.31
 
 
 def body(length: Optional[float] = None, width: Optional[float] = None,
@@ -75,6 +83,19 @@ def axles(wheel_base: Optional[float] = None, rear_track: Optional[float] = None
     }
 
 
+def center_to_rear_axle(length: Optional[float] = None) -> List[float]:
+    """The rear-axle centre in the vehicle frame, ``[x, y, z]`` metres.
+
+    The vehicle frame origin is the body centre on the ground (see the module
+    docstring), so the rear axle is :data:`AXLE_FRACTION` of the body length
+    behind it: ``y = -length * AXLE_FRACTION``.  A transparent-chassis consumer
+    anchored on the rear axle needs this explicitly; it must not be inferred
+    from the steering ``axles`` block, whose reference point is a different one.
+    """
+    body_length = BODY_LENGTH_M if length is None else length
+    return [0.0, _m(-body_length * AXLE_FRACTION), 0.0]
+
+
 def block(length: Optional[float] = None, width: Optional[float] = None,
           height: Optional[float] = None,
           clearance: Optional[float] = None) -> Dict:
@@ -84,11 +105,17 @@ def block(length: Optional[float] = None, width: Optional[float] = None,
     implied is the same class of hazard as a pose whose frame is only implied
     (section 4.7).  The block describes the vehicle, so there is exactly **one**
     of it per clip - it does not repeat per camera.
+
+    ``center_to_rear_axle_m`` is the vehicle-centre -> rear-axle transform a
+    rear-axle-anchored consumer (the transparent chassis) needs; it is exported
+    rather than left implicit so a missing calibration cannot silently become
+    zero.
     """
     return {
         "frame": FRAME,
         "body": body(length, width, height),
         "ground_clearance_m": _m(GROUND_CLEARANCE_M if clearance is None else clearance),
+        "center_to_rear_axle_m": center_to_rear_axle(length),
         "axles": axles(),
     }
 

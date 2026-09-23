@@ -2055,6 +2055,24 @@ def test_drive_scene():
     check("the wheels and lamps do protrude, so the object is larger than the body",
           car.dimensions.x > body["width_m"] and car.dimensions.y > body["length_m"],
           f"{tuple(round(v, 4) for v in car.dimensions)} vs body {body}")
+    # ... and the exported centre -> rear-axle transform really is the mesh's
+    # wheel centre: the tyre ring is symmetric about its axle, so (max + min)/2
+    # of the tyre vertices' y is the axle, measured off the mesh rather than
+    # re-reading AXLE_FRACTION.
+    tyre_verts = {index for polygon in car.data.polygons
+                  if polygon.material_index == builder.CAR_TIRE
+                  for index in polygon.vertices}
+    tyre_y = [car.data.vertices[i].co.y for i in tyre_verts]
+    rear_y = [y for y in tyre_y if y < 0]
+    front_y = [y for y in tyre_y if y > 0]
+    rear_axle = (max(rear_y) + min(rear_y)) / 2.0
+    front_axle = (max(front_y) + min(front_y)) / 2.0
+    exported_axle = meta["vehicle"]["center_to_rear_axle_m"]
+    check("the exported rear axle is the mesh's rear wheel centre",
+          approx(rear_axle, exported_axle[1], 1e-4)
+          and approx(front_axle, -exported_axle[1], 1e-4)
+          and exported_axle[0] == 0.0 and exported_axle[2] == 0.0,
+          f"mesh rear {rear_axle:.4f} / front {front_axle:.4f} vs export {exported_axle}")
 
     # changing the Drive car's width must change the exported block: proof that
     # the export reads the scene, not a hardcoded 2.4

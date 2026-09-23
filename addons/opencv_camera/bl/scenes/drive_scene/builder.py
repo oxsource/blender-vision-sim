@@ -24,7 +24,7 @@ import bmesh
 import bpy
 from mathutils import Matrix
 
-from ....core.scenes import avm_cameras, avm_layout, drive_lot
+from ....core.scenes import avm_cameras, avm_layout, drive_lot, vehicle
 from ... import camera_factory, compat
 from ..base import collection, link_to_collection, remove_collection_objects
 
@@ -262,7 +262,8 @@ def _car_mesh(name: str, length: float, width: float, height: float) -> bpy.type
     # wheels: bottoms on the ground, outer faces proud of the body sides
     for side in (-1.0, 1.0):
         for end in (-1.0, 1.0):
-            _add_cylinder(bm, (side * (half_w - 0.02), end * length * 0.31, wheel_radius),
+            _add_cylinder(bm, (side * (half_w - 0.02), end * length * vehicle.AXLE_FRACTION,
+                               wheel_radius),
                           wheel_radius, 0.13, "X", 16, CAR_TIRE)
 
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
