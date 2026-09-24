@@ -1727,6 +1727,14 @@ def test_drive_scene():
     check("the car and the cameras all hang off the vehicle empty",
           bpy.data.objects["DRIVE_Car"].parent.name == "DRIVE_Vehicle")
 
+    # The clip renders at each camera's own calibration size and the Drive Scene
+    # syncs the Render tab to it, so shrink the calibration to keep this test
+    # fast: 96x72 instead of the 1280x960 default.
+    for key in avm_cameras.CAMERAS:
+        intrinsics = bpy.data.objects[
+            avm_cameras.object_name("DRIVE_Cam_", key)].data.opencv_cam.intrinsics
+        intrinsics.image_width, intrinsics.image_height = 96, 72
+
     # the camera record switches: four roles, all on by default, and the active
     # one drives the render camera
     check("the record switches mirror the four rig roles",
@@ -1741,6 +1749,11 @@ def test_drive_scene():
     settings.active_camera = "left"
     check("switching the active camera switches the render camera",
           scene.camera.name == "DRIVE_Cam_Left", scene.camera.name)
+    check("the render resolution follows the active camera's calibration size",
+          (scene.render.resolution_x, scene.render.resolution_y)
+          == (cameras["left"].data.opencv_cam.intrinsics.image_width,
+              cameras["left"].data.opencv_cam.intrinsics.image_height),
+          f"{scene.render.resolution_x}x{scene.render.resolution_y}")
     settings.active_camera = "front"
     check("the default view frames the car and all four cameras",
           len(builder.view_targets(scene)) == 1 + len(avm_cameras.CAMERAS),
@@ -1887,7 +1900,6 @@ def test_drive_scene():
     plan = settings.plan()
     check("the short clip is 9 frames", len(plan.frames) == 9, str(len(plan.frames)))
 
-    scene.render.resolution_x, scene.render.resolution_y = 96, 72
     scene.render.filepath = "//keep-me"
     # deliberately non-default render / timeline settings, to prove the recording
     # restores every knob it touches (device, adaptive, caustics, threads, frames)
@@ -1901,6 +1913,8 @@ def test_drive_scene():
     scene.render.threads = 3
     before = (scene.render.filepath, scene.camera, scene.cycles.samples,
               scene.render.image_settings.file_format,
+              scene.render.resolution_x, scene.render.resolution_y,
+              scene.render.resolution_percentage,
               scene.cycles.device, scene.cycles.use_denoising,
               scene.cycles.max_bounces, scene.cycles.diffuse_bounces,
               scene.cycles.glossy_bounces, scene.render.use_persistent_data,
@@ -1985,9 +1999,8 @@ def test_drive_scene():
           str(meta["cameras"][0]))
     check("the single unnamed camera block is gone",
           "camera" not in meta, str(sorted(meta)))
-    # K is recorded for the *render* resolution (the calibration is stored at the
-    # camera's own output size), so it is compared against the effective values,
-    # not against the stored ones
+    # The clip renders at the camera's own output size, so the recorded K is the
+    # stored calibration verbatim (effective_intrinsics is the identity here)
     effective = {key: apply_mod.effective_intrinsics(
         bpy.data.objects[avm_cameras.object_name("DRIVE_Cam_", key)].data.opencv_cam,
         96, 72) for key in recorded}
@@ -2001,8 +2014,9 @@ def test_drive_scene():
                   float(v) for v in bpy.data.objects[entry["name"]].location]
               for entry in meta["cameras"]),
           str([entry["K"] for entry in meta["cameras"]]))
-    check("the recorded K really did follow the render resolution",
-          all(entry["K"][0] < 317.77563818112867 for entry in meta["cameras"]),
+    check("the recorded K is the camera's calibration, at its own size",
+          all(approx(entry["K"][0], 317.77563818112867, 1e-3)
+              for entry in meta["cameras"]),
           str(meta["cameras"][0]["K"]))
     check("clip.json names the camera keys, in recording order",
           meta["camera_names"] == recorded, str(meta["camera_names"]))
@@ -2108,6 +2122,8 @@ def test_drive_scene():
           str(kept["files"][:3]))
     restored = (scene.render.filepath, scene.camera, scene.cycles.samples,
                 scene.render.image_settings.file_format,
+                scene.render.resolution_x, scene.render.resolution_y,
+                scene.render.resolution_percentage,
                 scene.cycles.device, scene.cycles.use_denoising,
                 scene.cycles.max_bounces, scene.cycles.diffuse_bounces,
                 scene.cycles.glossy_bounces, scene.render.use_persistent_data,
@@ -2118,7 +2134,8 @@ def test_drive_scene():
                 scene.frame_start, scene.frame_end, scene.frame_step)
     # name the knobs that did not come back - a bare tuple comparison makes the
     # one that drifted indistinguishable from the eighteen that did not
-    knob_names = ("filepath", "camera", "samples", "file_format", "device",
+    knob_names = ("filepath", "camera", "samples", "file_format",
+                  "resolution_x", "resolution_y", "resolution_percentage", "device",
                   "denoising", "max_bounces", "diffuse_bounces", "glossy_bounces",
                   "persistent", "adaptive", "adaptive_threshold", "caustics_reflective",
                   "caustics_refractive", "threads_mode", "threads", "frame_start",

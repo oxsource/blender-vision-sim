@@ -216,6 +216,21 @@ def camera_mounts(cameras: Sequence[str]) -> Dict[str, drive_path.Mount]:
     return mounts
 
 
+def camera_size(key: str) -> Tuple[int, int]:
+    """A recorded camera's configured image size, in pixels.
+
+    The calibration is authored at the camera's **own** output size
+    (``opencv_cam.intrinsics.image_width/height``), so that size - not Blender's
+    Render tab - is what the clip renders and records; otherwise a fresh scene's
+    1920x1080 default would silently disagree with the calibration.
+    """
+    camera = bpy.data.objects.get(builder.camera_name(key))
+    if camera is None:
+        return 0, 0
+    intrinsics = camera.data.opencv_cam.intrinsics
+    return max(1, int(intrinsics.image_width)), max(1, int(intrinsics.image_height))
+
+
 def camera_entry(key: str, width: int, height: int) -> Dict:
     """One ``clip.json`` ``cameras`` entry: what this camera is and where it sits.
 
@@ -262,7 +277,8 @@ def clip_meta(scene: bpy.types.Scene, settings, plan, samples: int,
               cameras: Sequence[str], video: str = "", quality: str = "",
               device: str = "", video_encode: Optional[Dict] = None) -> Dict:
     """The clip's self-description (what was rendered / driven / recorded)."""
-    width, height = apply_mod.render_resolution(scene)
+    sizes = {key: camera_size(key) for key in cameras}
+    width, height = sizes[cameras[0]] if cameras else (0, 0)
     return {
         "format": FORMAT,
         "version": VERSION,
@@ -295,7 +311,7 @@ def clip_meta(scene: bpy.types.Scene, settings, plan, samples: int,
         },
         # one entry per recorded camera, in recording order; the key in ``camera``
         # is the one the file names use, the ``name`` is the object it came from
-        "cameras": [camera_entry(key, width, height) for key in cameras],
+        "cameras": [camera_entry(key, *sizes[key]) for key in cameras],
         "camera_names": [str(key) for key in cameras],
         "frame_pattern": FRAME_PATTERN,
         "video_pattern": VIDEO_PATTERN,
@@ -426,6 +442,9 @@ class ClipJob:
         self._saved = {
             "filepath": render.filepath,
             "file_format": render.image_settings.file_format,
+            "resolution_x": render.resolution_x,
+            "resolution_y": render.resolution_y,
+            "resolution_percentage": render.resolution_percentage,
             "engine": render.engine,
             "device": cycles.device,
             "samples": cycles.samples,
@@ -473,8 +492,12 @@ class ClipJob:
         # ``scene.camera`` per frame is then the only per-frame camera work
         for key in self.cameras:
             camera = self._camera_objects[key]
+            # The OSL camera's parameters (principal point in pixels) are baked
+            # for a render resolution, so compile them for THIS camera's own
+            # size - not the scene's, which step() is about to override.
             ok, messages = apply_mod.apply_settings(
-                camera.data, camera.data.opencv_cam, scene)
+                camera.data, camera.data.opencv_cam, scene,
+                resolution=camera_size(key))
             if not ok:
                 raise RuntimeError(f"{key} camera: " + "; ".join(messages))
         scene.camera = self._camera_objects[self.cameras[0]]
@@ -494,6 +517,9 @@ class ClipJob:
             light.hide_render = hidden
         render.filepath = saved["filepath"]
         render.image_settings.file_format = saved["file_format"]
+        render.resolution_x = saved["resolution_x"]
+        render.resolution_y = saved["resolution_y"]
+        render.resolution_percentage = saved["resolution_percentage"]
         render.engine = saved["engine"]
         cycles.device = saved["device"]
         cycles.samples = saved["samples"]
@@ -528,7 +554,14 @@ class ClipJob:
         render = self.scene.render
         self.scene.frame_set(frame.index)
         for key in self.cameras:
-            self.scene.camera = self._camera_objects[key]
+            camera = self._camera_objects[key]
+            # Render at the camera's own calibration size, not Blender's Render
+            # tab: the recorded K / output and the pixels must share one size.
+            width, height = camera_size(key)
+            render.resolution_x = width
+            render.resolution_y = height
+            render.resolution_percentage = 100
+            self.scene.camera = camera
             render.filepath = os.path.join(self.directory, frame_name(frame.index, key))
             result = bpy.ops.render.render(write_still=True)
             if "CANCELLED" in result:

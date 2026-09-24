@@ -144,9 +144,15 @@ def main():
     settings.drive_distance = 6.0
     settings.drive_speed = 3.0
     settings.drive_fps = 4
-    scene.render.resolution_x, scene.render.resolution_y = 192, 144
     check("drive scene built", bpy.ops.opencv_cam.drive_add_scene() == {"FINISHED"})
     check("the clip is 9 frames", len(settings.plan().frames) == 9)
+    # a short, tiny clip - this is about determinism, not about pixels. The clip
+    # renders at each camera's own calibration size, so shrink that rather than
+    # the scene's Render tab.
+    front = bpy.data.objects[
+        avm_cameras.object_name("DRIVE_Cam_", avm_cameras.FRONT)]
+    front.data.opencv_cam.intrinsics.image_width = 192
+    front.data.opencv_cam.intrinsics.image_height = 144
     # one camera keeps this probe about determinism rather than about render cost;
     # the four-lane path is covered by tests/run_blender_tests.py
     for key in avm_cameras.CAMERAS:

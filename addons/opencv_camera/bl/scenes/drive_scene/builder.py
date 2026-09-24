@@ -25,7 +25,7 @@ import bpy
 from mathutils import Matrix
 
 from ....core.scenes import avm_cameras, avm_layout, drive_lot, vehicle
-from ... import camera_factory, compat
+from ... import apply as apply_mod, camera_factory, compat
 from ..base import collection, link_to_collection, remove_collection_objects
 
 ROOT_NAME = "DRIVE_Root"
@@ -755,10 +755,26 @@ def _ensure_cameras(scene: bpy.types.Scene, target: bpy.types.Collection,
 
 def apply_active_camera(scene: bpy.types.Scene,
                         settings) -> Optional[bpy.types.Object]:
-    """Make the active camera the render camera (F12 uses ``scene.camera``)."""
+    """Make the active camera the render camera (F12 uses ``scene.camera``).
+
+    Also fits Blender's render resolution to that camera's own calibration size:
+    the clip export renders at each camera's size regardless of the Render tab,
+    so syncing the tab is what makes an F12 preview match the exported frame.
+    """
     camera = bpy.data.objects.get(camera_name(settings.active_camera))
     if camera is not None and scene is not None:
         scene.camera = camera
+        intrinsics = camera.data.opencv_cam.intrinsics
+        width, height = int(intrinsics.image_width), int(intrinsics.image_height)
+        if width > 0 and height > 0:
+            scene.render.resolution_x = width
+            scene.render.resolution_y = height
+            scene.render.resolution_percentage = 100
+            # The OSL camera's parameters are baked for a render resolution, so
+            # re-apply them for the size we just set: otherwise an F12 preview
+            # would project through the previous resolution's principal point.
+            apply_mod.apply_settings(camera.data, camera.data.opencv_cam, scene,
+                                     resolution=(width, height))
     return camera
 
 
