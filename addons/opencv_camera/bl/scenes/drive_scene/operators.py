@@ -7,6 +7,7 @@ from bpy.props import BoolProperty, IntProperty, StringProperty
 from bpy_extras.io_utils import ExportHelper
 
 from ....core.scenes import drive_path
+from ... import preview as preview_mod
 from ..base import has_scene
 from .. import view as view_mod
 from . import DEFINITION, builder, controller, recording
@@ -212,8 +213,10 @@ class OPENCV_CAM_OT_drive_export_zip(_DriveSceneOperator, bpy.types.Operator, Ex
 
     # -- UI path (modal, one frame per timer tick) --------------------------
     def _start_modal(self, context, settings, plan):
+        preview_mod.cancel_preview()  # a debounced preview must not fire mid-export
         try:
-            job = recording.ClipJob(context, settings, filepath=self.filepath,
+            job = recording.ClipJob(recording.PROFILE, context, settings,
+                                    filepath=self.filepath,
                                     samples=self.samples, encode=True, pack=True)
             job.start()
         except Exception as exc:

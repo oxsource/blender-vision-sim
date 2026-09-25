@@ -1911,11 +1911,13 @@ def test_drive_scene():
     scene.cycles.caustics_refractive = True
     scene.render.threads_mode = "FIXED"
     scene.render.threads = 3
+    scene.cycles.denoising_prefilter = "ACCURATE"
     before = (scene.render.filepath, scene.camera, scene.cycles.samples,
               scene.render.image_settings.file_format,
               scene.render.resolution_x, scene.render.resolution_y,
               scene.render.resolution_percentage,
               scene.cycles.device, scene.cycles.use_denoising,
+              scene.cycles.denoising_prefilter,
               scene.cycles.max_bounces, scene.cycles.diffuse_bounces,
               scene.cycles.glossy_bounces, scene.render.use_persistent_data,
               scene.cycles.use_adaptive_sampling, scene.cycles.adaptive_threshold,
@@ -2125,6 +2127,7 @@ def test_drive_scene():
                 scene.render.resolution_x, scene.render.resolution_y,
                 scene.render.resolution_percentage,
                 scene.cycles.device, scene.cycles.use_denoising,
+                scene.cycles.denoising_prefilter,
                 scene.cycles.max_bounces, scene.cycles.diffuse_bounces,
                 scene.cycles.glossy_bounces, scene.render.use_persistent_data,
                 scene.cycles.use_adaptive_sampling, scene.cycles.adaptive_threshold,
@@ -2136,7 +2139,8 @@ def test_drive_scene():
     # one that drifted indistinguishable from the eighteen that did not
     knob_names = ("filepath", "camera", "samples", "file_format",
                   "resolution_x", "resolution_y", "resolution_percentage", "device",
-                  "denoising", "max_bounces", "diffuse_bounces", "glossy_bounces",
+                  "denoising", "denoise_prefilter", "max_bounces", "diffuse_bounces",
+                  "glossy_bounces",
                   "persistent", "adaptive", "adaptive_threshold", "caustics_reflective",
                   "caustics_refractive", "threads_mode", "threads", "frame_start",
                   "frame_end", "frame_step")
@@ -2166,6 +2170,14 @@ def test_drive_scene():
           and all(recording.frame_name(frame.index, key) in names
                   for frame in plan.frames for key in recorded),
           str(sorted(names)[:4]))
+    # PNG and mp4 are already compressed: storing them makes the pack step cheap
+    # without growing the archive, while csv / json still deflate
+    with zipfile.ZipFile(zip_path) as archive:
+        stored = {info.filename: info.compress_type for info in archive.infolist()
+                  if info.filename.endswith((".png", ".mp4"))}
+    check("PNG and mp4 zip members are stored, not deflated",
+          bool(stored) and all(kind == zipfile.ZIP_STORED for kind in stored.values()),
+          str(sorted(stored.items())[:2]))
     export_meta = json.loads(zipfile.ZipFile(zip_path).read("clip.json"))
     check("a multi-camera clip.json names no single video",
           export_meta["video"] == "" and export_meta["video_pattern"] == "<camera>.mp4",
@@ -2175,13 +2187,24 @@ def test_drive_scene():
           and export_meta["render"]["samples"] == 24
           and export_meta["render"]["device"] == "CPU",
           str(export_meta["render"]))
+    check("clip.json records the fast denoise prefilter the export used",
+          export_meta["render"].get("denoise") is True
+          and export_meta["render"].get("denoise_prefilter") == "FAST",
+          str(export_meta["render"]))
 
     # the encode recipe: what lets a harness tell "the algorithm drifted" from
-    # "the encoder drifted" without shipping the stills
+    # "the encoder drifted" without shipping the stills.  Either the system
+    # ffmpeg (libx264) or Blender's built-in FFmpeg may have run; the recipe
+    # names which, so the assertion is per backend rather than one fixed string.
     recipe = export_meta.get("video_encode") or {}
+    backend = recipe.get("backend")
+    backend_ok = (
+        (backend == "ffmpeg" and recipe.get("encoder") == "libx264"
+         and bool(recipe.get("crf")))
+        or (backend == "blender" and recipe.get("container") == "MPEG4"
+            and recipe.get("constant_rate_factor") == "HIGH"))
     check("clip.json records the mp4's encode recipe",
-          recipe.get("container") == "MPEG4" and recipe.get("codec") == "H264"
-          and recipe.get("constant_rate_factor") == "HIGH"
+          backend_ok and recipe.get("codec") == "H264"
           and recipe.get("fps") == plan.fps and bool(recipe.get("blender")),
           str(recipe))
     check("clip.json records the view transform the mp4 was encoded with",
@@ -3180,6 +3203,78 @@ def test_preview():
     check("schedule_preview is a no-op in background", preview.schedule_preview(cam_data, settings, scene) is None)
 
 
+def test_export_modal_wiring():
+    """The modal export must pass a ClipProfile to ClipJob.
+
+    ``ClipJob(profile, context, settings, ...)`` is only constructed on the UI
+    path (a timer + a modal handler), which the headless export tests never
+    reach - a wrong argument order there fails in the GUI with a missing
+    settings argument, not in the suite.  This locks the call for both scenes.
+    """
+    from opencv_camera.bl.scenes import clip_core
+    from opencv_camera.bl.scenes.drive_scene import operators as drive_ops
+    from opencv_camera.bl.scenes.drive_scene import recording as drive_rec
+    from opencv_camera.bl.scenes.road_scene import operators as road_ops
+    from opencv_camera.bl.scenes.road_scene import recording as road_rec
+
+    captured = {}
+
+    class FakeJob:
+        def __init__(self, *args, **kwargs):
+            captured["args"] = args
+            self.total = 4
+            self.messages = []
+
+        def start(self):
+            return self
+
+        def status_text(self):
+            return "frame 0/4"
+
+    class FakeWindowManager:
+        def event_timer_add(self, *args, **kwargs):
+            return "timer"
+
+        def modal_handler_add(self, *args, **kwargs):
+            return None
+
+        def progress_begin(self, *args, **kwargs):
+            return None
+
+    class FakeContext:
+        window = None
+        window_manager = FakeWindowManager()
+
+    class FakeSelf:
+        filepath = "//clip.zip"
+        samples = 0
+
+        def report(self, *args, **kwargs):
+            return None
+
+    class FakeSettings:
+        clip_status = ""
+
+    for label, recording, operator in (
+        ("drive", drive_rec, drive_ops.OPENCV_CAM_OT_drive_export_zip),
+        ("road", road_rec, road_ops.OPENCV_CAM_OT_road_export_zip),
+    ):
+        captured.clear()
+        saved = recording.ClipJob
+        recording.ClipJob = FakeJob
+        try:
+            settings = FakeSettings()
+            result = operator._start_modal(FakeSelf(), FakeContext(), settings, None)
+        finally:
+            recording.ClipJob = saved
+        args = captured.get("args") or ()
+        check(f"the {label} modal export passes a ClipProfile to ClipJob",
+              result == {"RUNNING_MODAL"} and len(args) == 3
+              and isinstance(args[0], clip_core.ClipProfile)
+              and args[2] is settings,
+              f"args={[type(a).__name__ for a in args]} result={result}")
+
+
 def main():
     tests = (
         test_registration,
@@ -3216,6 +3311,7 @@ def main():
         test_drive_matches_avm_defaults,
         test_drive_sync_from_avm,
         test_road_scene,
+        test_export_modal_wiring,
         test_scene_default_view,
         test_shader_force_compile,
         test_presets,
