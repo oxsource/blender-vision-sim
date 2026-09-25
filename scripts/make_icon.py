@@ -189,6 +189,14 @@ def build_icons() -> Dict[str, List[Shape]]:
             filled_rect(0.68, 0.68, 0.87, 0.87),
             rounded_rect(0.37, 0.28, 0.63, 0.72, 0.06),
         ],
+        # Road: a closed loop (stadium) with a car on it and the dashed centre
+        # line - straights, curves and the circuit that M5 drives
+        "road_scene": [
+            rounded_rect(0.09, 0.22, 0.91, 0.78, 0.28),
+            filled_rect(0.42, 0.60, 0.58, 0.72, 0.03),
+            line((0.28, 0.50), (0.42, 0.50)),
+            line((0.58, 0.50), (0.72, 0.50)),
+        ],
         # Drive: top view of a car park aisle - the two bay rows, the dashed
         # centre line and the car driving between them
         "drive_scene": [

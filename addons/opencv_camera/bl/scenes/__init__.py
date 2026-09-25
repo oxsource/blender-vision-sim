@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from . import avm_scene, camera_scene, debounce, drive_scene, view
+from . import avm_scene, camera_scene, debounce, drive_scene, road_scene, view
 from .base import (
     SceneDefinition,
     ScenePanel,
@@ -33,7 +33,7 @@ __all__ = [
 ]
 
 #: scene modules, in registration order (a scene added later goes last)
-_MODULES = (camera_scene, avm_scene, drive_scene)
+_MODULES = (camera_scene, avm_scene, drive_scene, road_scene)
 
 
 def definitions() -> List[SceneDefinition]:

@@ -691,9 +691,9 @@ def test_menus_and_raw_params():
     check("icons loaded into a preview collection",
           all(icons_mod.is_loaded(name) for name in
               ("visionsim", "camera", "fisheye", "brown_conrady", "rational",
-               "pinhole", "camera_scene", "avm_scene", "drive_scene")),
+               "pinhole", "camera_scene", "avm_scene", "drive_scene", "road_scene")),
           str(icons_mod.available()))
-    check("icon files ship with the add-on", len(icons_mod.available()) == 9,
+    check("icon files ship with the add-on", len(icons_mod.available()) == 10,
           str(icons_mod.available()))
     check("every menu entry has its own icon",
           menus_mod.MODEL_ICONS == {"fisheye": "fisheye", "brown_conrady": "brown_conrady",
@@ -2459,6 +2459,305 @@ def test_drive_sync_from_avm():
     bpy.ops.opencv_cam.drive_remove_scene()
 
 
+def test_road_scene():
+    """The Road Scene: closed track, props, four cameras, 3D keyframes and a clip."""
+    from opencv_camera.bl import scenes as scenes_mod
+    from opencv_camera.bl.scenes import vehicle_mesh
+    from opencv_camera.bl.scenes.drive_scene import builder as drive_builder
+    from opencv_camera.bl.scenes.road_scene import builder, recording
+    from opencv_camera.core.scenes import avm_cameras, avm_layout, road_path
+
+    scene = setup_scene(resolution=64, samples=1)
+    clear_scene()
+    scene = setup_scene(resolution=64, samples=1)
+
+    check("road add operator registered", "road_add_scene" in dir(bpy.ops.opencv_cam))
+    check("add Road scene", bpy.ops.opencv_cam.road_add_scene() == {"FINISHED"})
+    settings = scene.road_scene
+    definition = scenes_mod.definition("road_scene")
+    check("the registry knows the road scene",
+          definition is not None and definition.label == "Road Scene", str(definition))
+    check("root pointer set",
+          settings.root is not None and settings.root.name == "ROAD_Root",
+          str(settings.root))
+    check("panels would show", scenes_mod.has_scene(bpy.context, definition))
+    check("the export default name is stable, not the .blend's",
+          recording.default_filename() == "road_scene.zip", recording.default_filename())
+    check("the clip contract is version 3", recording.VERSION == 3, str(recording.VERSION))
+
+    target = bpy.data.collections.get("Road Scene")
+    names = sorted(obj.name for obj in target.objects)
+    check("collection has the core objects",
+          {"ROAD_Car", "ROAD_Ground", "ROAD_Root", "ROAD_Vehicle",
+           "ROAD_Cam_Front", "ROAD_Cam_Back", "ROAD_Cam_Left",
+           "ROAD_Cam_Right"} <= set(names), str(names))
+    check("every object is namespaced",
+          all(name.startswith("ROAD_") for name in names), str(names))
+
+    cameras = {key: bpy.data.objects[avm_cameras.object_name("ROAD_Cam_", key)]
+               for key in avm_cameras.CAMERAS}
+    for key, camera in cameras.items():
+        check(f"the {key} camera is a compiled custom fisheye",
+              camera.data.type == "CUSTOM" and len(camera.data.custom_bytecode) > 0
+              and camera.data.opencv_cam.distortion.model == "fisheye",
+              f"{camera.data.type}, {len(camera.data.custom_bytecode)} bytes")
+        check(f"the {key} camera hangs off ROAD_Vehicle",
+              camera.parent is not None and camera.parent.name == "ROAD_Vehicle",
+              str(camera.parent))
+    check("all four cameras carry the same minibus calibration",
+          len({round(c.data.opencv_cam.intrinsics.fx, 6) for c in cameras.values()}) == 1)
+    check("every camera sits somewhere different (no copied pose)",
+          len({tuple(round(v, 4) for v in c.location) for c in cameras.values()}) == 4)
+    check("the default view frames the car and all four cameras",
+          len(builder.view_targets(scene)) == 1 + len(avm_cameras.CAMERAS))
+
+    # the Road Scene is the Drive Scene's twin: same calibration / mounts / mesh
+    preset = {record["name"]: record
+              for record in avm_layout.cameras_from_preset(avm_layout.load_preset())}
+    same_calibration = True
+    for key in avm_cameras.CAMERAS:
+        record = preset[key]
+        mount = avm_cameras.mount_of(record)
+        camera = cameras[key]
+        same_calibration = same_calibration and all(
+            approx(a, b, 1e-5) for a, b in zip(camera.location, mount.location))
+        same_calibration = same_calibration and all(
+            approx(a, math.radians(b), 1e-5)
+            for a, b in zip(camera.rotation_euler, mount.rotation_deg))
+        same_calibration = same_calibration and approx(
+            camera.data.opencv_cam.intrinsics.fx, record["K"][0], 1e-3)
+    check("the road cameras use the AVM / Drive calibration and mount poses",
+          same_calibration)
+    check("the ego car is the shared Drive Scene mesh, not a look-alike",
+          builder._car_mesh is vehicle_mesh.car_mesh
+          and drive_builder._car_mesh is vehicle_mesh.car_mesh)
+
+    # the track ------------------------------------------------------------
+    track = settings.track()
+    check("the built track closes and carries every road type",
+          track.closed
+          and {"straight", "curve", "slope_up", "slope_down"}
+          == {segment.road_type for segment in track.segments},
+          str(sorted({segment.road_type for segment in track.segments})))
+    check("the default loop is the compact preset",
+          settings.track_preset == "compact"
+          and 118.0 < track.length < 130.0, f"{track.length:.2f} m")
+    plan = settings.plan()
+    arc = settings.parking_arc(track)
+    expected_distance = track.length + (2.0 * arc.length if arc is not None else 0.0)
+    check("the drive covers the loop and the parking manoeuvre",
+          approx(plan.distance, expected_distance, 1e-6)
+          and len(plan.frames) > 10
+          and all(b.time >= a.time for a, b in zip(plan.frames, plan.frames[1:])),
+          road_path.summary(plan))
+    check("the parking manoeuvre starts and ends in the bay",
+          arc is not None
+          and approx(plan.frames[0].x, arc.bay.x, 1e-4)
+          and approx(plan.frames[-1].x, arc.bay.x, 1e-4)
+          and plan.frames[-1].direction == "reverse",
+          f"({plan.frames[0].x:.2f},{plan.frames[0].y:.2f}) .. "
+          f"({plan.frames[-1].x:.2f},{plan.frames[-1].y:.2f})")
+    check("the parking plan carries the AVM vehicle signals",
+          plan.frames[0].gear == "P"
+          and any(frame.gear == "R" for frame in plan.frames)
+          and any(abs(frame.steering_deg) > 1.0 for frame in plan.frames),
+          f"gears={sorted({f.gear for f in plan.frames})}")
+
+    # the keyframed vehicle carries the full 3D pose
+    vehicle_obj = bpy.data.objects["ROAD_Vehicle"]
+    sample = plan.frames[len(plan.frames) // 2]
+    scene.frame_set(sample.index)
+    check("the keyframed vehicle matches the pure plan",
+          approx(vehicle_obj.location.x, sample.x, 1e-4)
+          and approx(vehicle_obj.location.y, sample.y, 1e-4)
+          and approx(vehicle_obj.location.z, sample.z, 1e-4)
+          and approx(math.degrees(vehicle_obj.rotation_euler[0]), sample.pitch, 1e-3)
+          and approx(math.degrees(vehicle_obj.rotation_euler[2]), sample.yaw, 1e-3),
+          f"{tuple(round(v, 3) for v in vehicle_obj.location)}")
+    check("the car hangs off the vehicle empty",
+          bpy.data.objects["ROAD_Car"].parent.name == "ROAD_Vehicle")
+
+    # the track mesh -------------------------------------------------------
+    ground = bpy.data.objects["ROAD_Ground"]
+    slots = [material.name for material in ground.data.materials]
+    check("the track carries road / shoulder / grass / paint slots",
+          len(slots) == 5 and slots[3] == "ROAD_Paint_White_Mat"
+          and slots[4] == "ROAD_Paint_Yellow_Mat", str(slots))
+    check("the asphalt surface has two procedural noise scales",
+          [node.type for node in ground.data.materials[0].node_tree.nodes].count("TEX_NOISE") == 2,
+          str([node.type for node in ground.data.materials[0].node_tree.nodes]))
+    check("every track material slot is used",
+          {polygon.material_index for polygon in ground.data.polygons} == {0, 1, 2, 3, 4},
+          str(sorted({polygon.material_index for polygon in ground.data.polygons})))
+
+    # the props ------------------------------------------------------------
+    bay_cars = [name for name in names if name.startswith("ROAD_BayCar_")]
+    pedestrians = [name for name in names if name.startswith("ROAD_Ped_")]
+    trees = [name for name in names if name.startswith("ROAD_Tree_")]
+    lamps = [name for name in names if name.startswith("ROAD_Lamp_")]
+    signs = [name for name in names if name.startswith("ROAD_Sign_")]
+    check("the parking bays carry one car each apart from the ego's",
+          len(bay_cars) == int(settings.parking_bays) - 1, str(bay_cars))
+    check("pedestrians number the setting",
+          len(pedestrians) == int(settings.pedestrians), str(pedestrians))
+    check("trees number the setting", len(trees) == int(settings.trees), str(trees))
+    check("lamps number the setting", len(lamps) == int(settings.lamps), str(lamps))
+    check("signs number the setting", len(signs) == int(settings.signs), str(signs))
+    check("the props are parented to the root",
+          all(bpy.data.objects[name].parent.name == "ROAD_Root"
+              for name in bay_cars + pedestrians + trees + lamps + signs))
+    check("the scene is lit by one even sun with a dim world (Drive's look)",
+          [name for name in names if name.startswith("ROAD_Light_")]
+          == ["ROAD_Light_Sun"]
+          and approx(bpy.data.objects["ROAD_Light_Sun"].data.energy,
+                     settings.light_energy, 1e-6),
+          str([name for name in names if name.startswith("ROAD_Light_")]))
+
+    # the zebra crossing: painted just before the up ramp, people waiting on it
+    crossing = builder.crosswalk_distance(track)
+    up_ramp = next(segment for segment in track.segments if segment.name == "ramp_up")
+    check("the zebra crossing sits just before the up ramp",
+          crossing is not None and up_ramp.start.s - 6.0 < crossing < up_ramp.start.s,
+          f"{crossing} vs the ramp at {up_ramp.start.s:.2f} m")
+    white_on = len([polygon for polygon in bpy.data.objects["ROAD_Ground"].data.polygons
+                    if polygon.material_index == 3])
+    settings.show_crosswalk = False
+    bpy.ops.opencv_cam.road_rebuild()
+    white_off = len([polygon for polygon in bpy.data.objects["ROAD_Ground"].data.polygons
+                     if polygon.material_index == 3])
+    settings.show_crosswalk = True
+    bpy.ops.opencv_cam.road_rebuild()
+    check("the zebra crossing paints extra white bars",
+          white_on > white_off + 4, f"{white_on} vs {white_off} white faces")
+    waiting = sorted(float(bpy.data.objects[name]["road_ped_distance"])
+                     for name in pedestrians)
+    check("two pedestrians wait at the crossing",
+          sum(1 for distance in waiting if abs(distance - crossing) < 0.5) == 2,
+          str([round(value, 2) for value in waiting]))
+
+    # a per-segment drive: exactly one segment, labelled by road type -------
+    settings.drive_segment = "ramp_up"
+    settings.drive_direction = "forward"
+    bpy.ops.opencv_cam.road_rebuild()
+    segment_plan = settings.plan()
+    check("a segment drive is labelled by its road type",
+          all(frame.road_type == "slope_up" for frame in segment_plan.frames[:-1]),
+          str({frame.road_type for frame in segment_plan.frames}))
+    check("a segment drive is short and starts on its segment",
+          segment_plan.frames[0].segment == "ramp_up"
+          and segment_plan.distance <= 2.0 * settings.ramp_length + 1e-6,
+          f"{segment_plan.distance:.2f} m")
+
+    # reverse faces backwards and noses down on the climb ------------------
+    settings.drive_direction = "reverse"
+    bpy.ops.opencv_cam.road_rebuild()
+    reverse_plan = settings.plan()
+    check("reverse is labelled and noses down on the up ramp",
+          all(frame.direction == "reverse" for frame in reverse_plan.frames)
+          and min(frame.pitch for frame in reverse_plan.frames) < 0.0,
+          f"min pitch {min(frame.pitch for frame in reverse_plan.frames):.3f}")
+
+    # back to a short whole-loop clip we can actually render ----------------
+    # (parking off here: the full manoeuvre clip is ~40 s and this test only
+    # needs the export contract; the parking plan itself is asserted above)
+    settings.drive_segment = "loop"
+    settings.drive_direction = "forward"
+    settings.drive_loops = 0.02
+    settings.parking = False
+    bpy.ops.opencv_cam.road_rebuild()
+    check("walking pedestrians default off",
+          settings.animate_pedestrians is False)
+    check("a static scene uses persistent data",
+          recording.PROFILE.persistent_data(settings) is True)
+
+    # shrink the calibration to keep the render fast ------------------------
+    for key in avm_cameras.CAMERAS:
+        intrinsics = cameras[key].data.opencv_cam.intrinsics
+        intrinsics.image_width, intrinsics.image_height = 64, 48
+
+    directory = tempfile.mkdtemp(dir=TMPDL)
+    report = recording.render_clip(bpy.context, settings, directory, samples=1)
+    recorded = settings.recorded_cameras()
+    check("the clip rendered every frame for every camera",
+          report["frames"] == len(settings.plan().frames)
+          and len([name for name in os.listdir(directory) if name.endswith(".png")])
+          == report["frames"] * len(recorded),
+          f"{report['frames']} frames")
+
+    with open(os.path.join(directory, "frames.csv"), encoding="utf-8") as handle:
+        rows = handle.read().rstrip("\n").split("\n")
+    check("frames.csv header is the road contract",
+          rows[0] == ",".join(road_path.csv_header(recorded)), rows[0])
+    check("frames.csv keeps the drive columns then adds slope columns and labels",
+          rows[0].startswith(",".join(road_path.CSV_VEHICLE_COLUMNS)),
+          rows[0])
+    check("frames.csv carries the steering / gear signal columns",
+          ",steering_deg,gear," in rows[0], rows[0][:120])
+    check("frames.csv has one row per frame",
+          len(rows) == report["frames"] + 1, f"{len(rows)} rows")
+    check("frames.csv rows carry the segment label",
+          rows[1].split(",")[10] == settings.plan().frames[0].segment, rows[1])
+
+    with open(os.path.join(directory, "clip.json"), encoding="utf-8") as handle:
+        meta = json.load(handle)
+    check("clip.json is the road contract v3",
+          meta["format"] == "road_clip" and meta["version"] == 3, str(meta["version"]))
+    check("clip.json describes the loop and its segments",
+          len(meta["segments"]) == len(track.segments)
+          and {record["road_type"] for record in meta["segments"]}
+          == {"straight", "curve", "slope_up", "slope_down"},
+          str([record["road_type"] for record in meta["segments"]]))
+    check("clip.json carries the motion and road blocks",
+          meta["motion"]["direction"] == "forward"
+          and meta["motion"]["profile"] == "scenario"
+          and meta["motion"]["parking"] is False
+          and meta["road"]["surface"] == settings.ground_texture
+          and meta["road"]["preset"] == "compact",
+          str(meta["motion"]))
+    check("clip.json describes the per-frame vehicle signals",
+          meta["signals"]["columns"] == ["speed_mps", "steering_deg", "gear"]
+          and meta["signals"]["gear_values"] == ["P", "R", "D"],
+          str(meta.get("signals")))
+    check("clip.json cameras match the recorded set",
+          [entry["camera"] for entry in meta["cameras"]] == recorded, str(recorded))
+    check("clip.json has one vehicle block",
+          meta["vehicle"]["frame"] == "vehicle"
+          and "body" in meta["vehicle"] and "center_to_rear_axle" in meta["vehicle"])
+
+    # walking pedestrians key the scene and turn persistence off ------------
+    settings.animate_pedestrians = True
+    bpy.ops.opencv_cam.road_rebuild()
+    walker = bpy.data.objects["ROAD_Ped_00"]
+    check("a walking pedestrian is keyframed",
+          walker.animation_data is not None and walker.animation_data.action is not None)
+    check("an animated scene tells the renderer not to cache it",
+          recording.PROFILE.persistent_data(settings) is False)
+    settings.animate_pedestrians = False
+    bpy.ops.opencv_cam.road_rebuild()
+    check("a rebuilt static pedestrian drops its keys",
+          bpy.data.objects["ROAD_Ped_00"].animation_data is None)
+
+    # reset / remove --------------------------------------------------------
+    settings.drive_speed = 11.0
+    settings.drive_segment = "curve_0"
+    bpy.ops.opencv_cam.road_reset_defaults()
+    check("reset restores the template and drive defaults",
+          approx(settings.drive_speed, 7.0, 1e-6)
+          and approx(settings.drive_accel, 2.5, 1e-6)
+          and approx(settings.drive_decel, 2.5, 1e-6)
+          and approx(settings.slow_speed, 3.5, 1e-6)
+          and settings.track_preset == "compact"
+          and settings.parking is True
+          and settings.drive_segment == "loop",
+          f"{settings.drive_speed:.3f} / {settings.track_preset}")
+    result = bpy.ops.opencv_cam.road_remove_scene()
+    check("remove deletes the scene and its cameras",
+          result == {"FINISHED"} and bpy.data.objects.get("ROAD_Root") is None
+          and scene.road_scene.root is None
+          and all(bpy.data.objects.get(avm_cameras.object_name("ROAD_Cam_", key)) is None
+                  for key in avm_cameras.CAMERAS))
+
+
 def test_scene_default_view():
     """A fresh scene is framed from the standard 3/4 orbit, fitted to its subject.
 
@@ -2499,8 +2798,8 @@ def test_scene_default_view():
 
     # --- every registered scene carries it ---------------------------------
     ids = {definition.id for definition in scenes_mod.definitions()}
-    check("the registry has all three scenes",
-          ids == {"camera_scene", "avm_scene", "drive_scene"}, str(ids))
+    check("the registry has all four scenes",
+          ids == {"camera_scene", "avm_scene", "drive_scene", "road_scene"}, str(ids))
     for definition in scenes_mod.definitions():
         check(f"{definition.id} uses the 3/4 default view",
               approx(definition.view.azimuth, 135.0) and approx(definition.view.elevation, 30.0),
@@ -2916,6 +3215,7 @@ def main():
         test_drive_scene,
         test_drive_matches_avm_defaults,
         test_drive_sync_from_avm,
+        test_road_scene,
         test_scene_default_view,
         test_shader_force_compile,
         test_presets,

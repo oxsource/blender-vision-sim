@@ -13,6 +13,7 @@
 | M5b ✅ | 交互补齐：`Add ▸ VisionSim`（Camera 四种模型 + Camera Scene）、预设加载、Live Apply、Euler 外参、Preview（Image Editor）、Recompile | 一键建相机 / 改参数即时生效 / 预览可看 |
 | M5c ✅ | **算法场景框架 + AVM Scene**：`bl/scenes/` 注册表（Camera Scene 收编）、AVM 平面场景（地面 / 车 / 4 标定块 / 4 鱼眼相机）、尺寸控制器、覆盖评估、参数与 Falcon 配置导出 | 见 [`avm-scene.md`](avm-scene.md)：4 路预览 + 覆盖/可见性矩阵 + `Export Falcon` 打包 |
 | M5d ✅ | **Drive Scene**：室内停车场行驶素材（**四摄**逐帧渲染 + 每帧车速/位姿真值 + `clip.json` v2 + `vehicle` 块）| 见 [`drive-scene.md`](drive-scene.md)：`[Export Clip]` 出每路一条 mp4 + PNG 序列 + 逐帧真值（车体与每台相机位姿）打包成 zip，关键帧与纯 Python 运动模型逐帧一致 |
+| M5e ✅ | **Road Scene**：闭合环线测试道路（直线/弯道/上下坡 + 斑马线 + 路侧车/行人/树/路灯/路牌 + 停车入库/前进/倒车/变速/按段导出），两套环线预设（compact 124 m / full 248 m），共享录制引擎 | 见 [`road-scene.md`](road-scene.md)：`clip.json` v3（`motion` + `segments[]` + `signals`）、`frames.csv` 追加 `z/pitch/roll`、`segment/road_type/direction` 与车辆信号 `steering_deg/gear`，供 `filament_avm` M5（CH-018）矩阵与 AVM 算法整车信息模拟使用 |
 | M6 | `camera_rig`：多相机刚体、同步渲染、多相机标定导出（含双目/HFOV 组合） | 双目极线几何验证通过；同步渲染输出可复现 |
 | M7 | `dataset_export`：渲染 + 真值（位姿/内参/深度/实例分割），KITTI / COLMAP / EuRoC 布局 | 导出的数据集能被参考工具链直接读取 |
 | M8 | `sensor_sim`：IMU/GNSS/LiDAR 轨迹与噪声（可选引入第三方仿真中间件） | 与视觉时间戳对齐；噪声参数可配置 |

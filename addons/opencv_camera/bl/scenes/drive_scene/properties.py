@@ -33,7 +33,7 @@ from bpy.props import (
 )
 
 from ....core.scenes import avm_cameras, vehicle
-from .. import base
+from .. import base, clip_core
 from ..base import SceneDefinition  # noqa: F401  (re-exported for convenience)
 from . import DEFINITION
 
@@ -56,38 +56,12 @@ DRIVE_PROFILES = [
     ("trapezoid", "Trapezoid", "Accelerate to the cruise speed, cruise, brake to a stop"),
 ]
 
-#: Clip export quality presets.  Only the render *cost* changes - the output
-#: size and the camera (K / D) are identical at every setting.  ``high`` pins
-#: nothing but the sample count, i.e. it reproduces the historical export.
-CLIP_QUALITIES = [
-    ("draft", "Draft", "Fastest: 8 samples, denoised, 2 light bounces"),
-    ("balanced", "Balanced", "24 samples, denoised, 4 light bounces"),
-    ("high", "High", "64 samples, the scene's own denoise / bounce settings"),
-]
-
-CLIP_QUALITY_PRESETS = {
-    "draft": {
-        "samples": 8,
-        "denoise": True,
-        "max_bounces": 2,
-        "diffuse_bounces": 1,
-        "glossy_bounces": 1,
-        "adaptive_threshold": 0.1,
-        "caustics": False,
-    },
-    "balanced": {
-        "samples": 24,
-        "denoise": True,
-        "max_bounces": 4,
-        "diffuse_bounces": 2,
-        "glossy_bounces": 2,
-        "adaptive_threshold": 0.05,
-        "caustics": False,
-    },
-    "high": {
-        "samples": 64,
-    },
-}
+#: Clip export quality presets live in the shared recorder (``bl.scenes.clip_core``)
+#: so the Drive and Road Scenes cannot drift; re-exported here for the panels and
+#: the tests that already import them from this module.
+CLIP_QUALITIES = clip_core.CLIP_QUALITIES
+CLIP_QUALITY_PRESETS = clip_core.CLIP_QUALITY_PRESETS
+clip_quality_preset = clip_core.clip_quality_preset
 
 #: Render devices the export may ask for.  The OpenCV camera is an OSL shader,
 #: which Cycles only evaluates on CPU and NVIDIA OptiX, so ``gpu`` is a no-op
@@ -96,11 +70,6 @@ CLIP_DEVICES = [
     ("cpu", "CPU", "Always correct - the only backend on macOS / Metal"),
     ("gpu", "GPU (OptiX)", "Faster, but only NVIDIA OptiX can run the OSL camera"),
 ]
-
-
-def clip_quality_preset(key: str) -> dict:
-    """The Cycles settings for a quality key (unknown keys fall back to balanced)."""
-    return dict(CLIP_QUALITY_PRESETS.get(str(key), CLIP_QUALITY_PRESETS["balanced"]))
 
 
 def _schedule(self, context) -> None:

@@ -30,6 +30,7 @@ FALLBACKS: Dict[str, str] = {
     "camera_scene": "MESH_CUBE",
     "avm_scene": "MESH_PLANE",
     "drive_scene": "PLAY",
+    "road_scene": "FORWARD",
 }
 
 _collection: Optional[object] = None

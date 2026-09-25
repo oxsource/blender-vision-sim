@@ -8,7 +8,7 @@ Blender 视觉算法仿真插件集合：用 Blender/Cycles 生成**与真实相
 
 | 插件 | 状态 | 说明 |
 | --- | --- | --- |
-| [`opencv_camera`](addons/opencv_camera) | 0.19.0 可用 | Cycles 自定义相机，支持 OpenCV 内参（fx/fy/cx/cy）与畸变（**fisheye / Brown-Conrady / rational**），可导入导出标定文件、设置相机外参（Location + Euler）、渲染自检；**算法场景**（`Camera Scene`、`AVM Scene`、`Drive Scene`）统一在 `bl/scenes/` 注册，见 [`docs/avm-scene.md`](docs/avm-scene.md) |
+| [`opencv_camera`](addons/opencv_camera) | 0.19.0 可用 | Cycles 自定义相机，支持 OpenCV 内参（fx/fy/cx/cy）与畸变（**fisheye / Brown-Conrady / rational**），可导入导出标定文件、设置相机外参（Location + Euler）、渲染自检；**算法场景**（`Camera Scene`、`AVM Scene`、`Drive Scene`、`Road Scene`）统一在 `bl/scenes/` 注册，见 [`docs/avm-scene.md`](docs/avm-scene.md) |
 | `camera_rig` | 规划中 | 多相机刚体（外参）、同步渲染、标定数据集导出 |
 | `sensor_sim` | 规划中 | IMU / GNSS / LiDAR 轨迹与噪声仿真 |
 | `dataset_export` | 规划中 | 渲染 + 真值导出（位姿/内参/深度/分割），KITTI / COLMAP / EuRoC 布局 |
@@ -32,6 +32,7 @@ Blender 视觉算法仿真插件集合：用 Blender/Cycles 生成**与真实相
 | `camera_scene` | Camera Scene | 立方体轮廓 |
 | `avm_scene` | AVM Scene | 俯视场地 + 四角实心标定块 + 车体轮廓 |
 | `drive_scene` | Drive Scene | 俯视停车场车道 + 车位线 + 车辆轮廓 |
+| `road_scene` | Road Scene | 闭合环线（含直道/弯道/坡道）+ 车道线 + 环上车辆 |
 
 这些都是**原创标识**（不是 OpenCV 商标本身），想改图案改脚本里的形状定义后重跑：
 
@@ -50,13 +51,17 @@ blender-vision-sim/
 │   ├── blender_manifest.toml    # Extensions 规范清单（唯一的插件元数据来源）
 │   ├── __init__.py              # 只做 register / unregister 编排
 │   ├── core/                    # 纯 Python：模型、变换、IO（禁止 import bpy）
-│   │   └── scenes/              # 每个算法场景的几何/模型/IO（avm_layout / avm_coverage / drive_lot / drive_path）
+│   │   └── scenes/              # 每个算法场景的几何/模型/IO（avm_layout / avm_coverage / drive_lot / drive_path / road_track / road_path）
 │   ├── bl/                      # Blender 集成：properties / shader / apply / selftest / ui / operators
 │   │   └── scenes/              # 场景框架 + 每个场景一个模块/包
 │   │       ├── base.py / view.py / debounce.py  # SceneDefinition、默认 3/4 视角、通用去抖
+│   │       ├── clip_core.py             # 两个行驶场景共用的录制引擎（PNG/mp4/csv/clip.json）
+│   │       ├── vehicle_mesh.py          # Drive/Road 共享的车体 mesh（同一 minibus）
+│   │       ├── prop_mesh.py             # Road Scene 的路侧道具 mesh（行人/树/路灯/路牌）
 │   │       ├── camera_scene.py          # 原 bl/scene_builder.py
 │   │       ├── avm_scene/               # AVM Scene（properties/builder/controller/io/coverage/corners/falcon/operators/ui）
-│   │       └── drive_scene/             # Drive Scene（properties/builder/controller/recording/operators/ui）
+│   │       ├── drive_scene/             # Drive Scene（properties/builder/controller/recording/operators/ui）
+│   │       └── road_scene/              # Road Scene（properties/builder/controller/recording/operators/ui）
 │   ├── presets/avm_scene/default.json   # AVM 内置默认参数（离线反算产物）
 │   ├── models/unlit_round_bowls.glb     # AVM 真实碗形地面（app 投影面，AVM_Ground 默认用它）
 │   └── shaders/*.osl            # 随插件分发的 OSL 源文件（权威副本）
@@ -294,6 +299,43 @@ Object Data Properties
   **OptiX** 上求值，macOS 的 **Metal** 选 GPU 会回退 CPU（保证相机正确）。
 - 完整设计见 [`docs/drive-scene.md`](docs/drive-scene.md)；四路改造的设计与证据见
   [`docs/drive-scene-multicam.md`](docs/drive-scene-multicam.md)。
+
+### Road Scene（闭合测试道路素材，M5）
+
+`Add ▸ VisionSim ▸ Road Scene` 搭出一条**闭合环线**，把 Drive Scene 只承诺过的
+「平地、匀速直行、单一光照」扩展到**弯道 / 上下坡 / 变速 / 倒车**，用于 `filament_avm`
+透明底盘的 M5「道路类型 × 速度 × 方向」矩阵（CH-018）。它与 Drive Scene 是同一个框架的孪生场景，
+共用相机的单一真源、车体几何和**共享录制引擎**（`bl/scenes/clip_core.py`）。
+
+```text
+输入：环线尺寸（直道/弯道半径/坡高与坡长/路宽/路肩）+ 路侧道具数量 + 光照
+      + 车辆尺寸 + 行驶参数（速度曲线 / 帧率 / 方向 / 整圈或某一段）
+输出：每路一条 <camera>.mp4 + frames.csv（在 Drive 的 7 列后追加 z_m/pitch_deg/roll_deg、
+      segment/road_type/direction 标签，以及 steering_deg/gear 车辆信号）
+      + clip.json（v3：motion + segments[] + signals + cameras[]）
+      + PNG 序列；[Export Clip…] 打包成一个 zip
+```
+
+- **闭合环线**（`core/scenes/road_track.py`，纯 Python）：两段直道 + 四个 90° 定半径弯道，
+  在另一对直道上安排**上坡与下坡**（坡面是真实几何：路面沿中心线抬高，两侧有放坡与草地）。
+  构建时**校验闭合**（位置/高度/航向），不闭合直接报错，不会悄悄产出一条断头路。
+  还有 `s_curve`（净航向与横移为零的 S 弯）可供自定义模板用。
+- **路侧道具**（`bl/scenes/prop_mesh.py`）：行人、树、路灯、路牌，程序化生成、确定性摆放；
+  **上坡起步前有一条斑马线**，两端各站一名等待的行人；落在停车位上的路灯会自动挪到两车之间；
+  `animate_pedestrians` 可让行人沿路肩行走（该模式关闭跨帧持久化缓存，是
+  M5-05 / CH-014 的动态内容用例）。**标线/斑马线/停车入库常开，面板不再提供开关。**
+- **两套环线尺寸**（`track_preset`）：`Compact (~124 m)`（默认，25 km/h 一圈约 28 s）与
+  `Full (~248 m)`，一个下拉切换、同一时刻只建一条；两套都含直道/弯道/上坡/下坡/斑马线。
+- **停车入库**（`parking`，默认开）：起点侧有垂直车位，整圈 clip 为「出库 → 一圈 → 倒车入库」，
+  于是同一段素材就包含**倒车**工况；车位几何由 `road_track.parking_arc()` 给出。
+- **三维真值与车辆信号**：`core/scenes/road_path.py` 逐帧输出 `z/pitch/roll` 与
+  `speed_mps`、前轮转角 `steering_deg`（左正、倒车翻号）、档位 `gear ∈ {P,R,D}`，
+  可直接喂给 AVM 算法模拟整车信息；倒车时航向翻转 180°、坡度变号，导出的仍是普通
+  Blender XYZ 欧拉三元组，消费侧无需新约定。
+- **按段导出**：`drive_segment` 选「整圈」或某一段（`straight_a` / `curve_0` / `ramp_up`…），
+  每帧 CSV 带 `segment` 与 `road_type`，矩阵里的每一行都能自证来自哪种道路。倒车时从该段**末端**
+  往回开，保证覆盖的是同一段。
+- 完整设计见 [`docs/road-scene.md`](docs/road-scene.md)。
 
 ## 开发约定
 

@@ -64,8 +64,10 @@ NUMBER_Z = 0.004
 
 #: material slot indices of the lot mesh
 LOT_FLOOR, LOT_WHITE, LOT_YELLOW = range(3)
-#: material slot indices of the car mesh
-CAR_BODY, CAR_GLASS, CAR_TIRE, CAR_LAMP = range(4)
+#: the car mesh is shared with the Road Scene (one minibus, one size); the slot
+#: constants are re-exported here because the tests read ``builder.CAR_BODY``
+from ..vehicle_mesh import CAR_BODY, CAR_GLASS, CAR_LAMP, CAR_TIRE  # noqa: F401
+from ..vehicle_mesh import car_mesh as _car_mesh
 
 
 # ---------------------------------------------------------------------------
@@ -186,91 +188,8 @@ def _lot_mesh(name: str, lot_length: float, lot_width: float, aisle_width: float
     return mesh
 
 
-def _car_mesh(name: str, length: float, width: float, height: float) -> bpy.types.Mesh:
-    """A compact minibus silhouette: body, cabin, windows, wheels, lamps.
-
-    Generated at real size with the origin on the ground under the car centre and
-    ``+Y`` = front, so the object scale stays 1 and the keyframed vehicle empty
-    can carry it directly.
-    """
-    mesh = bpy.data.meshes.new(name)
-    bm = bmesh.new()
-
-    length = max(1.0, float(length))
-    width = max(0.5, float(width))
-    height = max(0.5, float(height))
-
-    wheel_radius = min(0.50, max(0.28, height * 0.16))
-    floor = wheel_radius * 0.7
-    beltline = floor + (height - floor) * 0.55
-    half_w, half_l = width / 2.0, length / 2.0
-
-    # body up to the beltline, then the cabin (inset, with raked front and rear)
-    _add_box(bm, -half_w, half_w, -half_l, half_l, floor, beltline, CAR_BODY)
-    cabin_half = width * 0.47
-    cabin_front, cabin_back = length * 0.46, -length * 0.47
-    rake = min(0.45, length * 0.09)
-    rear_rake = 0.12
-    bottom = [(-cabin_half, cabin_back, beltline), (cabin_half, cabin_back, beltline),
-              (cabin_half, cabin_front, beltline), (-cabin_half, cabin_front, beltline)]
-    top = [(-cabin_half, cabin_back + rear_rake, height),
-           (cabin_half, cabin_back + rear_rake, height),
-           (cabin_half, cabin_front - rake, height),
-           (-cabin_half, cabin_front - rake, height)]
-    lower = [bm.verts.new(position) for position in bottom]
-    upper = [bm.verts.new(position) for position in top]
-    bm.faces.new(lower).material_index = CAR_BODY
-    bm.faces.new(upper).material_index = CAR_BODY
-    for index in range(4):
-        nxt = (index + 1) % 4
-        bm.faces.new((lower[index], lower[nxt], upper[nxt], upper[index])).material_index = CAR_BODY
-
-    # windshield (on the raked plane), side windows, rear window
-    rise = height - beltline
-    normal = math.hypot(rise, rake) or 1.0
-    offset_y, offset_z = rise / normal * 0.015, rake / normal * 0.015
-    glass_half = cabin_half - 0.07
-    _add_quad(bm,
-              (-glass_half, cabin_front + offset_y, beltline + offset_z),
-              (glass_half, cabin_front + offset_y, beltline + offset_z),
-              (glass_half, cabin_front - rake + offset_y, height + offset_z),
-              (-glass_half, cabin_front - rake + offset_y, height + offset_z), CAR_GLASS)
-    for side in (-1.0, 1.0):
-        x = side * (cabin_half + 0.015)
-        points = [(x, cabin_back + 0.40, beltline + 0.16),
-                  (x, cabin_front - 0.50, beltline + 0.16),
-                  (x, cabin_front - 0.50, height - 0.14),
-                  (x, cabin_back + 0.40, height - 0.14)]
-        _add_quad(bm, *(points if side > 0 else list(reversed(points))), CAR_GLASS)
-    _add_quad(bm,
-              (-glass_half, cabin_back - 0.015, beltline + 0.20),
-              (glass_half, cabin_back - 0.015, beltline + 0.20),
-              (glass_half, cabin_back + rear_rake - 0.015, height - 0.14),
-              (-glass_half, cabin_back + rear_rake - 0.015, height - 0.14), CAR_GLASS)
-
-    # head and tail lamps, proud of the front / rear face
-    lamp_half = width * 0.13
-    for side in (-1.0, 1.0):
-        centre = side * width * 0.30
-        _add_box(bm, centre - lamp_half, centre + lamp_half,
-                 half_l, half_l + 0.02,
-                 floor + height * 0.16, floor + height * 0.16 + 0.18, CAR_LAMP)
-        _add_box(bm, centre - lamp_half, centre + lamp_half,
-                 -half_l - 0.02, -half_l,
-                 floor + height * 0.30, floor + height * 0.30 + 0.30, CAR_LAMP)
-
-    # wheels: bottoms on the ground, outer faces proud of the body sides
-    for side in (-1.0, 1.0):
-        for end in (-1.0, 1.0):
-            _add_cylinder(bm, (side * (half_w - 0.02), end * length * vehicle.AXLE_FRACTION,
-                               wheel_radius),
-                          wheel_radius, 0.13, "X", 16, CAR_TIRE)
-
-    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
-    bm.to_mesh(mesh)
-    bm.free()
-    mesh.update()
-    return mesh
+# ``_car_mesh`` is imported from ``..vehicle_mesh`` (the mesh shared with the
+# Road Scene), so the two scenes cannot render different vehicles.
 
 
 # ---------------------------------------------------------------------------
