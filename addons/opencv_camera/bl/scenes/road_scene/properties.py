@@ -141,6 +141,10 @@ class RoadSceneSettings(bpy.types.PropertyGroup):
         min=4.0, max=80.0, unit="LENGTH",
         description="Radius of the four 90 degree curves",
         update=_schedule)
+    curve_bank_deg: FloatProperty(
+        name="Curve Bank", default=0.0, min=-15.0, max=15.0,
+        description="Peak lateral road bank on curves; tapers to zero at each segment join",
+        update=_schedule)
     ramp_rise: FloatProperty(
         name="Ramp Rise", default=road_track.DEFAULT_RAMP_RISE_M,
         min=0.0, max=8.0, unit="LENGTH",
@@ -335,10 +339,12 @@ class RoadSceneSettings(bpy.types.PropertyGroup):
     def track(self) -> road_track.RoadTrack:
         """The closed loop of the selected preset, or of the custom sliders."""
         if self.track_preset in road_track.TRACK_PRESETS:
-            return road_track.preset_track(self.track_preset, center=True)
+            return road_track.preset_track(
+                self.track_preset, center=True, curve_bank_deg=self.curve_bank_deg)
         return road_track.default_track(
             straight=self.straight_length, radius=self.curve_radius,
-            ramp_rise=self.ramp_rise, ramp_length=self.ramp_length, center=True)
+            ramp_rise=self.ramp_rise, ramp_length=self.ramp_length,
+            curve_bank_deg=self.curve_bank_deg, center=True)
 
     def parking_radius(self) -> float:
         """Bay centre's distance from the centreline: the quarter-arc radius."""

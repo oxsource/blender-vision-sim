@@ -795,6 +795,21 @@ def test_road_track():
           approx(sum(record["length_m"] for record in track.describe()),
                   track.length, 1e-5))
 
+    banked = road_track.default_track(curve_bank_deg=6.0)
+    bank_curve = next(segment for segment in banked.segments
+                      if segment.spec.kind == road_track.CURVE)
+    bank_mid = banked.pose_at(bank_curve.start.s + bank_curve.length / 2.0, wrap=False)
+    check("banked curves taper to level at both joins",
+          approx(bank_curve.start.roll, 0.0, 1e-9)
+          and approx(bank_curve.end.roll, 0.0, 1e-9)
+          and approx(bank_mid.roll, 6.0, 1e-6),
+          f"{bank_curve.start.roll:.2f} / {bank_mid.roll:.2f} / {bank_curve.end.roll:.2f}")
+    check("the segment manifest retains the bank setting",
+          all(approx(segment["bank_deg"], 6.0, 1e-6)
+              for segment in banked.describe() if segment["kind"] == road_track.CURVE),
+          str([segment["bank_deg"] for segment in banked.describe()
+               if segment["kind"] == road_track.CURVE]))
+
     # a track that does not close is refused, not silently driven
     try:
         road_track.build_track([road_track.SegmentSpec("open", road_track.STRAIGHT, 5.0)],
@@ -883,6 +898,20 @@ def test_road_path():
           f"{frame.yaw:.3f} vs {tangent.yaw + 180.0:.3f}")
     check("a reversing vehicle on the up ramp noses down",
           frame.pitch < 0.0, f"{frame.pitch:.3f}")
+
+    bank_track = road_track.default_track(curve_bank_deg=6.0)
+    bank_segment = next(segment for segment in bank_track.segments
+                        if segment.spec.kind == road_track.CURVE)
+    bank_reverse = road_path.plan(
+        bank_track, speed=3.0, direction=road_path.REVERSE,
+        profile=drive_path.CONSTANT, fps=10.0,
+        start_distance=bank_segment.start.s + bank_segment.length / 2.0,
+        loops=0.001)
+    bank_pose = bank_track.pose_at(
+        bank_segment.start.s + bank_segment.length / 2.0, wrap=False)
+    check("reverse vehicle roll follows the reversed road frame",
+          approx(bank_reverse.frames[0].roll, -bank_pose.roll, 1e-6),
+          f"{bank_reverse.frames[0].roll:.2f} vs {-bank_pose.roll:.2f}")
 
     # a segment drive covers exactly one named segment
     segment = road_path.plan(

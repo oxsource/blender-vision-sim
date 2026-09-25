@@ -85,6 +85,7 @@ def _scene_meta(settings, plan) -> Dict:
         "ramp_rise_m": float(settings.ramp_rise),
         "ramp_length_m": float(settings.ramp_length),
         "curve_radius_m": float(settings.curve_radius),
+        "curve_bank_deg": float(getattr(settings, "curve_bank_deg", 0.0)),
         "pedestrians": int(settings.pedestrians),
         "animate_pedestrians": bool(settings.animate_pedestrians),
     }}

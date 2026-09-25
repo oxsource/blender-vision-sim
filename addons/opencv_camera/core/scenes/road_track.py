@@ -14,8 +14,8 @@ a template can never silently produce a path that does not connect.
 Conventions match the rest of the add-on: metres, Z up, the vehicle's nose is
 ``+Y`` at yaw 0, so its forward is ``(-sin(yaw), cos(yaw))``.  Track elevation is
 carried by the pose's ``z`` and ``pitch`` (degrees, positive = nose up); curves
-are flat (``roll`` stays 0) because a fixed-plane ground model is exactly what
-M5 has to measure against, and banking the road would hide that error.
+are flat by default so the fixed-plane baseline remains reproducible.  A curve's
+``bank_deg`` can optionally add a smooth cross-slope for the controlled M5 matrix.
 
 Segment kinds
 -------------
@@ -167,6 +167,7 @@ class SegmentSpec:
     rise: float = 0.0           #: ramp only: signed height change [m]
     amplitude_deg: float = 0.0  #: s_curve only: peak heading amplitude [deg]
     cycles: float = 1.0         #: s_curve only: full sine periods
+    bank_deg: float = 0.0       #: curve only: peak road cross-slope, zero at joins [deg]
 
     def road_type(self) -> str:
         """The M5 label: which kind of road the segment is."""
@@ -242,8 +243,10 @@ def _curve(spec: SegmentSpec, start: Pose) -> BuiltSegment:
         right = radius * (math.cos(psi) - 1.0)
         forward = radius * math.sin(psi)
         curvature = 1.0 / radius
-        return _place(start, right, forward, 0.0,
+        roll = float(spec.bank_deg) * math.sin(math.pi * t / length) ** 2
+        pose = _place(start, right, forward, 0.0,
                       start.yaw + math.degrees(psi), 0.0, curvature, start.s + t)
+        return replace(pose, roll=roll)
 
     end = evaluate(length)
     return BuiltSegment(spec, start, length, end, evaluate)
@@ -388,6 +391,7 @@ class RoadTrack:
             "end_z_m": round(segment.end.z, 6),
             "radius_m": round(segment.spec.radius, 6),
             "rise_m": round(segment.spec.rise, 6),
+            "bank_deg": round(segment.spec.bank_deg, 6),
         } for segment in self.segments]
 
 
@@ -453,7 +457,8 @@ def _recenter(track: RoadTrack, specs: Sequence[SegmentSpec], closed: bool) -> R
     shifted = tuple(
         SegmentSpec(name=spec.name, kind=spec.kind, length=spec.length,
                     radius=spec.radius, angle_deg=spec.angle_deg, rise=spec.rise,
-                    amplitude_deg=spec.amplitude_deg, cycles=spec.cycles)
+                    amplitude_deg=spec.amplitude_deg, cycles=spec.cycles,
+                    bank_deg=spec.bank_deg)
         for spec in specs)
     rebuilt = _build(shifted, closed)
     # shift every built start (and thus every evaluated pose) by the offset
@@ -484,6 +489,7 @@ def default_track_specs(straight: float = DEFAULT_STRAIGHT_M,
                         radius: float = DEFAULT_RADIUS_M,
                         ramp_rise: float = DEFAULT_RAMP_RISE_M,
                         ramp_length: float = DEFAULT_RAMP_LENGTH_M,
+                        curve_bank_deg: float = 0.0,
                         ) -> List[SegmentSpec]:
     """A closed rounded rectangle with one up and one down ramp.
 
@@ -501,17 +507,21 @@ def default_track_specs(straight: float = DEFAULT_STRAIGHT_M,
     # the two straight runs between curves must match for the loop to close
     return [
         SegmentSpec("straight_a", STRAIGHT, straight),
-        SegmentSpec("curve_0", CURVE, 0.0, radius=radius, angle_deg=90.0),
+        SegmentSpec("curve_0", CURVE, 0.0, radius=radius, angle_deg=90.0,
+                    bank_deg=curve_bank_deg),
         SegmentSpec("approach_up", STRAIGHT, flat),
         SegmentSpec("ramp_up", RAMP, ramp_length, rise=abs(ramp_rise)),
         SegmentSpec("crest", STRAIGHT, flat),
-        SegmentSpec("curve_1", CURVE, 0.0, radius=radius, angle_deg=90.0),
+        SegmentSpec("curve_1", CURVE, 0.0, radius=radius, angle_deg=90.0,
+                    bank_deg=curve_bank_deg),
         SegmentSpec("straight_b", STRAIGHT, straight),
-        SegmentSpec("curve_2", CURVE, 0.0, radius=radius, angle_deg=90.0),
+        SegmentSpec("curve_2", CURVE, 0.0, radius=radius, angle_deg=90.0,
+                    bank_deg=curve_bank_deg),
         SegmentSpec("approach_down", STRAIGHT, flat),
         SegmentSpec("ramp_down", RAMP, ramp_length, rise=-abs(ramp_rise)),
         SegmentSpec("valley", STRAIGHT, flat),
-        SegmentSpec("curve_3", CURVE, 0.0, radius=radius, angle_deg=90.0),
+        SegmentSpec("curve_3", CURVE, 0.0, radius=radius, angle_deg=90.0,
+                    bank_deg=curve_bank_deg),
     ]
 
 
@@ -519,25 +529,27 @@ def default_track(straight: float = DEFAULT_STRAIGHT_M,
                   radius: float = DEFAULT_RADIUS_M,
                   ramp_rise: float = DEFAULT_RAMP_RISE_M,
                   ramp_length: float = DEFAULT_RAMP_LENGTH_M,
+                  curve_bank_deg: float = 0.0,
                   center: bool = True) -> RoadTrack:
     """The default closed loop, centred on the origin in x/y."""
     return build_track(
-        default_track_specs(straight, radius, ramp_rise, ramp_length),
+        default_track_specs(straight, radius, ramp_rise, ramp_length, curve_bank_deg),
         closed=True, center=center)
 
 
-def preset_specs(preset: TrackPreset) -> List[SegmentSpec]:
+def preset_specs(preset: TrackPreset, curve_bank_deg: float = 0.0) -> List[SegmentSpec]:
     """The segment list of a named preset."""
     return default_track_specs(preset.straight, preset.radius,
-                               preset.ramp_rise, preset.ramp_length)
+                               preset.ramp_rise, preset.ramp_length, curve_bank_deg)
 
 
-def preset_track(key: str = "compact", center: bool = True) -> RoadTrack:
+def preset_track(key: str = "compact", center: bool = True,
+                 curve_bank_deg: float = 0.0) -> RoadTrack:
     """The named preset loop (``compact`` / ``full``), centred in x/y."""
     preset = TRACK_PRESETS.get(str(key))
     if preset is None:
         raise ValueError(f"unknown track preset {key!r}; have {tuple(TRACK_PRESETS)}")
-    return build_track(preset_specs(preset), closed=True, center=center)
+    return build_track(preset_specs(preset, curve_bank_deg), closed=True, center=center)
 
 
 # ---------------------------------------------------------------------------

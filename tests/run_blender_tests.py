@@ -2465,7 +2465,7 @@ def test_road_scene():
     from opencv_camera.bl.scenes import vehicle_mesh
     from opencv_camera.bl.scenes.drive_scene import builder as drive_builder
     from opencv_camera.bl.scenes.road_scene import builder, recording
-    from opencv_camera.core.scenes import avm_cameras, avm_layout, road_path
+    from opencv_camera.core.scenes import avm_cameras, avm_layout, road_path, road_track
 
     scene = setup_scene(resolution=64, samples=1)
     clear_scene()
@@ -2583,6 +2583,26 @@ def test_road_scene():
     check("the track carries road / shoulder / grass / paint slots",
           len(slots) == 5 and slots[3] == "ROAD_Paint_White_Mat"
           and slots[4] == "ROAD_Paint_Yellow_Mat", str(slots))
+    check("Road Scene exposes the optional curve-bank control",
+          hasattr(settings, "curve_bank_deg") and approx(settings.curve_bank_deg, 0.0),
+          str(getattr(settings, "curve_bank_deg", None)))
+    banked_track = road_track.default_track(curve_bank_deg=6.0)
+    bank_curve = next(segment for segment in banked_track.segments
+                      if segment.spec.kind == road_track.CURVE)
+    bank_pose = min(banked_track.samples(),
+                    key=lambda pose: abs(pose.s - (bank_curve.start.s + bank_curve.length / 2.0)))
+    bank_mesh = builder._track_mesh("ROAD_Bank_Probe", banked_track, settings)
+    half = settings.road_width / 2.0
+    expected_edges = (builder._offset_point(bank_pose, -half, bank_pose.z),
+                      builder._offset_point(bank_pose, half, bank_pose.z))
+    vertices = [tuple(float(value) for value in vertex.co) for vertex in bank_mesh.vertices]
+    edge_found = [min(math.dist(vertex, expected) for vertex in vertices) < 1e-4
+                  for expected in expected_edges]
+    check("banked curve mesh tilts both road edges from the centreline",
+          all(edge_found)
+          and abs(expected_edges[1][2] - expected_edges[0][2]) > 0.1,
+          f"edge z={expected_edges[0][2]:.3f}/{expected_edges[1][2]:.3f}, found={edge_found}")
+    bpy.data.meshes.remove(bank_mesh)
     check("the asphalt surface has two procedural noise scales",
           [node.type for node in ground.data.materials[0].node_tree.nodes].count("TEX_NOISE") == 2,
           str([node.type for node in ground.data.materials[0].node_tree.nodes]))

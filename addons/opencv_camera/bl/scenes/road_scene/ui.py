@@ -34,7 +34,7 @@ def _track(layout, settings) -> None:
     column.use_property_split = True
     column.label(text="Track")
     column.prop(settings, "track_preset")
-    for name in ("straight_length", "curve_radius", "ramp_rise", "ramp_length",
+    for name in ("straight_length", "curve_radius", "curve_bank_deg", "ramp_rise", "ramp_length",
                  "road_width", "shoulder_width"):
         column.prop(settings, name)
     column.prop(settings, "ground_texture")

@@ -1,6 +1,6 @@
 # Road Scene 设计说明（闭合测试道路素材）
 
-> 状态：**已实施**（闭合环线 + 直道/弯道/上下坡 + 路侧道具 + 四摄逐帧录制 + 三维真值 + 按段导出）。
+> 状态：**已实施**（闭合环线 + 直道/弯道/上下坡 + 可选曲线侧倾 + 路侧道具 + 四摄逐帧录制 + 三维真值 + 按段导出）。
 > 用途：把 Drive Scene 只承诺过的「平地、匀速直行、单一光照」扩展到**可证**的
 > 弯道 / 坡道 / 变速 / 倒车工况，为 `filament_avm` 透明底盘的 **M5 扩展工况验证**
 > （`docs/specs/004_trans_chassis/`，CH-018）提供「道路类型 × 速度 × 方向」矩阵素材。
@@ -11,7 +11,7 @@
 
 | | 内容 |
 | --- | --- |
-| 输入 | 环线尺寸（直道 / 弯道半径 / 坡高与坡长 / 路宽 / 路肩）+ 路侧道具数量 + 光照 + 车辆尺寸 + 行驶参数（速度 / 曲线 / 帧率 / 方向 / 整圈或某一段）|
+| 输入 | 环线尺寸（直道 / 弯道半径 / 曲线侧倾 / 坡高与坡长 / 路宽 / 路肩）+ 路侧道具数量 + 光照 + 车辆尺寸 + 行驶参数（速度 / 曲线 / 帧率 / 方向 / 整圈或某一段）|
 | 输出 | 每路一条 `<camera>.mp4`（`front/back/left/right`）+ `frames.csv`（逐帧时间/里程/车速/**三维车体位姿** + 每台相机世界位姿 + 工况标签）+ `clip.json`（v3：`motion` + `segments[]` + `cameras[]` + `vehicle`）+ `frame_%04d_<camera>.png` 序列；`[Export Clip…]` 打包成 zip |
 | 相机 | 与 AVM / Drive Scene **同一份** minibus 标定预设的四摄（`front/back/left/right`），本场景不持有任何相机参数 |
 | 非目标 | 悬架俯仰/侧倾、滚动快门、逐帧位姿回放；动态交通流的完整建模（行人可动，其余道具静态）|
@@ -40,7 +40,7 @@ Drive Scene 的产物契约与 `blsim 1.0.3` 基线**不受影响**：`clip_core
 | kind | 几何 | 注明 |
 | --- | --- | --- |
 | `straight` | 平直段 | 基线 |
-| `curve` | 定半径圆弧（`radius` 带符号，正=左转；`angle_deg` 同号） | 平面曲率 `1/R` |
+| `curve` | 定半径圆弧（`radius` 带符号，正=左转；`angle_deg` 同号） | 平面曲率 `1/R`；可设 `bank_deg` 峰值侧倾，使用 sin² 包络在段边界回到水平 |
 | `ramp` | 竖向曲线：平面上是直线，坡度按半正弦变化 | 起止坡度为 0，与直道**无折角**地衔接；`rise` 为总高差 |
 | `s_curve` | 变道：航向 `A·sin(2πn s/L)` | 整数周期时净航向与净横移均为 0（自定义模板用，不在默认环线中） |
 
@@ -59,6 +59,7 @@ Drive Scene 的产物契约与 `blsim 1.0.3` 基线**不受影响**：`clip_core
 `compact` 是默认，因为一段素材的渲染量 ∝ 时长 × fps × 相机数：248 m 一圈约 1700 张静帧，
 124 m 一圈约 1000 张（`compact` 的 `scenario` 无停车时）。
 
+`curve` 段的 `bank_deg` 使用 `sin²(πt/L)` 平滑包络，在段连接处回到零、段中达到设定峰值；默认值为 0°。
 `RoadTrack` 提供 `pose_at(s)`（任意弧长处返回 `x/y/z/yaw/pitch/roll/curvature`）、`segment_at(s)`、
 `samples()`、`bounds()` 与 `describe()`（逐段的起止里程/长度/高差/半径/road_type）。
 
@@ -160,7 +161,7 @@ frame_pattern/video_pattern/vehicle/frames_csv/video/video_encode/time_base`，�
 两个面板（Scene Properties + 3D 视口 N 侧栏 `Road Scene`），只在场景已建立时出现：
 
 - **概览**：环线总长 / 段数 / 逐帧位移 / 计划摘要；
-- **Track**：`track_preset`（compact / full / custom）/ `straight_length` / `curve_radius` /
+- **Track**：`track_preset`（compact / full / custom）/ `straight_length` / `curve_radius` / `curve_bank_deg` /
   `ramp_rise` / `ramp_length` / `road_width` / `shoulder_width` /
   `ground_texture`（asphalt / concrete / epoxy / checker / plain）/ `parking_bays` /
   `parking_speed`。**标线、斑马线、停车入库都是常开的，面板不再给开关**；
@@ -219,7 +220,7 @@ bl/scenes/road_scene/
 | 期 | 内容 |
 | --- | --- |
 | **P0（本文件）** | 闭合环线 + 直道/弯道/上下坡 + 路侧道具 + 四摄逐帧 + 三维真值与按段导出 + 共享录制引擎 + 测试/文档 |
-| P1 | 动态交通流（对向车辆、交叉口）、变光照（日落/夜间路灯）用于 M5-05 |
+| P1 | 动态交通流（对向车辆、交叉口） |
 | P2 | 真值扩展（深度 / 实例分割 / 逐帧相机位姿文件），与 M7 `dataset_export` 合流 |
 | P3 | 悬架俯仰/侧倾、滚动快门/运动模糊、非平面路面（路缘/起伏）|
 

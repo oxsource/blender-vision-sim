@@ -101,10 +101,17 @@ def _right(pose: road_track.Pose) -> Tuple[float, float]:
     return (math.cos(angle), math.sin(angle))
 
 
+def _right3d(pose: road_track.Pose) -> Tuple[float, float, float]:
+    yaw, roll = math.radians(pose.yaw), math.radians(pose.roll)
+    return (math.cos(yaw) * math.cos(roll),
+            math.sin(yaw) * math.cos(roll), -math.sin(roll))
+
+
 def _offset_point(pose: road_track.Pose, lateral: float, z: Optional[float] = None):
-    right = _right(pose)
+    right = _right3d(pose)
+    centre_z = pose.z if z is None else z
     return (pose.x + right[0] * lateral, pose.y + right[1] * lateral,
-            pose.z if z is None else z)
+            centre_z + right[2] * lateral)
 
 
 # ---------------------------------------------------------------------------
@@ -406,18 +413,15 @@ def _ensure_vehicle(root: bpy.types.Object, target: bpy.types.Collection) -> bpy
 # ---------------------------------------------------------------------------
 def _edge(pose: road_track.Pose, half: float, shoulder: float, side: float,
           z: float):
-    right = _right(pose)
-    inner = (pose.x + side * half * right[0], pose.y + side * half * right[1], z)
-    outer = (pose.x + side * (half + shoulder) * right[0],
-             pose.y + side * (half + shoulder) * right[1], z)
+    inner = _offset_point(pose, side * half, z)
+    outer = _offset_point(pose, side * (half + shoulder), z)
     return inner, outer
 
 
 def _bank(pose: road_track.Pose, half: float, shoulder: float, side: float):
     right = _right(pose)
     run = max(0.0, pose.z - BASE_Z) * BANK_SLOPE
-    top = (pose.x + side * (half + shoulder) * right[0],
-           pose.y + side * (half + shoulder) * right[1], pose.z)
+    top = _offset_point(pose, side * (half + shoulder))
     bottom = (top[0] + side * run * right[0], top[1] + side * run * right[1], BASE_Z)
     return top, bottom
 
@@ -731,7 +735,8 @@ def _ensure_trees(target: bpy.types.Collection, root: bpy.types.Object,
         _assign_mesh(obj, prop_mesh.tree_mesh(name, height), _tree_materials())
         run = max(0.0, pose.z - BASE_Z) * BANK_SLOPE
         lateral = side * (half + settings.shoulder_width + run + TREE_CLEAR)
-        obj.location = _offset_point(pose, lateral, BASE_Z)
+        tree_x, tree_y, _ = _offset_point(pose, lateral)
+        obj.location = (tree_x, tree_y, BASE_Z)
         obj.rotation_mode = "XYZ"
         obj.rotation_euler = (0.0, 0.0, math.radians(pose.yaw + 37.0 * index))
         _parent_local(obj, root)
