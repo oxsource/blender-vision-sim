@@ -405,7 +405,7 @@ def test_avm_falcon_config():
 
     check("falcon top-level keys",
           list(config) == ["comment", "name", "glb_file", "ibl_file",
-                           "filamat_path", "vehicle_model", "mask_overlay",
+                           "shader_path", "vehicle_model", "mask_overlay",
                            "cameras", "bev_coord", "orbit_pitchs", "orbit_yaw",
                            "orbit_radius", "orbit_mouse_sens", "orbit_fov_y",
                            "orbit_near", "orbit_far", "steering_line"],

@@ -29,7 +29,10 @@ ASSETS: Dict[str, str] = {
     "name": "filament_avm",
     "glb_file": "/vendor/etc/avmconfig/falcon/unlit_round_bowls.glb",
     "ibl_file": "/vendor/etc/avmconfig/falcon/ibl.ktx",
-    "filamat_path": "/vendor/etc/avmconfig/falcon/bowl_material.filamat",
+    # One directory for every shader artifact: the packed shaders.pack plus the
+    # loose *.filamat files (the app resolves each material by id, see
+    # filament_avm docs/specs/005_shader_pack).
+    "shader_path": "/vendor/etc/avmconfig/falcon",
     "vehicle_model": "vehicle",
 }
 
@@ -67,7 +70,6 @@ ORBIT = {
 #: section 5.6.3).
 STEERING = {
     "enable": True,
-    "filamat_path": "/vendor/etc/avmconfig/falcon/steering_line_material.filamat",
     "wheel_base": vehicle.WHEEL_BASE_M,
     "rear_track": vehicle.REAR_TRACK_M,
     "length": [3.6, 0.0, 0.0],
@@ -136,7 +138,7 @@ def build_config(field: avm_layout.FieldSpec,
         "name": ASSETS["name"],
         "glb_file": ASSETS["glb_file"],
         "ibl_file": ASSETS["ibl_file"],
-        "filamat_path": ASSETS["filamat_path"],
+        "shader_path": ASSETS["shader_path"],
         "vehicle_model": ASSETS["vehicle_model"],
         "mask_overlay": {
             "refer": [geo.c_in_x, geo.c_in_y, BOWL_RADIUS],

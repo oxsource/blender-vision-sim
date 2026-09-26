@@ -892,7 +892,7 @@ Blender 侧**不做解算、不做检测**（§1.1）。因此本方案只保留
 ### 15.4 导入时需要忽略的字段
 
 `model_scene` / `bev_bound` / `orbit` / `mask_overlay` / `steering_line` / `glb_file` / `ibl_file` /
-`filamat_path` 都是 filament 渲染侧的参数，Blender 场景不使用，导入时应**跳过而不报错**。
+`shader_path` 都是 filament 渲染侧的参数，Blender 场景不使用，导入时应**跳过而不报错**。
 
 ### 15.5 可复用的后续能力（P7，可选）
 
@@ -1003,7 +1003,7 @@ P = C + t · d_world
 
 `vehicle_avm.json` 的字段与顺序对齐 `JsonGenerator`（`core/scenes/avm_falcon.py`）：
 
-- 顶层：`comment` / `name` / `glb_file` / `ibl_file` / `filamat_path` / `vehicle_model` /
+- 顶层：`comment` / `name` / `glb_file` / `ibl_file` / `shader_path` / `vehicle_model` /
   `mask_overlay{refer,padding,scale}` / `cameras[4]` / `bev_coord` /
   `orbit_pitchs` / `orbit_yaw` / `orbit_radius` / `orbit_mouse_sens` / `orbit_fov_y` /
   `orbit_near` / `orbit_far` / `steering_line{...}`；
