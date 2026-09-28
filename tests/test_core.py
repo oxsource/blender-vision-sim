@@ -1052,6 +1052,27 @@ def test_road_path():
           and any(frame.gear == "R" for frame in park.frames)
           and park.frames[-1].gear == "P")
 
+    motion_plan = road_path.parking_plan(
+        compact, s_entry=radius + 2.0, radius=radius, cruise=cruise,
+        parking_speed=2.0, slow_speed=2.0, accel=1.5, decel=2.5, fps=50.0,
+        slow_zones=zones)
+    motion_rows = road_path.motion_samples_csv_text(motion_plan).rstrip("\n").split("\n")
+    motion_header = motion_rows[0].split(",")
+    motion_values = [row.split(",") for row in motion_rows[1:]]
+    motion_times = [float(row[1]) for row in motion_values]
+    reverse_sample = next(row for row in motion_values if row[3] == "R")
+    reverse_frame = next(frame for frame in motion_plan.frames if frame.gear == "R")
+    check("the high-rate motion stream has product columns, no pose truth",
+          motion_header == ["sample", "time_s", "speed_mps", "gear", "steering_deg"])
+    check("the high-rate motion stream is strictly time ordered",
+          all(b > a for a, b in zip(motion_times, motion_times[1:])))
+    check("the motion stream rate is independent of the video plan",
+          motion_plan.fps == 50.0 and park.fps != motion_plan.fps,
+          f"video={park.fps:g} Hz, motion={motion_plan.fps:g} Hz")
+    check("the high-rate motion stream restores the raw reverse steering sign",
+          float(reverse_sample[4]) * reverse_frame.steering_deg < 0.0,
+          reverse_sample[4])
+
 
 def main():
     for test in (test_intrinsics, test_distortion_roundtrip, test_fisheye, test_projection,

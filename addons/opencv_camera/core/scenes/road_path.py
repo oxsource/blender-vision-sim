@@ -29,7 +29,8 @@ from . import drive_path, road_track, vehicle
 __all__ = [
     "FORWARD", "REVERSE", "DIRECTIONS", "SCENARIO", "PROFILES", "Frame", "Plan",
     "CSV_VEHICLE_COLUMNS", "CSV_CAMERA_COLUMNS",
-    "plan", "speed_field", "parking_plan", "csv_header", "csv_text", "summary",
+    "plan", "speed_field", "parking_plan", "csv_header", "csv_text",
+    "motion_samples_csv_text", "summary",
     "camera_world_pose", "steering_deg", "gear_for",
     "GEAR_PARKED", "GEAR_REVERSE", "GEAR_DRIVE", "GEARS",
     "rotation_xyz", "euler_xyz",
@@ -479,6 +480,24 @@ def csv_text(plan_: Plan, mounts: Mapping[str, drive_path.Mount]) -> str:
             cells.extend((f"{x:.6f}", f"{y:.6f}", f"{z:.6f}",
                           f"{roll:.4f}", f"{pitch:.4f}", f"{yaw:.4f}"))
         lines.append(",".join(cells))
+    return "\n".join(lines) + "\n"
+
+
+def motion_samples_csv_text(plan_: Plan) -> str:
+    """Timestamped product-shaped signal samples, independent of video frames."""
+    lines = ["sample,time_s,speed_mps,gear,steering_deg"]
+    previous_time = None
+    sample_id = 0
+    for frame in plan_.frames:
+        if previous_time is not None and frame.time <= previous_time + 1e-10:
+            continue
+        steering = (-frame.steering_deg if frame.gear == GEAR_REVERSE
+                    else frame.steering_deg)
+        lines.append(",".join((str(sample_id), f"{frame.time:.9f}",
+                               f"{frame.speed:.9f}", frame.gear,
+                               f"{steering:.9f}")))
+        previous_time = frame.time
+        sample_id += 1
     return "\n".join(lines) + "\n"
 
 

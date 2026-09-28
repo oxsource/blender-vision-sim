@@ -2684,6 +2684,8 @@ def test_road_scene():
     settings.drive_direction = "forward"
     settings.drive_loops = 0.02
     settings.parking = False
+    settings.drive_fps = 10
+    settings.motion_fps = 20
     bpy.ops.opencv_cam.road_rebuild()
     check("walking pedestrians default off",
           settings.animate_pedestrians is False)
@@ -2718,6 +2720,24 @@ def test_road_scene():
     check("frames.csv rows carry the segment label",
           rows[1].split(",")[10] == settings.plan().frames[0].segment, rows[1])
 
+    motion_plan = settings.plan(fps=settings.motion_fps)
+    with open(os.path.join(directory, "motion_frames.csv"), encoding="utf-8") as handle:
+        motion_frame_rows = handle.read().rstrip("\n").split("\n")
+    with open(os.path.join(directory, "motion_samples.csv"), encoding="utf-8") as handle:
+        motion_sample_rows = handle.read().rstrip("\n").split("\n")
+    motion_times = [float(row.split(",")[1]) for row in motion_sample_rows[1:]]
+    check("motion_frames.csv uses the independent pose sample rate",
+          len(motion_frame_rows) == len(motion_plan.frames) + 1
+          and len(motion_frame_rows) > len(rows),
+          f"video={len(rows) - 1} @ {settings.drive_fps} Hz; "
+          f"motion={len(motion_frame_rows) - 1} @ {settings.motion_fps} Hz")
+    check("motion_samples.csv is strictly time ordered and video independent",
+          motion_sample_rows[0] == "sample,time_s,speed_mps,gear,steering_deg"
+          and all(b > a for a, b in zip(motion_times, motion_times[1:]))
+          and len(motion_sample_rows) - 1 <= len(motion_frame_rows) - 1
+          and len(motion_sample_rows) - 1 > len(rows) - 1,
+          f"{len(motion_sample_rows) - 1} samples")
+
     with open(os.path.join(directory, "clip.json"), encoding="utf-8") as handle:
         meta = json.load(handle)
     check("clip.json is the road contract v3",
@@ -2736,8 +2756,14 @@ def test_road_scene():
           str(meta["motion"]))
     check("clip.json describes the per-frame vehicle signals",
           meta["signals"]["columns"] == ["speed_mps", "steering_deg", "gear"]
-          and meta["signals"]["gear_values"] == ["P", "R", "D"],
+          and meta["signals"]["gear_values"] == ["P", "R", "D"]
+          and meta["signals"]["sample_fps"] == settings.motion_fps
+          and meta["signals"]["samples_file"] == "motion_samples.csv"
+          and meta["signals"]["pose_samples_file"] == "motion_frames.csv",
           str(meta.get("signals")))
+    check("clip.json video FPS remains tied to frames.csv",
+          meta["fps"] == settings.drive_fps and meta["frames"] == len(rows) - 1,
+          f"video={meta['fps']} Hz, motion={meta['signals']['sample_fps']} Hz")
     check("clip.json cameras match the recorded set",
           [entry["camera"] for entry in meta["cameras"]] == recorded, str(recorded))
     check("clip.json has one vehicle block",
@@ -2763,6 +2789,8 @@ def test_road_scene():
     bpy.ops.opencv_cam.road_reset_defaults()
     check("reset restores the template and drive defaults",
           approx(settings.drive_speed, 7.0, 1e-6)
+          and settings.drive_fps == 10
+          and settings.motion_fps == 50
           and approx(settings.drive_accel, 2.5, 1e-6)
           and approx(settings.drive_decel, 2.5, 1e-6)
           and approx(settings.slow_speed, 3.5, 1e-6)

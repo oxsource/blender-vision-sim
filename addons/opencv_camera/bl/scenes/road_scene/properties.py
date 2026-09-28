@@ -272,9 +272,12 @@ class RoadSceneSettings(bpy.types.PropertyGroup):
                     "slower crossing)",
         update=_schedule)
     drive_fps: IntProperty(
-        name="FPS", default=10, min=1, max=120,
-        description="Frames per second of the clip",
+        name="Video FPS", default=10, min=1, max=120,
+        description="Rendered video and frames.csv rate; frames.csv stays 1:1 with the video",
         update=_schedule)
+    motion_fps: IntProperty(
+        name="Pose / Signal FPS", default=50, min=1, max=1000,
+        description="Independent rate for motion_frames.csv and motion_samples.csv; no extra video renders")
     drive_direction: EnumProperty(
         name="Direction", items=DIRECTIONS, default="forward",
         description="Forward drives nose-first; reverse drives the loop backwards",
@@ -376,7 +379,8 @@ class RoadSceneSettings(bpy.types.PropertyGroup):
                     return start, segment.length / track.length
         return 0.0, float(self.drive_loops)
 
-    def plan(self):
+    def plan(self, fps: Optional[float] = None):
+        sample_fps = float(self.drive_fps if fps is None else fps)
         track = self.track()
         start, loops = self.segment_span(track)
         if self.drive_profile == road_path.SCENARIO:
@@ -391,16 +395,16 @@ class RoadSceneSettings(bpy.types.PropertyGroup):
                     radius=self.parking_radius(), cruise=self.drive_speed,
                     parking_speed=self.parking_speed, slow_speed=self.slow_speed,
                     accel=self.drive_accel, decel=self.drive_decel,
-                    fps=self.drive_fps, slow_zones=zones)
+                    fps=sample_fps, slow_zones=zones)
             return road_path.plan(
                 track, speed=self.drive_speed, direction=self.drive_direction,
                 profile=self.drive_profile, accel=self.drive_accel,
-                decel=self.drive_decel, fps=self.drive_fps, loops=loops,
+                decel=self.drive_decel, fps=sample_fps, loops=loops,
                 start_distance=start, slow_speed=self.slow_speed,
                 slow_zones=zones)
         return road_path.plan(
             track, speed=self.drive_speed, direction=self.drive_direction,
-            profile=self.drive_profile, accel=self.drive_accel, fps=self.drive_fps,
+            profile=self.drive_profile, accel=self.drive_accel, fps=sample_fps,
             loops=loops, start_distance=start)
 
 

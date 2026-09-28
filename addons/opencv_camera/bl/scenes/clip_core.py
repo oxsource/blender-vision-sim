@@ -1,9 +1,10 @@
 """The clip recorder, shared by every scene that writes a drive-style clip.
 
-The Drive Scene and the Road Scene render the same artifact - one still per
-camera per frame, one H.264 video per camera, ``frames.csv`` with the per-frame
-truth and its **camera world poses**, and ``clip.json`` describing the whole
-run - so the engine lives here once and each scene supplies a
+The Drive Scene and the Road Scene render the same core artifact - one still
+per camera per video frame, one H.264 video per camera, ``frames.csv`` with
+the per-video-frame truth and its **camera world poses**, and ``clip.json``
+describing the whole run. Profiles may add independent-rate data files, so
+the engine lives here once and each scene supplies a
 :class:`ClipProfile` naming its own pieces (object prefixes, plan module,
 ``clip.json`` blocks, default file name).
 
@@ -109,7 +110,8 @@ class ClipProfile:
     """What makes one scene's clip different from another's.
 
     The recorder is otherwise identical, so a new scene is "one profile", not a
-    second copy of this module.
+    second copy of this module. Optional auxiliary CSVs are generated separately
+    from the rendered video-frame plan.
     """
 
     format: str                     #: ``clip.json``'s ``format`` field
@@ -126,6 +128,8 @@ class ClipProfile:
     #: then cache it across the per-frame stills; a scene with animated props
     #: must say no or the props freeze.
     persistent_data: Callable[[object], bool] = lambda settings: True
+    #: additional non-video-rate CSVs (e.g. high-rate motion / pose samples)
+    auxiliary_csv_text: Optional[Callable[[object, Dict], Dict[str, str]]] = None
 
 
 def default_filename(profile: ClipProfile) -> str:
@@ -351,6 +355,7 @@ class ClipJob:
                             if keep_frames is None else bool(keep_frames))
         self.messages: List[str] = []
         self.plan = None
+        self.auxiliary_csvs: Dict[str, str] = {}
         self.frames: List = []
         self.cameras: List[str] = []
         self.mounts: Dict = {}
@@ -392,6 +397,8 @@ class ClipJob:
         self.plan = self.settings.plan()
         self.frames = list(self.plan.frames)
         self.total = len(self.frames)
+        if self.profile.auxiliary_csv_text is not None:
+            self.auxiliary_csvs = self.profile.auxiliary_csv_text(self.settings, self.mounts)
         if not self.directory:
             self.directory = tempfile.mkdtemp(prefix=f"{self.profile.default_name}_")
             self._owns_directory = True
@@ -559,6 +566,11 @@ class ClipJob:
         csv_path = os.path.join(self.directory, "frames.csv")
         with open(csv_path, "w", encoding="utf-8") as handle:
             handle.write(self.profile.csv_text(self.plan, self.mounts))
+        for name, text in self.auxiliary_csvs.items():
+            auxiliary_path = os.path.join(self.directory, name)
+            with open(auxiliary_path, "w", encoding="utf-8") as handle:
+                handle.write(text)
+            self.written.append(auxiliary_path)
         meta = clip_meta(self.profile, self.scene, self.settings, self.plan,
                          self.sample_count, self.cameras, video=self.video,
                          quality=self.quality, device=self.device,

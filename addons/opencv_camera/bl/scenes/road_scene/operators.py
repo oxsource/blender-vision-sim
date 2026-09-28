@@ -42,7 +42,7 @@ _RESET_KEYS = (
     "light_energy",
     "car_length", "car_width", "car_height", "car_clearance",
     "drive_speed", "drive_profile", "drive_accel", "drive_decel", "slow_speed",
-    "drive_fps", "drive_direction", "drive_loops", "drive_segment",
+    "drive_fps", "motion_fps", "drive_direction", "drive_loops", "drive_segment",
     "active_camera", "clip_quality", "clip_device", "clip_keep_frames",
 )
 

@@ -112,18 +112,7 @@ def compare_plan(plan, oracle):
 
 def write_motion_samples(path, plan):
     with open(path, "w", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle, lineterminator="\n")
-        writer.writerow(("sample", "time_s", "speed_mps", "gear", "steering_deg"))
-        previous_time = None
-        sample_id = 0
-        for frame in plan.frames:
-            if previous_time is not None and frame.time <= previous_time + 1e-10:
-                continue
-            steering = -frame.steering_deg if frame.gear == road_path.GEAR_REVERSE else frame.steering_deg
-            writer.writerow((sample_id, f"{frame.time:.9f}", f"{frame.speed:.9f}",
-                             frame.gear, f"{steering:.9f}"))
-            previous_time = frame.time
-            sample_id += 1
+        handle.write(road_path.motion_samples_csv_text(plan))
 
 
 def f_world_truth(row, first, center_to_rear):

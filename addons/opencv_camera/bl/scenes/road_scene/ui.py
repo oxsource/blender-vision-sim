@@ -24,6 +24,7 @@ def _overview(layout, settings) -> None:
     box.label(text=f"Loop {track.length:.1f} m, {len(track.segments)} segments",
               icon="MESH_GRID")
     box.label(text=road_path.summary(plan))
+    box.label(text=f"Motion pose / signal stream: {settings.motion_fps} Hz")
     recorded = max(1, len(settings.recorded_cameras()))
     box.label(text=f"{len(plan.frames) * recorded} stills to render",
               icon="RENDER_STILL")
@@ -80,7 +81,7 @@ def _drive(layout, settings) -> None:
         column.prop(settings, "drive_decel")
     elif settings.drive_profile == "trapezoid":
         column.prop(settings, "drive_accel")
-    for name in ("drive_fps", "drive_direction", "drive_segment"):
+    for name in ("drive_fps", "motion_fps", "drive_direction", "drive_segment"):
         column.prop(settings, name)
     parking_lap = (settings.drive_profile == "scenario" and settings.parking
                    and settings.drive_segment == "loop")

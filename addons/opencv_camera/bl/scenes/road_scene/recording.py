@@ -9,6 +9,8 @@ profile.  Its clip differs in three deliberate ways, all of them M5's:
 * ``clip.json`` has ``motion`` and ``segments`` blocks describing the loop and
   every labelled piece of it, so a boundary result can name the road type it came
   from;
+* ``motion_frames.csv`` and ``motion_samples.csv`` can use an independent pose /
+  signal sampling rate without increasing the rendered video frame rate;
 * ``version`` is **3** (the ``cameras`` array stays, so a v2 reader still parses
   the file; the new columns are additions, not renames).
 
@@ -72,7 +74,18 @@ def _motion_meta(settings, plan) -> Dict:
                                "when reversing"),
             "gear": "gear",
             "gear_values": ["P", "R", "D"],
+            "sample_fps": int(settings.motion_fps),
+            "samples_file": "motion_samples.csv",
+            "pose_samples_file": "motion_frames.csv",
         },
+    }
+
+
+def _motion_csvs(settings, mounts) -> Dict[str, str]:
+    motion_plan = settings.plan(fps=settings.motion_fps)
+    return {
+        "motion_frames.csv": road_path.csv_text(motion_plan, mounts),
+        "motion_samples.csv": road_path.motion_samples_csv_text(motion_plan),
     }
 
 
@@ -107,7 +120,8 @@ PROFILE = clip_core.ClipProfile(
     format=FORMAT, version=VERSION, default_name=DEFAULT_NAME,
     light_prefix=builder.LIGHT_PREFIX, camera_name=builder.camera_name,
     csv_text=road_path.csv_text, motion_meta=_motion_meta, scene_meta=_scene_meta,
-    vehicle_block=_vehicle_block, persistent_data=_persistent_data)
+    vehicle_block=_vehicle_block, persistent_data=_persistent_data,
+    auxiliary_csv_text=_motion_csvs)
 
 
 def default_filename() -> str:

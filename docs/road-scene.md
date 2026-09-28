@@ -102,7 +102,7 @@ steering_deg,gear,                                         # 追加：车辆信�
 cam_<camera>_{x_m,y_m,z_m,roll_deg,pitch_deg,yaw_deg} × N  # 每台被录相机一组 6 列
 ```
 
-`15 + 6 × N` 列。**车辆信号**（喂给 AVM 算法模拟整车信息）：
+`15 + 6 × N` 列，`frames.csv` 始终与视频逐帧对应。**车辆信号**（喂给 AVM 算法模拟整车信息）：
 - `speed_mps` 车速；`steering_deg` **前轮转角**（左正；自行车模型
   `tan(δ)=轴距·曲率`，倒车时符号翻转），轴距取 `core/scenes/vehicle.py` 的 `WHEEL_BASE_M`；
 - `gear ∈ {P, R, D}`：速度为 0 为 `P`，否则前进 `D` / 倒车 `R`。
@@ -112,6 +112,11 @@ cam_<camera>_{x_m,y_m,z_m,roll_deg,pitch_deg,yaw_deg} × N  # 每台被录相机
 倒车入库为 `reverse`。
 消费侧 `TrajectoryFileSource` 按列名取 `time_s/x_m/y_m/yaw_deg`，因此新列是**向后兼容的追加**；
 坡道工况需要的 `z/pitch` 也随文件交付，供下游扩展。
+
+`drive_fps` 控制渲染视频和 `frames.csv`。`motion_fps` 独立控制额外导出的
+`motion_frames.csv`（高频位姿 oracle）与 `motion_samples.csv`（高频速度 / 档位 / 原始前轮转角）。
+后两者由同一连续运动规划重新采样，不增加 PNG 渲染或视频时长；`clip.json` 的 `fps` 仍表示视频帧率，
+`signals.sample_fps` 表示运动采样率。`motion_samples.csv` 可直接供离线 `MOTION_FILE` 回放消费。
 
 ### `clip.json`（v3）
 
@@ -172,8 +177,9 @@ frame_pattern/video_pattern/vehicle/frames_csv/video/video_encode/time_base`，�
 - **Vehicle**：长 / 宽 / 高 / 离地间隙（默认值来自 `core/scenes/vehicle.py`）；
 - **Drive**：`drive_speed`（巡航，默认 7 m/s ≈25 km/h）/ `drive_profile`（默认 scenario）/
   `slow_speed`（斑马线速度，默认 3.5 m/s ≈13 km/h）/ `drive_accel`（默认 2.5）/
-  `drive_decel`（默认 2.5）/
-  `drive_fps` / `drive_direction`（forward / reverse）/ `drive_segment`（整圈或某段）/
+  `drive_decel`（默认 2.5）/ `drive_fps`（视频和 `frames.csv` 帧率，默认 10）/
+  `motion_fps`（独立姿态 / 信号采样率，默认 50 Hz）/
+  `drive_direction`（forward / reverse）/ `drive_segment`（整圈或某段）/
   `drive_loops`；
 - **Record**：与 Drive Scene 完全相同的 `clip_quality` / `clip_device` / `clip_keep_frames`
   与逐帧模态导出（进度 + ETA + ESC 取消）；
