@@ -392,9 +392,15 @@ class OPENCV_CAM_OT_avm_export_bowl(_AVMSceneOperator, bpy.types.Operator, Expor
             if car is None:
                 self.report({"ERROR"}, "no AVM car to export")
                 return {"CANCELLED"}
-        # The Falcon app looks the ground up per camera by the source model's own
-        # node names (NurbsPath.001..004), so a loaded bowl model is re-imported
-        # and exported as its four faces instead of the merged AVM_Ground.
+        # Two ground layouts can be exported (009 K7):
+        #   - `bowl_quadrants` on (default): the de-duplicated bowl -- four
+        #     quadrant nodes `bowl_front_left` .. `bowl_back_right`, one per camera
+        #     PAIR, which the app draws once with both of its cameras;
+        #   - off: the legacy layout -- the source model's four overlapping half
+        #     faces under their own node names (`NurbsPath.001` ..), one camera per
+        #     face, so every ground point is drawn twice.
+        # Either way a loaded bowl model is re-imported and exported per face
+        # instead of the merged AVM_Ground.
         imported = []
         ground_objects = [ground]
         if ground.data is not None and ground.data.get(builder.GROUND_MODEL_KEY):
@@ -403,6 +409,15 @@ class OPENCV_CAM_OT_avm_export_bowl(_AVMSceneOperator, bpy.types.Operator, Expor
                 settings.ground_radius, settings.ground_rim_height)
             if imported:
                 ground_objects = imported
+        if settings.bowl_quadrants and imported:
+            quadrants = builder.split_ground_quadrants(imported)
+            if quadrants:
+                ground_objects = quadrants
+                imported = imported + quadrants
+            else:
+                self.report({"WARNING"},
+                            "bowl model does not cover the four quadrants; "
+                            "exporting the source faces as-is")
         view_layer = context.view_layer
         selected = list(context.selected_objects)
         active = view_layer.objects.active

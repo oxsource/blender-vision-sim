@@ -508,10 +508,10 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 黑块（≈0.02）与它的对比度足够高，且没有任何网格/纹理会被黑色区域检测器误检。
 
 **真实地面 mesh（默认开）**：`use_ground_model` 开时，`AVM_Ground` 不是平面，而是导入
-`models/unlit_round_bowls.glb`（`core/paths.ground_model_file()`）后把 4 个象限
-（`NurbsPath.001..004`）按世界变换合并成的单 mesh——它正是 Falcon app 里 `glb_file` 指向、
-`bowl_material` 把 4 路相机图像投影上去的那张碗形地面，所以仿真的 4 路相机看到的边界/遮挡
-与最终真机一致。
+`models/unlit_round_bowls.glb`（`core/paths.ground_model_file()`）后把它的 4 个象限节点
+（`NurbsPath.001` .. `NurbsPath.004`；模型是去重后的 4 象限版本，009 K7）按世界变换合并成的
+单 mesh——它正是 Falcon app 里 `glb_file` 指向、`bowl_material` 把 4 路相机图像投影上去的那张碗形
+地面，所以仿真的 4 路相机看到的边界/遮挡与最终真机一致。
 
 **碗模型结构**（分析 `unlit_round_bowls.glb` 得到）：底面是平的（z = 0），围壁沿一个
 **圆角方形**边界抬起——轴向半径 15 m、对角 17.07 m（≈超椭圆 n≈3.2），围壁在最后约 4.2 m
@@ -531,12 +531,20 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 `路径 + 半径 + 高度` 做缓存。导入过程会保存并恢复用户选择。`ground_model` 可指向自定义模型
 （`.glb/.gltf/.fbx/.obj`），为空即内置 bowl；文件缺失/导入失败时回退平面并在 `messages` /
 状态栏给出提示。N 面板的 `[Export Bowl]`（`opencv_cam.avm_export_bowl`）把当前 bowl 导出成
-`.glb`（Y-up，底面在 y=0）：加载了真实模型时按**源模型的四个面**逐节点导出（节点名保持
-`NurbsPath.001` .. `NurbsPath.004`，app 每台相机按名字取地面对应面），并同样应用
-`ground_radius` / `ground_rim_height` 缩放；只有回退到平面时才导出单个 `AVM_Ground`。
+`.glb`（Y-up，底面在 y=0），并同样应用 `ground_radius` / `ground_rim_height` 缩放；只有回退到
+平面时才导出单个 `AVM_Ground`。两种地面布局：
+
+- **Quadrant Bowl 开（`bowl_quadrants`，默认，009 K7）**：导出**去重后的碗**——四个象限节点
+  `NurbsPath.001` .. `NurbsPath.004`（**中性索引，自地面左上角俯视顺时针**——方向词会把当前的相机布局
+  烘进资产，而模型以后不一定还是这个切法）。每个象限是两台
+  相机半平面的**交集**，app 用一次 add 绘制同时投这两台相机，所以地面每个点只画一次（旧布局是四片
+  互相重叠的半平面，每点画两次 = 2× 填充）。源模型是旧布局时就地裁成象限；已经是象限布局（内置模型
+  即是）则原样通过。每台相机的 `scenes` 列表（它参与的两个象限）也会写进导出的 config。
+- **Quadrant Bowl 关**：旧布局——源模型的四个面按自身节点名逐个导出（`NurbsPath.001` ..
+  `NurbsPath.004`，app 每台相机按名字取地面对应面）。
 
 `bowl_include_vehicle`（N 面板的 **Include Vehicle** 勾选，默认关）打开后，导出还会带上车辆：
-`AVM_Car` 在导出期间临时改名为 **`vehicle`**，所以 GLB 里除四个地面面外多一个 `vehicle` 节点
+`AVM_Car` 在导出期间临时改名为 **`vehicle`**，所以 GLB 里除地面节点外多一个 `vehicle` 节点
 （app 按 `vehicle` 这个名字找车），导出结束立即恢复为 `AVM_Car`，场景对象命名不受影响。
 
 ---
@@ -664,7 +672,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | `opencv_cam.avm_clear_camera` | **清除单相机检测**：清空 `points_2d`、删除标注图与缓存渲染图（相机条目上的 `[X]`） |
 | `opencv_cam.avm_analyze_coverage` | **覆盖评估**（§16）：算 4 台相机的地面足迹、并集/重叠/盲区、标定块可见性矩阵；生成贴地覆盖曲线 |
 | `opencv_cam.avm_export_falcon` | **Export Falcon**（§16.8）：复用/渲染 4 张原始图 + 4 张角点标注图 + 完整 `vehicle_avm.json`，**打包为 zip** |
-| `opencv_cam.avm_export_bowl` | **Export Bowl**（§7，N 面板）：把碗形地面导出成 `.glb`；加载真实模型时按源模型的 `NurbsPath.001`..`004` 四个面逐节点导出，`bowl_include_vehicle` 打开时连带 `AVM_Car`，节点名写成 `vehicle` |
+| `opencv_cam.avm_export_bowl` | **Export Bowl**（§7，N 面板）：把碗形地面导出成 `.glb`；`bowl_quadrants`（默认开）出去重后的 4 个象限节点 `NurbsPath.001`..`NurbsPath.004`，关掉则按源模型的 `NurbsPath.001`..`004` 四个面逐节点导出；`bowl_include_vehicle` 打开时连带 `AVM_Car`（节点名写成 `vehicle`） |
 
 ---
 
@@ -891,8 +899,9 @@ Blender 侧**不做解算、不做检测**（§1.1）。因此本方案只保留
 
 ### 15.4 导入时需要忽略的字段
 
-`model_scene` / `bev_bound` / `orbit` / `mask_overlay` / `steering_line` / `glb_file` / `ibl_file` /
-`shader_path` 都是 filament 渲染侧的参数，Blender 场景不使用，导入时应**跳过而不报错**。
+`scenes` / `bev_bound` / `orbit` / `mask_overlay` / `steering_line` /
+`glb_file` / `ibl_file` / `shader_path` 都是 filament 渲染侧的参数，Blender 场景不使用，
+导入时应**跳过而不报错**。
 
 ### 15.5 可复用的后续能力（P7，可选）
 
@@ -1008,7 +1017,8 @@ P = C + t · d_world
   `orbit_pitchs` / `orbit_yaw` / `orbit_radius` / `orbit_mouse_sens` / `orbit_fov_y` /
   `orbit_near` / `orbit_far` / `steering_line{...}`；
 - 每台相机：`name` / `points_2d` / `points_3d` / `K` / `D` / `input_size` /
-  `model_scene`（`NurbsPath.001..004`）/ `bev_bound`（`±15 m` 的半个 bowl）/
+  `scenes`（该相机投影到的 GLB 节点：象限布局各 2 个、legacy 各 1 个，009 K7）/
+  `bev_bound`（`±15 m` 的半个 bowl）/
   `orbit` / `enable`（有 `points_2d` 才 true）/ `ba_opt`（仅 left/right true）；
 - 资源 / 轨道 / 遮罩 / 转向线默认值取自 app 的 `res/values/bowl.xml` / `steering.xml`；
 - `glb_file` 指向的正是 AVM Scene 默认用作地面的那张碗形 mesh（`models/unlit_round_bowls.glb`），

@@ -8,7 +8,7 @@ Blender 视觉算法仿真插件集合：用 Blender/Cycles 生成**与真实相
 
 | 插件 | 状态 | 说明 |
 | --- | --- | --- |
-| [`opencv_camera`](addons/opencv_camera) | 0.19.0 可用 | Cycles 自定义相机，支持 OpenCV 内参（fx/fy/cx/cy）与畸变（**fisheye / Brown-Conrady / rational**），可导入导出标定文件、设置相机外参（Location + Euler）、渲染自检；**算法场景**（`Camera Scene`、`AVM Scene`、`Drive Scene`、`Road Scene`）统一在 `bl/scenes/` 注册，见 [`docs/avm-scene.md`](docs/avm-scene.md) |
+| [`opencv_camera`](addons/opencv_camera) | 0.22.0 可用 | Cycles 自定义相机，支持 OpenCV 内参（fx/fy/cx/cy）与畸变（**fisheye / Brown-Conrady / rational**），可导入导出标定文件、设置相机外参（Location + Euler）、渲染自检；**算法场景**（`Camera Scene`、`AVM Scene`、`Drive Scene`、`Road Scene`）统一在 `bl/scenes/` 注册，见 [`docs/avm-scene.md`](docs/avm-scene.md) |
 | `camera_rig` | 规划中 | 多相机刚体（外参）、同步渲染、标定数据集导出 |
 | `sensor_sim` | 规划中 | IMU / GNSS / LiDAR 轨迹与噪声仿真 |
 | `dataset_export` | 规划中 | 渲染 + 真值导出（位姿/内参/深度/分割），KITTI / COLMAP / EuRoC 布局 |
@@ -230,7 +230,8 @@ Object Data Properties
   正是 app 的投影面），让仿真的 4 路相机看到与真机一致的边界/遮挡；
   `Bowl Radius` / `Rim Height` 可分别调**半径**与**碗边高度**（底面仍平放在 z=0）；
   `Real Ground Mesh` 可关掉切回平面，`Model` 可换自定义 `.glb/.gltf/.fbx/.obj`
-  （缺失/导入失败自动回退平面）；N 面板的 `[Export Bowl]` 把当前碗形 mesh 单独导出成 `.glb`。
+  （缺失/导入失败自动回退平面）；N 面板的 `[Export Bowl]` 把当前碗形 mesh 单独导出成 `.glb`
+  （默认出去重后的 4 象限节点，009 K7；关掉 `Quadrant Bowl` 才是旧的四个半平面）。
 - **默认视角**：建场景时视口自动摆到标准 **3/4 视角**（方位 135°、仰角 30°，看车头 + 右侧 +
   四块 + 四台相机）并自动取景，两个面板里的 `Frame View` 可随时复位（拖滑杆重建时不抢镜头）。
 - **本场景不做位姿解算**：只摆放、渲染、导出；PnP 只在离线脚本里跑一次用来产出默认预设。

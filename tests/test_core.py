@@ -405,7 +405,8 @@ def test_avm_falcon_config():
 
     check("falcon top-level keys",
           list(config) == ["comment", "name", "glb_file", "ibl_file",
-                           "shader_path", "vehicle_model", "mask_overlay",
+                           "shader_path", "vehicle_model",
+                           "mask_overlay",
                            "cameras", "bev_coord", "orbit_pitchs", "orbit_yaw",
                            "orbit_radius", "orbit_mouse_sens", "orbit_fov_y",
                            "orbit_near", "orbit_far", "steering_line"],
@@ -426,16 +427,21 @@ def test_avm_falcon_config():
     front = streams[0]
     check("falcon stream keys",
           list(front) == ["name", "points_2d", "points_3d", "K", "D", "input_size",
-                          "model_scene", "bev_bound", "orbit", "enable", "ba_opt"],
+                          "scenes", "bev_bound", "orbit", "enable", "ba_opt"],
           str(list(front)))
     check("falcon stream payload",
           len(front["points_2d"]) == 8 and len(front["points_3d"]) == 8
           and front["input_size"] == [1280, 960] and front["enable"] is True
-          and front["model_scene"] == "NurbsPath.001"
+          and front["scenes"] == ["NurbsPath.001", "NurbsPath.002"]
           and front["bev_bound"] == [-15.0, 15.0, 0.0, 15.0]
           and front["ba_opt"] is False)
     check("falcon points_3d match the contract",
           front["points_3d"] == avm_layout.points("front", field))
+    check("falcon config lists each camera's scenes (009 K7)",
+          [camera["scenes"] for camera in config["cameras"]] ==
+          [["NurbsPath.001", "NurbsPath.002"], ["NurbsPath.003", "NurbsPath.004"],
+           ["NurbsPath.001", "NurbsPath.004"], ["NurbsPath.002", "NurbsPath.003"]],
+          str([camera["scenes"] for camera in config["cameras"]]))
     fx, fy, cx, cy = cameras[0]["K"]
     check("falcon K is the 3x3 matrix",
           front["K"] == [[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]])

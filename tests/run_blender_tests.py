@@ -38,6 +38,21 @@ FAILURES = []
 TMPDL = tempfile.mkdtemp(prefix="opencv_cam_blender_test_")
 
 
+def _glb_json(path):
+    """The JSON chunk of a GLB file (the node/mesh/accessor document)."""
+    import struct
+    blob = open(path, "rb").read()
+    _, _, size = struct.unpack_from("<III", blob, 0)
+    offset, document = 12, None
+    while offset < size:
+        chunk_len, = struct.unpack_from("<I", blob, offset)
+        tag = blob[offset + 4:offset + 8]
+        if tag == b"JSON":
+            document = json.loads(blob[offset + 8:offset + 8 + chunk_len])
+        offset += 8 + chunk_len
+    return document
+
+
 def check(name, condition, detail=""):
     status = "PASS" if condition else "FAIL"
     print(f"[{status}] {name}" + (f" - {detail}" if detail else ""))
@@ -1372,7 +1387,7 @@ def test_avm_export_falcon():
     check("falcon config has the app assets",
           config["name"] == "filament_avm" and "steering_line" in config
           and "mask_overlay" in config and "bev_coord" in config
-          and len(config["steering_line"]) == 14)
+          and len(config["steering_line"]) == 13)
 
     # a second export reuses the cached renders (no re-detect needed)
     second = os.path.join(tmp, "again.zip")
@@ -1562,18 +1577,12 @@ def test_avm_export_bowl():
     check("bowl glb written", os.path.exists(path) and os.path.getsize(path) > 1000,
           f"{os.path.getsize(path) if os.path.exists(path) else 0} bytes")
 
-    data = open(path, "rb").read()
-    _, _, length = struct.unpack_from("<III", data, 0)
-    offset, document = 12, None
-    while offset < length:
-        chunk_len, = struct.unpack_from("<I", data, offset)
-        tag = data[offset + 4:offset + 8]
-        if tag == b"JSON":
-            document = json.loads(data[offset + 8:offset + 8 + chunk_len])
-        offset += 8 + chunk_len
+    document = _glb_json(path)
     check("bowl glb parses", document is not None)
     names = [node.get("name") for node in document.get("nodes", [])]
-    check("bowl glb has the four ground faces",
+    # the default export is the de-duplicated QUADRANT bowl (009 K7): one mesh per
+    # camera pair; the legacy half-face layout is the opt-out below
+    check("bowl glb has the four quadrant faces",
           sorted(names) == ["NurbsPath.001", "NurbsPath.002",
                             "NurbsPath.003", "NurbsPath.004"], str(names))
     positions = [document["accessors"][primitive["attributes"]["POSITION"]]
@@ -1585,6 +1594,57 @@ def test_avm_export_bowl():
           abs(low[0] + 8.0) < 1e-3 and abs(high[0] - 8.0) < 1e-3
           and abs(low[1]) < 1e-3 and abs(high[1] - 3.0) < 1e-3,
           f"x[{low[0]:.2f},{high[0]:.2f}] y[{low[1]:.2f},{high[1]:.2f}]")
+    quartered = all(abs(a["min"][axis]) < 1e-3 or abs(a["max"][axis]) < 1e-3
+                    for a in positions for axis in (0, 2))
+    check("every quadrant is clipped at both camera axes", quartered,
+          str([(round(a["min"][0], 3), round(a["max"][0], 3)) for a in positions]))
+    # ... and on the SIDE its name claims: glTF is Y-up, so x = ground X and
+    # z = -ground Y (front = +Y = -z).  A swapped clip would still touch both axes,
+    # so the sign is what this asserts.
+    negative = {"NurbsPath.001": (True, True), "NurbsPath.002": (False, True),
+                "NurbsPath.003": (False, False), "NurbsPath.004": (True, False)}
+    sided = True
+    for node in document.get("nodes", []):
+        if "mesh" not in node or node.get("name") not in negative:
+            continue
+        accessor = document["accessors"][
+            document["meshes"][node["mesh"]]["primitives"][0]["attributes"]["POSITION"]]
+        negative_x, negative_z = negative[node["name"]]
+        sided = sided and (accessor["max"][0] < 1e-3 if negative_x
+                           else accessor["min"][0] > -1e-3) \
+                      and (accessor["max"][2] < 1e-3 if negative_z
+                           else accessor["min"][2] > -1e-3)
+    check("each quadrant covers the side its name says", sided)
+    quadrant_tris = sum(document["accessors"][primitive["indices"]]["count"] // 3
+                        for mesh in document["meshes"] for primitive in mesh["primitives"])
+
+    # opt-out: the legacy layout -- the source model's faces, exported as-is
+    settings.bowl_quadrants = False
+    source_names = [node.get("name")
+                    for node in _glb_json(paths.ground_model_file()).get("nodes", [])]
+    legacy_path = os.path.join(TMPDL, "bowl_legacy.glb")
+    check("export bowl legacy operator",
+          bpy.ops.opencv_cam.avm_export_bowl(filepath=legacy_path) == {"FINISHED"})
+    legacy_document = _glb_json(legacy_path)
+    legacy_names = [node.get("name") for node in legacy_document.get("nodes", [])]
+    check("legacy bowl keeps the source node names",
+          sorted(legacy_names) == sorted(source_names),
+          f"{legacy_names} vs {source_names}")
+    legacy_tris = sum(legacy_document["accessors"][primitive["indices"]]["count"] // 3
+                      for mesh in legacy_document["meshes"]
+                      for primitive in mesh["primitives"])
+    if legacy_tris > quadrant_tris * 1.5:
+        # a legacy-shaped source model (four OVERLAPPING half faces): the quadrants
+        # drop the duplicated halves, a bit above half because the straddling
+        # triangles are split (and triangulated) at the axes
+        check("the quadrant bowl draws about half the triangles",
+              0.45 * legacy_tris <= quadrant_tris <= 0.6 * legacy_tris,
+              f"{quadrant_tris} vs {legacy_tris}")
+    else:
+        # the source already is the de-duplicated layout: the export passes through
+        check("the quadrant bowl is not bigger than its source",
+              quadrant_tris <= legacy_tris, f"{quadrant_tris} vs {legacy_tris}")
+    settings.bowl_quadrants = True
 
     # with the vehicle included, the car is exported as a node named "vehicle"
     # and the scene object keeps its AVM_Car name
@@ -1595,19 +1655,66 @@ def test_avm_export_bowl():
     check("the scene car keeps its name",
           bpy.data.objects.get("AVM_Car") is not None
           and bpy.data.objects.get("vehicle") is None)
-    vehicle_data = open(with_vehicle, "rb").read()
-    _, _, vehicle_length = struct.unpack_from("<III", vehicle_data, 0)
-    offset, vehicle_document = 12, None
-    while offset < vehicle_length:
-        chunk_len, = struct.unpack_from("<I", vehicle_data, offset)
-        tag = vehicle_data[offset + 4:offset + 8]
-        if tag == b"JSON":
-            vehicle_document = json.loads(vehicle_data[offset + 8:offset + 8 + chunk_len])
-        offset += 8 + chunk_len
+    vehicle_document = _glb_json(with_vehicle)
     vehicle_names = [node.get("name") for node in vehicle_document.get("nodes", [])]
-    check("bowl glb with vehicle has the four ground faces and a 'vehicle' node",
+    check("bowl glb with vehicle has the four quadrants and a 'vehicle' node",
           set(vehicle_names) == {"NurbsPath.001", "NurbsPath.002", "NurbsPath.003",
                                  "NurbsPath.004", "vehicle"}, str(vehicle_names))
+
+
+def test_bowl_quadrant_split():
+    """split_ground_quadrants clips a legacy half-face model and de-duplicates it."""
+    from opencv_camera.bl.scenes.avm_scene import builder
+
+    setup_scene(resolution=64, samples=1)
+    clear_scene()
+    # legacy-shaped stand-in: the two DISJOINT halves (front/back) plus the two
+    # quadrant copies (left/right) that make every point appear twice -- four flat
+    # quads, so the assertions are about the clipping / de-duplication logic
+    planes = {
+        "front": (-1.0, 0.0, 1.0, 1.0),
+        "back": (-1.0, -1.0, 1.0, 0.0),
+        "left": (-1.0, -1.0, 0.0, 1.0),
+        "right": (0.0, -1.0, 1.0, 1.0),
+    }
+    sources = []
+    for name, (x0, y0, x1, y1) in planes.items():
+        mesh = bpy.data.meshes.new(name)
+        mesh.from_pydata([(x0, y0, 0.0), (x1, y0, 0.0), (x1, y1, 0.0), (x0, y1, 0.0)],
+                         [], [(0, 1, 2, 3)])
+        mesh.update()
+        obj = bpy.data.objects.new(name, mesh)
+        bpy.context.collection.objects.link(obj)
+        sources.append(obj)
+
+    quadrants = builder.split_ground_quadrants(list(sources))
+    check("split returns the four quadrants", len(quadrants) == 4,
+          str([obj.name for obj in quadrants]))
+    check("split names them with the index scheme",
+          [obj.name for obj in quadrants] == list(builder.QUADRANT_NODES),
+          str([obj.name for obj in quadrants]))
+    clipped = True
+    negative = {name: (not positive_x, not positive_y)
+                for name, (positive_x, positive_y) in builder.QUADRANT_SIDES.items()}
+    for obj in quadrants:
+        xs = [vertex.co.x for vertex in obj.data.vertices]
+        ys = [vertex.co.y for vertex in obj.data.vertices]
+        negative_x, negative_y = negative[obj.name]
+        clipped = clipped and (max(xs) < 1e-6 if negative_x else min(xs) > -1e-6) \
+                          and (max(ys) < 1e-6 if negative_y else min(ys) > -1e-6)
+    check("each quadrant covers the side its name says", clipped,
+          str([(o.name, round(min(v.co.x for v in o.data.vertices), 2),
+                round(min(v.co.y for v in o.data.vertices), 2)) for o in quadrants]))
+    quadrant_area = sum(p.area for obj in quadrants for p in obj.data.polygons)
+    source_area = sum(p.area for obj in sources for p in obj.data.polygons)
+    check("the quadrants cover the surface once (half the legacy area)",
+          abs(quadrant_area * 2.0 - source_area) < 1e-6,
+          f"{quadrant_area:.2f} vs {source_area:.2f}")
+
+    for obj in list(sources) + list(quadrants):
+        if obj.name in bpy.data.objects:
+            bpy.data.objects.remove(obj, do_unlink=True)
+    clear_scene()
 
 
 def test_drive_scene():
@@ -3260,6 +3367,7 @@ def main():
         test_avm_visibility_and_logo,
         test_avm_ground_model,
         test_avm_export_bowl,
+        test_bowl_quadrant_split,
         test_drive_scene,
         test_drive_matches_avm_defaults,
         test_drive_sync_from_avm,

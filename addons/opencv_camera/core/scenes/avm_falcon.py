@@ -20,8 +20,8 @@ from . import vehicle
 
 __all__ = [
     "ASSETS", "BOWL_RADIUS", "MASK_PADDING", "MASK_SCALE",
-    "MODEL_SCENE", "BA_OPT", "ORBIT", "STEERING",
-    "bev_bound", "build_config", "dumps",
+    "MODEL_SCENE", "QUADRANTS", "BA_OPT", "ORBIT", "STEERING",
+    "bev_bound", "scenes", "build_config", "dumps",
 ]
 
 #: ``BowlScenePerfs.Assets`` defaults
@@ -41,13 +41,41 @@ BOWL_RADIUS = 15.0
 MASK_PADDING = 0.2
 MASK_SCALE = 20
 
-#: ``filament_bowl_scene`` (one per camera, in the Camera enum order)
+#: ``filament_bowl_scene`` (one per camera, in the Camera enum order).  The
+#: legacy half-face layout: kept so a config stays usable with the old bowl, and
+#: ignored by the renderer whenever the asset ships the quadrant layout below.
 MODEL_SCENE = {
     "front": "NurbsPath.001",
     "back": "NurbsPath.002",
     "left": "NurbsPath.003",
     "right": "NurbsPath.004",
 }
+
+#: ``(node, (camera_a, camera_b))`` -- the de-duplicated bowl (009 K7): one mesh
+#: per camera PAIR, which the app draws once with both of its cameras.  Emitted as
+#: each camera's ``scenes`` list; the nodes come from the AVM scene's Export Bowl
+#: (``bowl_quadrants`` on, the default).  The names are the neutral index scheme
+#: (clockwise from the ground's top-left), so this table -- not the names -- is
+#: what says which cameras a node carries.
+QUADRANTS = (
+    ("NurbsPath.001", ("front", "left")),    # top-left
+    ("NurbsPath.002", ("front", "right")),   # top-right
+    ("NurbsPath.003", ("back", "right")),    # bottom-right
+    ("NurbsPath.004", ("back", "left")),     # bottom-left
+)
+
+
+def scenes(camera: str, quadrants: bool = True) -> List[str]:
+    """The GLB nodes @p camera is projected onto (009 K7).
+
+    The de-duplicated bowl is one node per camera PAIR, so a camera lists the two
+    quadrants it takes part in; the legacy four-half-face bowl lists the single
+    face that camera owns.  The renderer groups these lists, so a node named by
+    two cameras is drawn once with both of them.
+    """
+    if not quadrants:
+        return [MODEL_SCENE.get(camera, "")]
+    return [node for node, cameras in QUADRANTS if camera in cameras]
 
 #: ``BowlScenePerfs.ba`` - only the side cameras refine cy
 BA_OPT = {"front": False, "back": False, "left": True, "right": True}
@@ -110,7 +138,7 @@ def _stream(field: avm_layout.FieldSpec, record: Dict,
         "K": [[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]],
         "D": [float(value) for value in record["D"]],
         "input_size": [int(input_size[0]), int(input_size[1])],
-        "model_scene": MODEL_SCENE.get(name, ""),
+        "scenes": scenes(name),
         "bev_bound": bev_bound(name),
         "orbit": [0.0, 0.0, 0.0],
         "enable": bool(points_2d),

@@ -326,6 +326,113 @@ def import_ground_objects(path: str, radius: float,
     return meshes
 
 
+#: the de-duplicated bowl the Falcon app consumes (009 K7): one mesh per
+#: QUADRANT, which the app draws ONCE with both of the cameras whose half-planes
+#: meet there (instead of the legacy layout, where four half faces overlapped and
+#: every ground point was drawn twice).
+#:
+#: The names are a plain index, CLOCKWISE from the ground's top-left corner seen
+#: from above (forward = up): direction words would bake the current camera
+#: layout into the asset, and a later model need not keep the same split.  Which
+#: cameras a node carries lives in the config (each camera's ``scenes``), never in
+#: its name.
+QUADRANT_NODES = (
+    "NurbsPath.001",  # top-left
+    "NurbsPath.002",  # top-right
+    "NurbsPath.003",  # bottom-right
+    "NurbsPath.004",  # bottom-left
+)
+#: quadrant node -> (positive X?, positive Y?) in the ground plane (X right,
+#: Y forward), i.e. the pair of camera half-planes it is the intersection of:
+#: front = +Y, back = -Y, right = +X, left = -X (matching ``bev_bound``).
+QUADRANT_SIDES = {
+    "NurbsPath.001": (False, True),
+    "NurbsPath.002": (True, True),
+    "NurbsPath.003": (True, False),
+    "NurbsPath.004": (False, False),
+}
+#: tolerance of the "does this face reach the axis" tests, metres
+QUADRANT_EPS = 1e-4
+
+
+def _mesh_bounds(obj: bpy.types.Object):
+    """(min_x, max_x, min_y, max_y) of the object's own vertices (ground plane)."""
+    verts = [vertex.co for vertex in obj.data.vertices]
+    return (min(v.x for v in verts), max(v.x for v in verts),
+            min(v.y for v in verts), max(v.y for v in verts))
+
+
+def _covers_quadrant(bounds, positive_x: bool, positive_y: bool) -> bool:
+    """Does the face with @p bounds reach into the requested quadrant?"""
+    min_x, max_x, min_y, max_y = bounds
+    if min_x > QUADRANT_EPS or max_x < -QUADRANT_EPS:
+        return False
+    if min_y > QUADRANT_EPS or max_y < -QUADRANT_EPS:
+        return False
+    return (max_x > QUADRANT_EPS if positive_x else min_x < -QUADRANT_EPS) and \
+           (max_y > QUADRANT_EPS if positive_y else min_y < -QUADRANT_EPS)
+
+
+def _keep_half(bm, axis: int, positive: bool) -> None:
+    """Bisect @p bm at the origin plane of @p axis and keep the @p positive side."""
+    plane_no = (1.0, 0.0, 0.0) if axis == 0 else (0.0, 1.0, 0.0)
+    bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:],
+                           plane_co=(0.0, 0.0, 0.0), plane_no=plane_no)
+    keep = bool(positive)
+    # drop every face that is NOT on the requested side
+    drop = [face for face in bm.faces
+            if (face.calc_center_median()[axis] > 0.0) != keep]
+    bmesh.ops.delete(bm, geom=drop, context="FACES")
+    loose = [vertex for vertex in bm.verts if not vertex.link_faces]
+    if loose:
+        bmesh.ops.delete(bm, geom=loose, context="VERTS")
+
+
+def split_ground_quadrants(meshes: List[bpy.types.Object]) -> List[bpy.types.Object]:
+    """Build the four quadrant nodes out of the imported ground faces.
+
+    A quadrant is the intersection of two camera half-planes, so any source face
+    that covers it can be clipped to it; the source model is the four overlapping
+    half faces.  Sources are left in place -- the caller owns every temporary
+    object and removes them once the export is done.  An empty list means the
+    faces do not cover a quadrant (unexpected model).
+    """
+    quadrants: List[bpy.types.Object] = []
+    # the source faces are temporary and are removed by the caller once the export
+    # is done, but their OBJECT NAMES must not compete with the quadrant names: a
+    # model that already ships the quadrant layout would otherwise push Blender
+    # into `bowl_front_left.001` for the copies, and the app looks nodes up by name
+    for index, obj in enumerate(meshes):
+        obj.name = f"_bowl_source_{index:02d}"
+    bounds = {obj.name: _mesh_bounds(obj) for obj in meshes}
+    for name in QUADRANT_NODES:
+        positive_x, positive_y = QUADRANT_SIDES[name]
+        source = next((obj for obj in meshes
+                       if _covers_quadrant(bounds[obj.name], positive_x, positive_y)),
+                      None)
+        if source is None:
+            for obj in quadrants:
+                bpy.data.objects.remove(obj, do_unlink=True)
+            return []
+        min_x, max_x, min_y, max_y = bounds[source.name]
+        quadrant = source.copy()
+        quadrant.data = source.data.copy()
+        quadrant.name = name
+        quadrant.data.name = name
+        bpy.context.collection.objects.link(quadrant)
+        bm = bmesh.new()
+        bm.from_mesh(quadrant.data)
+        if min_x < -QUADRANT_EPS and max_x > QUADRANT_EPS:
+            _keep_half(bm, 0, positive_x)
+        if min_y < -QUADRANT_EPS and max_y > QUADRANT_EPS:
+            _keep_half(bm, 1, positive_y)
+        bm.to_mesh(quadrant.data)
+        bm.free()
+        quadrant.data.update()
+        quadrants.append(quadrant)
+    return quadrants
+
+
 #: object name prefix -> the setting that shows/hides it (one place to rule them
 #: all: the panels only flip the flags, :func:`apply_visibility` does the work)
 VISIBILITY = (

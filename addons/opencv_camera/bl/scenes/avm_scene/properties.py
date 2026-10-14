@@ -230,6 +230,11 @@ class AVMSceneSettings(bpy.types.PropertyGroup):
         name="Include Vehicle", default=False,
         description="Also export the vehicle in Export Bowl; the GLB node is named "
                     "'vehicle' (the scene object stays AVM_Car)")
+    bowl_quadrants: BoolProperty(
+        name="Quadrant Bowl", default=True,
+        description="Export the de-duplicated bowl: one mesh per camera quadrant "
+                    "(bowl_front_left .. bowl_back_right, two cameras each) instead "
+                    "of the source model's four overlapping half faces")
 
     # -- state --------------------------------------------------------------
     root: PointerProperty(
