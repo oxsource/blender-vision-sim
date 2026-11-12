@@ -45,6 +45,7 @@ def _car(layout, settings) -> None:
     column = layout.column(align=True)
     column.use_property_split = True
     column.label(text="Car")
+    column.prop(settings, "car_style")
     column.prop(settings, "car_follow_core")
     if not settings.car_follow_core:
         column.prop(settings, "car_length")
@@ -227,6 +228,8 @@ class OPENCV_CAM_PT_avm_scene_view3d(_AVMPanel, bpy.types.Panel):
                      text="Export Falcon", icon="EXPORT")
         row.operator("opencv_cam.avm_export_bowl",
                      text="Export Bowl", icon="MESH_DATA")
+        row.operator("opencv_cam.avm_export_vehicle",
+                     text="Export Vehicle", icon="EXPORT")
         layout.prop(context.scene.avm_scene, "bowl_include_vehicle")
         layout.prop(context.scene.avm_scene, "bowl_quadrants")
 

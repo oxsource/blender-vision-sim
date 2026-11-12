@@ -834,8 +834,12 @@ def test_avm_scene_builder():
             "AVM_Cam_Back", "AVM_Cam_Front", "AVM_Cam_Left", "AVM_Cam_Right",
             "AVM_Car", "AVM_Ground", "AVM_Root", "AVM_Sun"]
     check("collection has the core objects", set(core) <= set(names), str(names))
-    check("every object is namespaced", all(name.startswith("AVM_") for name in names),
-          str(names))
+    car_names = {bpy.data.objects["AVM_Car"].name} | {
+        obj.name for obj in bpy.data.objects["AVM_Car"].children_recursive}
+    check("every object outside the vehicle is namespaced",
+          all(name.startswith("AVM_") for name in names if name not in car_names),
+          str([name for name in names if name not in car_names
+               and not name.startswith("AVM_")]))
     props = [name for name in names if name.startswith("AVM_Prop_")]
     check("props are created (3 pedestrians + 4 crates + 1 cart)",
           len(props) == 8, str(props))
@@ -1425,8 +1429,12 @@ def test_avm_visibility_and_logo():
     settings = scene.avm_scene
 
     def hidden(prefix):
-        return [o.name for o in scene.objects
-                if o.name.startswith(prefix) and not o.hide_render]
+        if prefix == "AVM_Car":
+            car = bpy.data.objects["AVM_Car"]
+            objects = [car] + list(car.children_recursive)
+        else:
+            objects = [o for o in scene.objects if o.name.startswith(prefix)]
+        return [o.name for o in objects if not o.hide_render]
 
     for prefix, flag in (("AVM_Ground", "show_ground"), ("AVM_Car", "show_car"),
                          ("AVM_Block_", "show_blocks"), ("AVM_Cam_", "show_cameras"),
@@ -1558,6 +1566,198 @@ def test_avm_ground_model():
     settings.ground_model = ""
 
 
+def test_avm_vehicle_hierarchy():
+    """The car is the M2 hierarchy: vehicle -> pivot_* -> part_*, one slot each."""
+    import sys
+    from opencv_camera.core.scenes import vehicle
+    from opencv_camera.bl.scenes.avm_scene import vehicle_mesh
+
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import check_vehicle_glb
+
+    setup_scene(resolution=64, samples=1)
+    clear_scene()
+    setup_scene(resolution=64, samples=1)
+    check("add AVM scene", bpy.ops.opencv_cam.avm_add_scene() == {"FINISHED"})
+
+    car = bpy.data.objects["AVM_Car"]
+    check("the car root is a container empty", car.type == "EMPTY")
+    cards = vehicle.parts()
+    parts = [obj for obj in car.children_recursive if obj.name.startswith("part_")]
+    pivots = [obj for obj in car.children_recursive if obj.name.startswith("pivot_")]
+    check("the default style has 18 parts", len(parts) == 18, str(len(parts)))
+    check("the default style has 12 pivots", len(pivots) == 12, str(len(pivots)))
+    check("part names match the contract",
+          {obj.name for obj in parts} == {card["node"] for card in cards})
+    check("pivot names match the contract",
+          {obj.name for obj in pivots}
+          == {card["pivot"] for card in cards if card["pivot"]})
+
+    worst = 0.0
+    bad_parents = []
+    bad_materials = []
+    bad_uv = []
+    for card in cards:
+        obj = bpy.data.objects.get(card["node"])
+        if obj is None:
+            bad_parents.append(f"{card['node']} missing")
+            continue
+        if obj.parent is None \
+                or obj.parent.name != (car.name if card["parent"] == "vehicle"
+                                       else card["parent"]):
+            bad_parents.append(f"{obj.name}->{obj.parent.name if obj.parent else None}")
+        names = {material.name for material in obj.data.materials}
+        if names != set(vehicle_mesh.material_names(card["id"])):
+            bad_materials.append(f"{obj.name}:{sorted(names)}")
+        if not obj.data.uv_layers:
+            bad_uv.append(obj.name)
+        pivot_name = card["pivot"]
+        if pivot_name:
+            pivot = bpy.data.objects[pivot_name]
+            expected = vehicle.to_blender(card["motion"]["pivot_pos"])
+            worst = max(worst, max(abs(a - b) for a, b in zip(pivot.location, expected)))
+    check("parts hang off their declared parents", not bad_parents, str(bad_parents))
+    check("every part has exactly its contract material slots",
+          not bad_materials, str(bad_materials))
+    check("every part has a UV layer", not bad_uv, str(bad_uv))
+    check("pivots sit at the manifest positions", worst <= 1e-4, f"{worst:.2e}")
+
+    body_material = bpy.data.materials.get("paint_body")
+    check("vehicle materials are unlit (Background node)",
+          body_material is not None and any(
+              node.type == "BACKGROUND" for node in body_material.node_tree.nodes))
+
+    # Export Vehicle writes the GLB and the single manifest, and the pure
+    # Python checker accepts both (Q9 / M3 first gate).
+    path = os.path.join(TMPDL, "vehicle_contract.glb")
+    check("export vehicle operator",
+          bpy.ops.opencv_cam.avm_export_vehicle(filepath=path) == {"FINISHED"})
+    manifest = os.path.join(TMPDL, "vehicle_model.json")
+    errors = check_vehicle_glb.check(path, manifest)
+    check("vehicle GLB matches the M2 contract", not errors, "; ".join(errors[:5]))
+
+    # V10: the same scene exports byte-identical GLBs (no timestamps / random ids)
+    import hashlib
+    second = os.path.join(TMPDL, "vehicle_contract_2.glb")
+    check("second vehicle export",
+          bpy.ops.opencv_cam.avm_export_vehicle(filepath=second) == {"FINISHED"})
+    first_hash = hashlib.sha256(open(path, "rb").read()).hexdigest()
+    second_hash = hashlib.sha256(open(second, "rb").read()).hexdigest()
+    check("the vehicle export is deterministic (V10)",
+          first_hash == second_hash, f"{first_hash[:12]} vs {second_hash[:12]}")
+
+    before = {obj.name: obj for obj in parts}
+    check("rebuild", bpy.ops.opencv_cam.avm_rebuild() == {"FINISHED"})
+    after = {obj.name: obj for obj in bpy.data.objects
+             if obj.name.startswith("part_") and obj.parent is not None}
+    check("rebuild updates the hierarchy in place",
+          set(before) == set(after)
+          and all(before[name] == after[name] for name in before),
+          f"{sorted(set(before) ^ set(after))}")
+
+    settings = bpy.context.scene.avm_scene
+    settings.car_style = vehicle.STYLE_3ROW
+    check("switch to the 3-row style", bpy.ops.opencv_cam.avm_rebuild() == {"FINISHED"})
+    parts3 = [obj for obj in car.children_recursive if obj.name.startswith("part_")]
+    pivots3 = [obj for obj in car.children_recursive if obj.name.startswith("pivot_")]
+    check("the 3-row style builds 20 parts / 14 pivots",
+          len(parts3) == 20 and len(pivots3) == 14,
+          f"{len(parts3)} parts / {len(pivots3)} pivots")
+    check("the 3-row style adds both third-row doors",
+          {"part_door_r3l", "part_door_r3r"} <= {obj.name for obj in parts3})
+    path3 = os.path.join(TMPDL, "vehicle_3row.glb")
+    check("export the 3-row vehicle",
+          bpy.ops.opencv_cam.avm_export_vehicle(filepath=path3) == {"FINISHED"})
+    errors = check_vehicle_glb.check(path3, manifest)
+    check("the 3-row GLB matches the contract", not errors, "; ".join(errors[:5]))
+    settings.car_style = vehicle.STYLE_2ROW
+    bpy.ops.opencv_cam.avm_rebuild()
+
+
+def test_avm_vehicle_motion():
+    """The manifest's pivot + axis + direction really move the parts the right way."""
+    import math
+    from mathutils import Vector
+    from opencv_camera.core.scenes import vehicle
+
+    setup_scene(resolution=64, samples=1)
+    clear_scene()
+    setup_scene(resolution=64, samples=1)
+    check("add AVM scene", bpy.ops.opencv_cam.avm_add_scene() == {"FINISHED"})
+
+    def bounds(name):
+        bpy.context.view_layer.update()
+        obj = bpy.data.objects[name]
+        points = [obj.matrix_world @ vertex.co for vertex in obj.data.vertices]
+        return (Vector((min(p.x for p in points), min(p.y for p in points),
+                        min(p.z for p in points))),
+                Vector((max(p.x for p in points), max(p.y for p in points),
+                        max(p.z for p in points))))
+
+    cards = {card["id"]: card for card in vehicle.parts()}
+
+    def moved(part_id):
+        card = cards[part_id]
+        motion = card["motion"]
+        pivot = bpy.data.objects[card["pivot"]]
+        low, high = bounds(card["node"])
+        base_location = Vector(pivot.location)
+        base_rotation = tuple(pivot.rotation_euler)
+        if motion["form"] == "translate":
+            axis = Vector(vehicle.to_blender(motion["axis"]))
+            pivot.location = base_location + axis * motion["travel"] * motion["direction"]
+        else:
+            axis = vehicle.to_blender(motion["axis"])
+            angle = math.radians(motion["travel"] * motion["direction"])
+            pivot.rotation_euler = (angle if abs(axis[0]) > 0.5 else 0.0,
+                                    angle if abs(axis[1]) > 0.5 else 0.0,
+                                    angle if abs(axis[2]) > 0.5 else 0.0)
+        opened = bounds(card["node"])
+        pivot.location = base_location
+        pivot.rotation_euler = base_rotation
+        bpy.context.view_layer.update()
+        return low, high, opened
+
+    low, high, opened = moved("door_r1l")
+    check("left front door opens outward", opened[0].x < low.x - 0.15,
+          f"{opened[0].x:.2f} vs {low.x:.2f}")
+    low, high, opened = moved("door_r1r")
+    check("right front door opens outward", opened[1].x > high.x + 0.15,
+          f"{opened[1].x:.2f} vs {high.x:.2f}")
+    low, high, opened = moved("door_r2l")
+    check("sliding door moves rearward", opened[0].y < low.y - 0.5,
+          f"{opened[0].y:.2f} vs {low.y:.2f}")
+    low, high, opened = moved("door_tail")
+    check("tailgate lifts its lower edge", opened[0].z > low.z + 0.15,
+          f"{opened[0].z:.2f} vs {low.z:.2f}")
+    # the tail lamps are children of the tailgate pivot: they must ride with it
+    pivot = bpy.data.objects[cards["door_tail"]["pivot"]]
+    base_rotation = tuple(pivot.rotation_euler)
+    lamp_low, _ = bounds("part_lamp_tail_l")
+    pivot.rotation_euler = (math.radians(-75.0), 0.0, 0.0)
+    bpy.context.view_layer.update()
+    lamp_opened, _ = bounds("part_lamp_tail_l")
+    pivot.rotation_euler = base_rotation
+    bpy.context.view_layer.update()
+    check("tail lamps ride on the tailgate",
+          lamp_opened.z > lamp_low.z + 0.10,
+          f"{lamp_opened.z:.2f} vs {lamp_low.z:.2f}")
+    body_low, body_high = bounds("part_body")
+    head_low, head_high = bounds("part_lamp_head_l")
+    check("head lamps are mounted on the front fascia",
+          head_low.y <= body_high.y + 0.02 and head_high.y >= body_high.y - 0.02,
+          f"lamp y {head_low.y:.2f}..{head_high.y:.2f} vs body {body_high.y:.2f}")
+    low, high, opened = moved("hood")
+    check("hood lifts its rear edge", opened[1].z > high.z + 0.05,
+          f"{opened[1].z:.2f} vs {high.z:.2f}")
+    low, high, opened = moved("mirror_l")
+    check("left mirror folds rearward", opened[0].y < low.y - 0.05,
+          f"{opened[0].y:.2f} vs {low.y:.2f}")
+    low, high, opened = moved("mirror_r")
+    check("right mirror folds rearward", opened[0].y < low.y - 0.05,
+          f"{opened[0].y:.2f} vs {low.y:.2f}")
+
+
 def test_avm_export_bowl():
     """Export Bowl writes the scaled ground mesh as a standalone GLB."""
     import struct
@@ -1646,8 +1846,9 @@ def test_avm_export_bowl():
               quadrant_tris <= legacy_tris, f"{quadrant_tris} vs {legacy_tris}")
     settings.bowl_quadrants = True
 
-    # with the vehicle included, the car is exported as a node named "vehicle"
-    # and the scene object keeps its AVM_Car name
+    # with the vehicle included, the car hierarchy is exported under a root
+    # node named "vehicle" and the scene object keeps its AVM_Car name
+    from opencv_camera.core.scenes import vehicle as vehicle_mod
     settings.bowl_include_vehicle = True
     with_vehicle = os.path.join(TMPDL, "bowl_vehicle.glb")
     check("export bowl with vehicle operator",
@@ -1657,9 +1858,26 @@ def test_avm_export_bowl():
           and bpy.data.objects.get("vehicle") is None)
     vehicle_document = _glb_json(with_vehicle)
     vehicle_names = [node.get("name") for node in vehicle_document.get("nodes", [])]
-    check("bowl glb with vehicle has the four quadrants and a 'vehicle' node",
-          set(vehicle_names) == {"NurbsPath.001", "NurbsPath.002", "NurbsPath.003",
-                                 "NurbsPath.004", "vehicle"}, str(vehicle_names))
+    cards = vehicle_mod.parts()
+    expected = ({"NurbsPath.001", "NurbsPath.002", "NurbsPath.003",
+                 "NurbsPath.004", "vehicle"}
+                | {card["node"] for card in cards}
+                | {card["pivot"] for card in cards if card["pivot"]})
+    check("bowl glb carries the bowl plus the whole vehicle hierarchy",
+          set(vehicle_names) == expected,
+          f"missing {sorted(expected - set(vehicle_names))}, "
+          f"extra {sorted(set(vehicle_names) - expected)}")
+    root = next(node for node in vehicle_document["nodes"]
+                if node.get("name") == "vehicle")
+    root_children = {vehicle_document["nodes"][index].get("name")
+                     for index in root.get("children", [])}
+    top_level = ({"part_body", "part_interior",
+                  "part_lamp_head_l", "part_lamp_head_r"}
+                 | {card["pivot"] for card in cards if card["pivot"]})
+    check("the vehicle root holds the static parts and every pivot",
+          root_children == top_level,
+          f"missing {sorted(top_level - root_children)}, "
+          f"extra {sorted(root_children - top_level)}")
 
 
 def test_bowl_quadrant_split():
@@ -2443,7 +2661,7 @@ def test_drive_matches_avm_defaults():
           bpy.ops.opencv_cam.avm_add_scene() == {"FINISHED"})
     avm = {key: bpy.data.objects[avm_cameras.object_name("AVM_Cam_", key)]
            for key in avm_cameras.CAMERAS}
-    avm_body = tuple(bpy.data.materials["AVM_Car_Mat"].diffuse_color)
+    avm_body = tuple(bpy.data.materials["paint_body"].diffuse_color)
 
     check("build the Drive scene for comparison",
           bpy.ops.opencv_cam.drive_add_scene() == {"FINISHED"})
@@ -3366,6 +3584,8 @@ def main():
         test_avm_export_falcon,
         test_avm_visibility_and_logo,
         test_avm_ground_model,
+        test_avm_vehicle_hierarchy,
+        test_avm_vehicle_motion,
         test_avm_export_bowl,
         test_bowl_quadrant_split,
         test_drive_scene,

@@ -24,7 +24,7 @@ from typing import Dict, List, Optional
 import bpy
 
 from ....core import calibration_io
-from ....core.scenes import avm_layout
+from ....core.scenes import avm_layout, vehicle
 from ... import apply as apply_mod
 from . import builder
 
@@ -178,6 +178,7 @@ def to_full(settings) -> Dict:
     data["avm"] = {
         "units": "m",
         "car_follow_core": bool(settings.car_follow_core),
+        "car_style": settings.car_style,
         "car_length": float(settings.car_length),
         "car_width": float(settings.car_width),
         "car_height": float(settings.car_height),
@@ -259,6 +260,10 @@ def _set_field(settings, field: avm_layout.FieldSpec) -> None:
 def _apply_avm(settings, avm: Dict) -> None:
     if "car_follow_core" in avm:
         settings.car_follow_core = bool(avm["car_follow_core"])
+    if "car_style" in avm:
+        style = str(avm["car_style"])
+        if style in (vehicle.STYLE_2ROW, vehicle.STYLE_3ROW):
+            settings.car_style = style
     for name in ("car_length", "car_width", "car_height", "car_clearance", "block_lift"):
         if name in avm:
             setattr(settings, name, float(avm[name]))

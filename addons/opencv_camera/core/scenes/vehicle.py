@@ -27,12 +27,16 @@ was built at this size is asserted against the mesh's own vertices in
 
 from __future__ import annotations
 
+import copy
 from typing import Dict, List, Optional
 
 __all__ = [
     "FRAME", "BODY_LENGTH_M", "BODY_WIDTH_M", "BODY_HEIGHT_M", "GROUND_CLEARANCE_M",
     "WHEEL_BASE_M", "REAR_TRACK_M", "REAR_CENTER_OFFSET_M", "AXLE_FRACTION",
+    "WHEEL_RADIUS_M", "DOOR_SLOTS", "DOOR_SLOTS_3ROW", "ABSENT_OK",
+    "ABSENT_OK_3ROW", "STYLE_2ROW", "STYLE_3ROW", "APPEARANCE",
     "body", "axles", "center_to_rear_axle", "block",
+    "wheel_radius", "parts", "manifest", "to_blender",
 ]
 
 #: the frame every number here is expressed in
@@ -60,6 +64,239 @@ REAR_CENTER_OFFSET_M = 2.8
 #: steering ``axles`` block above: ``SteeringPerfs`` is a projection anchor, while
 #: this is the physical wheel position in the vehicle frame.
 AXLE_FRACTION = 0.31
+
+#: the default wheel radius [m]; the M2 contract fixes it at 0.36 for the
+#: 2.88 m tall minibus (a wheel outside 0.30..0.40 would break the style table).
+WHEEL_RADIUS_M = 0.36
+
+#: door slot -> part id (slot 7 reserved); ``None`` means the slot is invalid.
+DOOR_SLOTS = ["door_r1l", "door_r1r", "door_r2l", "door_r2r",
+              None, None, "door_tail", None]
+DOOR_SLOTS_3ROW = ["door_r1l", "door_r1r", "door_r2l", "door_r2r",
+                   "door_r3l", "door_r3r", "door_tail", None]
+
+#: parts a style may legitimately omit (N3: whole-part no-op).
+ABSENT_OK = ["door_r3l", "door_r3r"]
+ABSENT_OK_3ROW: List[str] = []
+
+#: the 3-row style adds the third pair of side doors; everything else follows
+#: the same part cards / channels.
+STYLE_2ROW = "minibus_2row"
+STYLE_3ROW = "minibus_3row"
+
+#: The default appearance set (M2).  ``materials`` use the slot names in
+#: ``part_contract.json``; ``glass`` is a fixed material and never varies.
+#: There is deliberately no opacity: the app sets that through a future C API.
+APPEARANCE: Dict = {
+    "default": "factory_teal",
+    "fallback": {"unknown_variant": "factory_teal", "missing_slot": "keep_glb"},
+    "fixed": {"glass": {"base_color": [0.06, 0.10, 0.11, 1.0], "roughness": 0.15}},
+    "variants": [
+        {
+            "id": "factory_teal",
+            "materials": {
+                "paint_body": {"base_color": [0.16, 0.42, 0.37, 1.0], "roughness": 0.45},
+                "paint_door": {"base_color": [0.16, 0.42, 0.37, 1.0], "roughness": 0.45},
+                "trim_door_inner": {"base_color": [0.10, 0.10, 0.11, 1.0], "roughness": 0.70},
+                "paint_mirror": {"base_color": [0.12, 0.30, 0.27, 1.0], "roughness": 0.45},
+                "tire": {"base_color": [0.04, 0.04, 0.04, 1.0], "roughness": 0.85},
+                "rim": {"base_color": [0.55, 0.57, 0.60, 1.0], "roughness": 0.35},
+                "lamp_lens_front": {"base_color": [0.95, 0.95, 0.85, 1.0], "roughness": 0.20},
+                "lamp_lens_rear": {"base_color": [0.55, 0.06, 0.05, 1.0], "roughness": 0.30},
+            },
+        },
+        {
+            "id": "fleet_white",
+            "materials": {
+                "paint_body": {"base_color": [0.90, 0.91, 0.90, 1.0], "roughness": 0.45},
+                "paint_door": {"base_color": [0.90, 0.91, 0.90, 1.0], "roughness": 0.45},
+                "paint_mirror": {"base_color": [0.82, 0.83, 0.82, 1.0], "roughness": 0.45},
+            },
+        },
+        {
+            "id": "exec_black",
+            "materials": {
+                "paint_body": {"base_color": [0.05, 0.05, 0.06, 1.0], "roughness": 0.35},
+                "paint_door": {"base_color": [0.05, 0.05, 0.06, 1.0], "roughness": 0.35},
+                "paint_mirror": {"base_color": [0.08, 0.08, 0.09, 1.0], "roughness": 0.35},
+            },
+        },
+    ],
+}
+
+
+def wheel_radius(height: Optional[float] = None) -> float:
+    """The style's wheel radius, clamped to the M1 range (0.30..0.40 m)."""
+    body_height = BODY_HEIGHT_M if height is None else float(height)
+    return round(min(0.40, max(0.30, body_height * (WHEEL_RADIUS_M / BODY_HEIGHT_M))), 4)
+
+
+def _scaled_pivot(pos, sx: float, sy: float, sz: float) -> List[float]:
+    """Scale a glTF-frame pivot with the body box (x width, y height, z length)."""
+    return [round(pos[0] * sx, 4), round(pos[1] * sy, 4), round(pos[2] * sz, 4)]
+
+
+def parts(length: Optional[float] = None, width: Optional[float] = None,
+          height: Optional[float] = None,
+          style: str = STYLE_2ROW) -> List[Dict]:
+    """The M2 part cards for the default 2-row minibus.
+
+    Pivot positions are in the glTF vehicle frame (+X right, +Y up, nose -Z).
+    They scale with the body box so a custom AVM car stays consistent; the
+    default 4.8 x 2.4 x 2.88 m box reproduces the frozen M2 numbers exactly.
+    """
+    body_length = BODY_LENGTH_M if length is None else float(length)
+    body_width = BODY_WIDTH_M if width is None else float(width)
+    body_height = BODY_HEIGHT_M if height is None else float(height)
+    sx = body_width / BODY_WIDTH_M
+    sy = body_height / BODY_HEIGHT_M
+    sz = body_length / BODY_LENGTH_M
+    radius = wheel_radius(body_height)
+
+    def card(part_id, node, pivot, parent, slots, optional, state, motion):
+        return {
+            "id": part_id,
+            "node": node,
+            "pivot": pivot,
+            "parent": parent,
+            "slots": list(slots),
+            "optional": optional,
+            "state": state,
+            "motion": None if motion is None else copy.deepcopy(motion),
+        }
+
+    def rotating(part_id, pivot_name, slots, channel, axis, travel, direction,
+                 optional=False, state=None):
+        motion = {"channel": channel, "form": "rotate", "axis": list(axis),
+                  "pivot_pos": None, "travel": travel, "unit": "deg",
+                  "direction": direction}
+        return card(part_id, f"part_{part_id}", pivot_name, pivot_name, slots,
+                    optional, state, motion)
+
+    def sliding(part_id, pivot_name, channel, travel, direction):
+        motion = {"channel": channel, "form": "translate", "axis": [0.0, 0.0, 1.0],
+                  "pivot_pos": None, "travel": travel, "unit": "m",
+                  "direction": direction}
+        return card(part_id, f"part_{part_id}", pivot_name, pivot_name,
+                    ["paint_door", "trim_door_inner"], False, None, motion)
+
+    #: base pivots for the 4.8 x 2.4 x 2.88 m box
+    base = {
+        "hood": [0.0, 1.70, -2.30],
+        "wheel_fl": [-1.18, WHEEL_RADIUS_M, -1.488],
+        "wheel_fr": [1.18, WHEEL_RADIUS_M, -1.488],
+        "wheel_rl": [-1.18, WHEEL_RADIUS_M, 1.488],
+        "wheel_rr": [1.18, WHEEL_RADIUS_M, 1.488],
+        "mirror_l": [-1.18, 1.85, -1.50],
+        "mirror_r": [1.18, 1.85, -1.50],
+        "door_r1l": [-1.20, 0.30, -1.55],
+        "door_r1r": [1.20, 0.30, -1.55],
+        "door_r2l": [-1.20, 0.30, -0.25],
+        "door_r2r": [1.20, 0.30, -0.25],
+        "door_r3l": [-1.20, 0.30, 0.95],
+        "door_r3r": [1.20, 0.30, 0.95],
+        "door_tail": [0.0, 2.10, 2.35],
+    }
+
+    result = [
+        card("body", "part_body", None, FRAME, ["paint_body"], False, None, None),
+        card("interior", "part_interior", None, FRAME,
+             ["trim_door_inner"], True, None, None),
+        rotating("hood", "pivot_hood", ["paint_body"], "hood_ratio",
+                 (1.0, 0.0, 0.0), 45.0, -1),
+        card("lamp_head_l", "part_lamp_head_l", None, FRAME,
+             ["lamp_lens_front"], False, "lamp_state", None),
+        card("lamp_head_r", "part_lamp_head_r", None, FRAME,
+             ["lamp_lens_front"], False, "lamp_state", None),
+        card("lamp_tail_l", "part_lamp_tail_l", None, "pivot_door_tail",
+             ["lamp_lens_rear"], False, "lamp_state", None),
+        card("lamp_tail_r", "part_lamp_tail_r", None, "pivot_door_tail",
+             ["lamp_lens_rear"], False, "lamp_state", None),
+    ]
+    for key, side in (("fl", "l"), ("fr", "r"), ("rl", "l"), ("rr", "r")):
+        result.append(rotating(f"wheel_{key}", f"pivot_wheel_{key}",
+                               ["tire", "rim"], "wheel_spin",
+                               (1.0, 0.0, 0.0), 360.0, -1))
+    result.extend([
+        rotating("mirror_l", "pivot_mirror_l", ["paint_mirror"], "mirror_fold",
+                 (0.0, 1.0, 0.0), 90.0, 1, optional=True),
+        rotating("mirror_r", "pivot_mirror_r", ["paint_mirror"], "mirror_fold",
+                 (0.0, 1.0, 0.0), 90.0, -1, optional=True),
+        rotating("door_r1l", "pivot_door_r1l",
+                 ["paint_door", "trim_door_inner"], "open_ratio",
+                 (0.0, 1.0, 0.0), 70.0, -1),
+        rotating("door_r1r", "pivot_door_r1r",
+                 ["paint_door", "trim_door_inner"], "open_ratio",
+                 (0.0, 1.0, 0.0), 70.0, 1),
+        sliding("door_r2l", "pivot_door_r2l", "slide_offset", 0.75, 1),
+        sliding("door_r2r", "pivot_door_r2r", "slide_offset", 0.75, 1),
+    ])
+    if style == STYLE_3ROW:
+        result.extend([
+            rotating("door_r3l", "pivot_door_r3l",
+                     ["paint_door", "trim_door_inner"], "open_ratio",
+                     (0.0, 1.0, 0.0), 70.0, -1),
+            rotating("door_r3r", "pivot_door_r3r",
+                     ["paint_door", "trim_door_inner"], "open_ratio",
+                     (0.0, 1.0, 0.0), 70.0, 1),
+        ])
+    result.append(rotating("door_tail", "pivot_door_tail",
+                           ["paint_door", "trim_door_inner"], "tailgate_ratio",
+                           (1.0, 0.0, 0.0), 75.0, -1))
+
+    for item in result:
+        motion = item["motion"]
+        if motion is None:
+            continue
+        pivot = base[item["id"]]
+        if item["id"].startswith("wheel_"):
+            scaled = [pivot[0] * sx, radius, pivot[2] * sz]
+        else:
+            scaled = _scaled_pivot(pivot, sx, sy, sz)
+        motion["pivot_pos"] = [round(value, 4) for value in scaled]
+        if motion["unit"] == "m":
+            motion["travel"] = round(motion["travel"] * sz, 4)
+    return result
+
+
+def manifest(style_id: str = "minibus_2row", style_name: str = "2-row minibus",
+             length: Optional[float] = None, width: Optional[float] = None,
+             height: Optional[float] = None,
+             clearance: Optional[float] = None) -> Dict:
+    """The single ``vehicle_model.json`` object for the current style."""
+    body_length = BODY_LENGTH_M if length is None else float(length)
+    body_width = BODY_WIDTH_M if width is None else float(width)
+    body_height = BODY_HEIGHT_M if height is None else float(height)
+    three_row = style_id == STYLE_3ROW
+    dimensions = body(body_length, body_width, body_height)
+    dimensions["ground_clearance"] = _m(
+        GROUND_CLEARANCE_M if clearance is None else clearance)
+    anchors = axles()
+    anchors["axle_fraction"] = AXLE_FRACTION
+    anchors["wheel_radius"] = wheel_radius(body_height)
+    return {
+        "schema_version": 1,
+        "model": {
+            "style_id": style_id,
+            "style_name": style_name,
+            "frame": FRAME,
+            "root": FRAME,
+            "dimensions": dimensions,
+            "anchors": anchors,
+            "door_slots": list(DOOR_SLOTS_3ROW if three_row else DOOR_SLOTS),
+            "absent_ok": list(ABSENT_OK_3ROW if three_row else ABSENT_OK),
+        },
+        "parts": parts(body_length, body_width, body_height,
+                       STYLE_3ROW if three_row else STYLE_2ROW),
+        "appearance": copy.deepcopy(APPEARANCE),
+    }
+
+
+def to_blender(position) -> List[float]:
+    """glTF vehicle frame -> Blender frame (X right, Y forward, Z up)."""
+    x, y, z = (float(value) for value in position)
+    return [x, -z, y]
+
 
 
 def body(length: Optional[float] = None, width: Optional[float] = None,

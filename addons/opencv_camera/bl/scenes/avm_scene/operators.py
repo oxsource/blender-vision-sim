@@ -7,11 +7,14 @@ action layer.
 
 from __future__ import annotations
 
+import json
+import os
+
 import bpy
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
-from ....core.scenes import avm_layout
+from ....core.scenes import avm_layout, vehicle
 from ... import compat
 from ..base import has_scene
 from .. import view as view_mod
@@ -30,6 +33,52 @@ class _AVMOperator:
     @classmethod
     def poll(cls, context):
         return _scene(context) is not None
+
+
+def _vehicle_objects(car):
+    """The car root and every part/pivot under it."""
+    return [car] + list(car.children_recursive)
+
+
+def _save_vehicle_state(car):
+    return {obj: (obj.name, obj.hide_render, obj.hide_get())
+            for obj in _vehicle_objects(car)}
+
+
+def _restore_vehicle_state(state):
+    for obj, (name, hide_render, hidden) in state.items():
+        if obj.name not in bpy.data.objects:
+            continue
+        obj.name = name
+        obj.hide_render = hide_render
+        obj.hide_set(hidden)
+        obj.select_set(False)
+
+
+def _select_vehicle(car):
+    objects = _vehicle_objects(car)
+    for obj in objects:
+        obj.hide_render = False
+        obj.hide_set(False)
+        obj.select_set(True)
+    return objects
+
+
+def _write_manifest(settings, filepath: str) -> str:
+    length, width = settings.car_size()
+    style_id = settings.car_style
+    style_name = ("3-row minibus" if style_id == vehicle.STYLE_3ROW
+                  else "2-row minibus")
+    data = vehicle.manifest(style_id=style_id, style_name=style_name,
+                            length=length, width=width,
+                            height=settings.car_height,
+                            clearance=settings.car_clearance)
+    path = os.path.join(os.path.dirname(os.path.abspath(filepath)),
+                        "vehicle_model.json")
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+    return path
 
 
 class _AVMSceneOperator(_AVMOperator):
@@ -421,32 +470,26 @@ class OPENCV_CAM_OT_avm_export_bowl(_AVMSceneOperator, bpy.types.Operator, Expor
         view_layer = context.view_layer
         selected = list(context.selected_objects)
         active = view_layer.objects.active
-        car_name = car.name if car is not None else None
-        car_hidden = (car.hide_render, car.hide_get()) if car is not None else None
+        car_state = _save_vehicle_state(car) if car is not None else None
         try:
             for obj in selected:
                 obj.select_set(False)
             for obj in ground_objects:
                 obj.select_set(True)
             if car is not None:
-                # the app finds the vehicle by this node name; rename only for
-                # the export and restore it afterwards.  An explicitly requested
-                # vehicle is exported even when the Car layer is hidden.
+                # the app finds the vehicle by this node name; rename only the
+                # root for the export and restore it afterwards.  The whole
+                # hierarchy is selected: parts and pivots are separate nodes now.
                 car.name = builder.VEHICLE_EXPORT_NAME
-                car.hide_render = False
-                car.hide_set(False)
-                car.select_set(True)
+                _select_vehicle(car)
             view_layer.objects.active = ground_objects[0]
             compat.export_gltf(self.filepath)
         except Exception as exc:
             self.report({"ERROR"}, f"{type(exc).__name__}: {exc}")
             return {"CANCELLED"}
         finally:
-            if car is not None and car.name in bpy.data.objects:
-                car.name = car_name
-                car.hide_render, hidden = car_hidden
-                car.hide_set(hidden)
-                car.select_set(False)
+            if car_state is not None:
+                _restore_vehicle_state(car_state)
             for obj in ground_objects:
                 if obj.name in bpy.data.objects:
                     obj.select_set(False)
@@ -458,6 +501,54 @@ class OPENCV_CAM_OT_avm_export_bowl(_AVMSceneOperator, bpy.types.Operator, Expor
                     obj.select_set(True)
             view_layer.objects.active = active
         self.report({"INFO"}, f"exported the ground mesh to {self.filepath}")
+        return {"FINISHED"}
+
+
+class OPENCV_CAM_OT_avm_export_vehicle(_AVMSceneOperator, bpy.types.Operator,
+                                       ExportHelper):
+    """Export the ego car hierarchy alone as a GLB + ``vehicle_model.json``"""
+
+    bl_idname = "opencv_cam.avm_export_vehicle"
+    bl_label = "Export Vehicle"
+    bl_options = {"REGISTER"}
+
+    filename_ext = ".glb"
+    filter_glob: StringProperty(default="*.glb", options={"HIDDEN"})
+
+    def invoke(self, context, event):
+        if not self.filepath:
+            self.filepath = "vehicle.glb"
+        return super().invoke(context, event)
+
+    def execute(self, context):
+        settings = _settings(context)
+        car = bpy.data.objects.get(builder.CAR_NAME)
+        if car is None:
+            self.report({"ERROR"}, "no AVM car to export")
+            return {"CANCELLED"}
+        view_layer = context.view_layer
+        selected = list(context.selected_objects)
+        active = view_layer.objects.active
+        state = _save_vehicle_state(car)
+        try:
+            for obj in selected:
+                obj.select_set(False)
+            car.name = builder.VEHICLE_EXPORT_NAME
+            _select_vehicle(car)
+            view_layer.objects.active = car
+            compat.export_gltf(self.filepath)
+            manifest_path = _write_manifest(settings, self.filepath)
+        except Exception as exc:
+            self.report({"ERROR"}, f"{type(exc).__name__}: {exc}")
+            return {"CANCELLED"}
+        finally:
+            _restore_vehicle_state(state)
+            for obj in selected:
+                if obj.name in bpy.data.objects:
+                    obj.select_set(True)
+            view_layer.objects.active = active
+        self.report({"INFO"},
+                    f"exported the vehicle to {self.filepath} and {manifest_path}")
         return {"FINISHED"}
 
 
@@ -476,6 +567,7 @@ _CLASSES = (
     OPENCV_CAM_OT_avm_analyze_coverage,
     OPENCV_CAM_OT_avm_export_falcon,
     OPENCV_CAM_OT_avm_export_bowl,
+    OPENCV_CAM_OT_avm_export_vehicle,
 )
 
 

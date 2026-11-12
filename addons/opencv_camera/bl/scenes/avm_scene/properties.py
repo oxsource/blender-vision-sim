@@ -110,6 +110,11 @@ class AVMSceneSettings(bpy.types.PropertyGroup):
         name="Follow Core", default=True,
         description="Use the core footprint as the car length/width",
         update=_schedule)
+    car_style: EnumProperty(
+        name="Style", default=vehicle.STYLE_2ROW,
+        items=[(vehicle.STYLE_2ROW, "2-row", "Four side doors + tailgate"),
+               (vehicle.STYLE_3ROW, "3-row", "Adds the third door pair")],
+        description="Vehicle style / door layout (M2 contract)", update=_schedule)
     car_length: FloatProperty(name="Length", default=vehicle.BODY_LENGTH_M,
                               min=0.1, max=30.0, unit="LENGTH", update=_schedule)
     car_width: FloatProperty(name="Width", default=vehicle.BODY_WIDTH_M,

@@ -213,9 +213,10 @@ Object Data Properties
 
 ### AVM Scene（环视标定场景）
 
-`Add ▸ VisionSim ▸ AVM Scene` 一键搭出「真实场景的仿真版」：1 个地面、1 个立方体车模、
-4 个规格相同的实心标定块（放在车四周四对角）与 4 台 OpenCV 鱼眼相机，
-默认参数来自 `filament_avm` 的 minibus 配置（离线反算，见 `scripts/solve_avm_defaults.py`）。
+`Add ▸ VisionSim ▸ AVM Scene` 一键搭出「真实场景的仿真版」：1 个地面、1 个部件化车模
+（`AVM_Car` 容器 + `part_*` / `pivot_*` 层级）、4 个规格相同的实心标定块（放在车四周四对角）
+与 4 台 OpenCV 鱼眼相机，默认参数来自 `filament_avm` 的 minibus 配置（离线反算，见
+`scripts/solve_avm_defaults.py`）。
 
 ```text
 输入：各部件的位置姿态（场地尺寸 / 车辆 / 相机安装位姿）+ 相机内参

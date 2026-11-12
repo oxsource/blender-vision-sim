@@ -69,7 +69,7 @@
 | # | 元素 | 数量 | 说明 |
 | --- | --- | --- | --- |
 | 1 | 地面 ground | 1 | **真实 AVM 碗形地面**（内置 `models/unlit_round_bowls.glb`：中心平坦、圆角方形围壁，轴向半径 15 m、碗边离地 5 m，即 Falcon app 把 4 路图像投影上去的同一张 mesh），**半径/碗边高度可调**，可切回大平面 |
-| 2 | 车模 car | 1 | **程序化迷你巴士**（单 mesh、5 个材质槽：车身/玻璃/轮胎/前灯/尾灯），长宽 = `core`，高默认由相机安装高度推出 |
+| 2 | 车模 car | 1 根 + 层级 | **程序化迷你巴士**：`AVM_Car` 空容器 → 12 个 `pivot_*` + 18 个 `part_*`（M2 契约，9 个 unlit 材质槽），长宽 = `core`，高默认由相机安装高度推出 |
 | 3 | 鱼眼相机 fisheye camera | 4 | front / back / left / right，复用 `opencv_camera` fisheye 模型，**每台独立内外参** |
 | 4 | 标定布 / 标定块 cloth=block | 4 | **规格相同的黑方块**（黑面边长 `corner`，四周 `0.2 m` 白色边框），放在车四周四对角，位置由场地方程决定 |
 | 5 | 道具 props | 0–40 | 行人 / 蓝色塑料箱 / 小板车（数量可调），摆在场地外侧，对齐真实场地观感；`show_props` 可整组隐藏 |
@@ -195,6 +195,7 @@ hy     = cOutY  + borderH/100 # 场地半长
 | | `inner_w` / `inner_h` | 20 / 80 cm | 0–200 | `inner`（车缘到块内沿） |
 | | `core_w` / `core_h` | 240 / 480 cm | 100–500 / 100–800 | `car`（= core，**滑杆设置**，决策 H） |
 | 车辆 | `car_length` / `car_width` | 跟随 `core_h` / `core_w` | 可覆盖 | HTML 的 `car ≡ core` |
+| | `car_style` | `minibus_2row` | 2 排 / 3 排 | M2 契约的样式 id；3 排追加 `door_r3*`（20 部件 / 14 pivots） |
 | | `car_height` | 2.88 m | 0.05–10.0 | —（HTML 无高度；载入预设时按 `max(相机 z) + 0.05` 推导） |
 | | `car_clearance` | 0.00 m | 0–0.5 | — |
 | 地面 | `ground_w` / `ground_d` | 30 / 30 m | 2–200 | —（仅**平面**地面用） |
@@ -493,7 +494,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | 对象 | 网格 | 材质 |
 | --- | --- | --- |
 | 地面 | **真实碗形 mesh**（`use_ground_model` 默认开）：导入内置 `models/unlit_round_bowls.glb`，4 个象限合并成单个 `AVM_Ground`（≈11k 顶点、z = 0 落在真实地面）；关掉或用平面时是 1 面 plane（z = −2 mm） | **纯色浅灰**（无网格/贴图：任何印刷网格都会干扰黑块检测，且浅灰与黑块对比度高） |
-| 车模 | 单 mesh：车身 + 斜挡风 + 车顶盖 + 侧/后车窗 + 4 车轮 + 前/尾灯 | 5 个材质槽：车身**青绿**（对齐真实 minibus）、玻璃深灰、轮胎近黑、前灯米白、尾灯红 |
+| 车模 | **层级**：`AVM_Car` 空容器 → 12 个 `pivot_*` 空节点 + 18 个 `part_*` mesh（门 / 盖 / 灯 / 轮 / 镜各自独立，门缝与侧窗按契约切分；`part_interior` 提供座椅 / 中控 / 方向盘，开门后可见） | **9 个 unlit 槽**：`paint_body` 青绿、`paint_door` / `paint_mirror` 同色系、`trim_door_inner` 深灰、`tire` 近黑、`rim` 银灰、`lamp_lens_front` 米白、`lamp_lens_rear` 红、`glass` 深灰 |
 | 标定块 ×4 | 单 mesh：**黑面 1 个四边形 + 白框 4 个四边形**（抬高 `block_lift`） | 黑面纯黑（对照 `--cloth-ink`）+ 白框浅白；白框向外扩 `0.2 m`，**黑面尺寸与角点不变**，两个区域共边不重叠、不会 z-fighting |
 | 太阳 `AVM_Sun` + `AVM_Sun_Fill` | — | 随场景创建的主光 + 对侧补光（`0.4 × sun_energy`），**默认都不投影阴影**：投影会被黑色区域检测器误判为标定块。补光让画面不依赖场景里其它灯（重启后新场景只剩这两盏也能正常出图）；`show_sun` 一个开关同时隐藏两盏 |
 | 道具 | 行人（腿/夹克/头 3 槽）、塑料箱（箱体/边框 2 槽）、小板车（木板/脚轮/金属 3 槽） | 深蓝夹克行人、蓝色箱、木色板车，摆在场地外 `margin ≈ 1.7 m` 的固定槽位上（确定性散布） |
@@ -544,8 +545,12 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
   `NurbsPath.004`，app 每台相机按名字取地面对应面）。
 
 `bowl_include_vehicle`（N 面板的 **Include Vehicle** 勾选，默认关）打开后，导出还会带上车辆：
-`AVM_Car` 在导出期间临时改名为 **`vehicle`**，所以 GLB 里除地面节点外多一个 `vehicle` 节点
-（app 按 `vehicle` 这个名字找车），导出结束立即恢复为 `AVM_Car`，场景对象命名不受影响。
+`AVM_Car` 是**空容器**，导出期间只把根改名为 **`vehicle`**；子节点是 12 个 `pivot_*` 空节点和
+18 个 `part_*` mesh（含静态 `part_interior`；M2 模型契约，见 `filament_avm_core/docs/specs/011_vehicle_parts/model_spec.md`）。
+app 按 `vehicle` 这个名字找车，导出结束立即恢复 `AVM_Car` 与各子对象的可见性 / 选择状态。
+车辆现在有独立导出：N 面板的 **[Export Vehicle]**（`opencv_cam.avm_export_vehicle`）只导出这棵层级，
+并在同目录写 `vehicle_model.json`（`model` / `parts` / `appearance` 三段）；`tests/check_vehicle_glb.py`
+可脱离 Blender 校验 GLB 与清单（节点 / pivot / 材质 / UV / 无动画 / 预算）。
 
 ---
 
@@ -582,6 +587,7 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
   "avm": {
     "units": "m",
     "car_follow_core": true,
+    "car_style": "minibus_2row",
     "car_length": 4.8,
     "car_width": 2.4,
     "car_height": 2.88,
@@ -672,7 +678,8 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | `opencv_cam.avm_clear_camera` | **清除单相机检测**：清空 `points_2d`、删除标注图与缓存渲染图（相机条目上的 `[X]`） |
 | `opencv_cam.avm_analyze_coverage` | **覆盖评估**（§16）：算 4 台相机的地面足迹、并集/重叠/盲区、标定块可见性矩阵；生成贴地覆盖曲线 |
 | `opencv_cam.avm_export_falcon` | **Export Falcon**（§16.8）：复用/渲染 4 张原始图 + 4 张角点标注图 + 完整 `vehicle_avm.json`，**打包为 zip** |
-| `opencv_cam.avm_export_bowl` | **Export Bowl**（§7，N 面板）：把碗形地面导出成 `.glb`；`bowl_quadrants`（默认开）出去重后的 4 个象限节点 `NurbsPath.001`..`NurbsPath.004`，关掉则按源模型的 `NurbsPath.001`..`004` 四个面逐节点导出；`bowl_include_vehicle` 打开时连带 `AVM_Car`（节点名写成 `vehicle`） |
+| `opencv_cam.avm_export_bowl` | **Export Bowl**（§7，N 面板）：把碗形地面导出成 `.glb`；`bowl_quadrants`（默认开）出去重后的 4 个象限节点 `NurbsPath.001`..`NurbsPath.004`，关掉则按源模型的 `NurbsPath.001`..`004` 四个面逐节点导出；`bowl_include_vehicle` 打开时连带整棵车辆层级（根节点名写成 `vehicle`） |
+| `opencv_cam.avm_export_vehicle` | **Export Vehicle**（§7，N 面板）：只导出车辆层级为 `.glb`（根节点 `vehicle`），并在同目录写 `vehicle_model.json` |
 
 ---
 
@@ -691,13 +698,14 @@ front 7.2 px | back 6.4 px | left 32.5 px | right 33.1 px
 | `bl/scenes/camera_scene.py` | **迁移** | ← `bl/scene_builder.py`（行为/命名不变，§17.5） |
 | `bl/scenes/avm_scene/properties.py` | 新增 | PropertyGroup（场地/车辆/地面/标定块 + 每台相机的 `enable` / 检测结果 + `root` 指针；**位姿与内参都在相机物体上**，§4.2）+ update 回调 |
 | `bl/scenes/avm_scene/builder.py` | 新增 | 建/重建对象、材质、mesh；创建 `AVM_Root` 并回写 `settings.root`；4 台相机创建、内参与位姿写入；覆盖曲线对象 `AVM_Coverage_*` |
+| `bl/scenes/avm_scene/vehicle_mesh.py` | 新增 | **M3 车辆层级**：`part_*` mesh（unlit 槽材质 + UV）与 `pivot_*` 局部几何；契约见 011 `model_spec.md` |
 | `bl/scenes/avm_scene/controller.py` | 新增 | 去抖重建（复用 `bl/scenes/debounce.py`） |
 | `bl/scenes/avm_scene/io.py` | 新增 | 参数序列化 / 反序列化：完整 + 精简格式、JSON/YAML、校验、版本迁移（§8） |
 | `bl/scenes/avm_scene/coverage.py` | 新增 | 覆盖曲线对象 + 报告 + 面板缓存（调用 `core/scenes/avm_coverage.py`） |
 | `bl/scenes/avm_scene/corners.py` | 新增 | **角点检测**（§16.7）：渲染 4 路 → numpy 亚像素黑块角点 → 各相机 `points_2d` |
 | `core/scenes/avm_falcon.py` | 新增 | **Falcon 标定配置**（§16.8，纯 Python）：复刻 `JsonGenerator` 的字段/顺序 |
 | `bl/scenes/avm_scene/falcon.py` | 新增 | **Export Falcon**（§16.8）：渲染 4 张原始图 + 角点检测 + 写 `vehicle_avm.json` |
-| `bl/scenes/avm_scene/operators.py` | 新增 | `opencv_cam.avm_add_scene` / `avm_rebuild` / `avm_reset` / `avm_remove_scene` / `avm_import_params` / `avm_export_params` / `avm_detect_corners` / `avm_detect_camera` / `avm_show_corners` / `avm_clear_camera` / `avm_analyze_coverage` / `avm_export_falcon` / `avm_export_bowl` |
+| `bl/scenes/avm_scene/operators.py` | 新增 | `opencv_cam.avm_add_scene` / `avm_rebuild` / `avm_reset` / `avm_remove_scene` / `avm_import_params` / `avm_export_params` / `avm_detect_corners` / `avm_detect_camera` / `avm_show_corners` / `avm_clear_camera` / `avm_analyze_coverage` / `avm_export_falcon` / `avm_export_bowl` / `avm_export_vehicle` |
 | `bl/scenes/avm_scene/ui.py` | 新增 | Scene 面板 + 3D 视口 N 面板（两者 poll 均为「`root` 存在」，§5.2） |
 | `bl/scene_builder.py` | **兼容转发** | `from .scenes.camera_scene import *`，保留一个版本后删除 |
 | `bl/menus.py` | 改 | 遍历场景注册表生成 `Add ▸ VisionSim` 条目（§17.4） |

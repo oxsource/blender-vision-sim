@@ -688,6 +688,59 @@ def test_vehicle():
                             "center_to_rear_axle", "axles"},
           str(sorted(defaults)))
 
+    cards = vehicle.parts()
+    check("the M2 default style has 18 parts / 12 pivots",
+          len(cards) == 18 and sum(1 for card in cards if card["pivot"]) == 12,
+          f"{len(cards)} parts")
+    check("the part and pivot names are unique",
+          len({card["id"] for card in cards}) == 18
+          and len({card["node"] for card in cards}) == 18,
+          str(sorted(card["id"] for card in cards)))
+    check("the door slot table has 8 entries and r3 is absent",
+          vehicle.DOOR_SLOTS == ["door_r1l", "door_r1r", "door_r2l", "door_r2r",
+                                 None, None, "door_tail", None]
+          and vehicle.ABSENT_OK == ["door_r3l", "door_r3r"],
+          str(vehicle.DOOR_SLOTS))
+    check("the wheel radius is the frozen 0.36 m", vehicle.wheel_radius() == 0.36,
+          str(vehicle.wheel_radius()))
+    check("glTF -> Blender pivot conversion keeps the up axis",
+          vehicle.to_blender([-1.2, 0.3, -1.55]) == [-1.2, 1.55, 0.3],
+          str(vehicle.to_blender([-1.2, 0.3, -1.55])))
+    scaled = vehicle.parts(5.5, 2.4, 2.88)
+    wheel = next(card for card in scaled if card["id"] == "wheel_fl")
+    check("pivots follow a custom body length",
+          wheel["motion"]["pivot_pos"] == [-1.18, 0.36, -1.705],
+          str(wheel["motion"]["pivot_pos"]))
+
+    doc = vehicle.manifest()
+    check("the single manifest has the three sections",
+          set(doc) == {"schema_version", "model", "parts", "appearance"},
+          str(sorted(doc)))
+    check("the manifest carries the style, slots and anchors",
+          doc["model"]["style_id"] == "minibus_2row"
+          and len(doc["model"]["door_slots"]) == 8
+          and doc["model"]["anchors"]["wheel_radius"] == 0.36,
+          str(doc["model"]))
+    check("the manifest has the three whole-vehicle paint variants",
+          [variant["id"] for variant in doc["appearance"]["variants"]]
+          == ["factory_teal", "fleet_white", "exec_black"],
+          str([variant["id"] for variant in doc["appearance"]["variants"]]))
+    check("transparency is not part of the manifest",
+          "opacity" not in json.dumps(doc))
+
+    three = vehicle.parts(style=vehicle.STYLE_3ROW)
+    check("the 3-row style adds the third door pair",
+          len(three) == 20 and sum(1 for card in three if card["pivot"]) == 14
+          and {card["id"] for card in three} >= {"door_r3l", "door_r3r"},
+          f"{len(three)} parts")
+    three_doc = vehicle.manifest(style_id=vehicle.STYLE_3ROW,
+                                 style_name="3-row minibus")
+    check("the 3-row manifest enables slots 4/5",
+          three_doc["model"]["door_slots"][4:6] == ["door_r3l", "door_r3r"]
+          and three_doc["model"]["absent_ok"] == []
+          and len(three_doc["parts"]) == 20,
+          str(three_doc["model"]))
+
 
 def test_drive_lot():
     """The car-park layout: bays, dividers, columns, parked cars and labels."""

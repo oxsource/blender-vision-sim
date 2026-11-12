@@ -21,6 +21,7 @@ from ....core.scenes import avm_cameras, avm_coverage, avm_layout, vehicle
 from ... import apply as apply_mod
 from ... import camera_factory, compat, shader
 from ..base import collection, link_to_collection, remove_collection_objects
+from . import vehicle_mesh
 
 ROOT_NAME = "AVM_Root"
 COLLECTION_NAME = "AVM Scene"
@@ -447,15 +448,32 @@ VISIBILITY = (
 )
 
 
+def _subtree(obj) -> List[bpy.types.Object]:
+    """The object and every descendant (the vehicle is a hierarchy now)."""
+    result = [obj]
+    for child in obj.children:
+        result.extend(_subtree(child))
+    return result
+
+
 def apply_visibility(settings) -> None:
     """Show/hide every AVM object according to the layer flags.
 
     Runs on a flag change without a rebuild, so toggling a layer never recreates
     geometry.  Both ``hide_render`` (F12 / exports) and ``hide_set`` (viewport)
-    are set, so the toggle reads the same everywhere.
+    are set, so the toggle reads the same everywhere.  The car is one subtree:
+    ``show_car`` must hide every ``part_*`` / ``pivot_*`` under it, not just the
+    root empty.
     """
     for prefix, attribute in VISIBILITY:
         visible = bool(getattr(settings, attribute, True))
+        if prefix == CAR_NAME:
+            car = bpy.data.objects.get(CAR_NAME)
+            if car is not None:
+                for obj in _subtree(car):
+                    obj.hide_render = not visible
+                    obj.hide_set(not visible)
+            continue
         for obj in bpy.data.objects:
             if obj.name == prefix or obj.name.startswith(prefix):
                 obj.hide_render = not visible
@@ -463,12 +481,8 @@ def apply_visibility(settings) -> None:
 
 
 # ---------------------------------------------------------------------------
-# the car: a small minibus built from primitives (one mesh, several materials)
+# primitive helpers (props and the part meshes in vehicle_mesh.py)
 # ---------------------------------------------------------------------------
-#: material slot indices of the car mesh
-CAR_BODY, CAR_GLASS, CAR_TIRE, CAR_HEAD, CAR_TAIL = range(5)
-
-
 def _add_box(bm, x0, x1, y0, y1, z0, z1, material: int) -> None:
     verts = [bm.verts.new(position) for position in (
         (x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0),
@@ -516,104 +530,6 @@ def _add_cylinder(bm, centre, radius: float, half_len: float, axis: str,
         bm.faces.new((inner[i], inner[nxt], outer[nxt], outer[i])).material_index = material
     bm.faces.new(list(reversed(inner))).material_index = material
     bm.faces.new(outer).material_index = material
-
-
-def _add_wheel(bm, centre_x: float, centre_y: float, radius: float,
-               half_width: float, segments: int, material: int) -> None:
-    """A wheel: a cylinder along X with its bottom resting on ``z = 0``."""
-    _add_cylinder(bm, (centre_x, centre_y, radius), radius, half_width,
-                  "X", segments, material)
-
-
-def _minibus_mesh(name: str, length: float, width: float, height: float) -> bpy.types.Mesh:
-    """A rough minibus silhouette: body, raked windshield, roof, windows, wheels.
-
-    Everything is generated at real size with the origin on the ground under the
-    car centre, ``+Y`` = front, so the object scale stays 1.  The wheels reach
-    ``z = 0`` and stick out of the body sides; the front is readable from the
-    windshield rake, the roof cap and the head/tail lights.
-    """
-    mesh = bpy.data.meshes.new(name)
-    bm = bmesh.new()
-
-    length = max(1.0, float(length))
-    width = max(0.5, float(width))
-    height = max(0.5, float(height))
-
-    wheel_radius = min(0.50, max(0.28, height * 0.16))
-    floor = wheel_radius * 0.7
-    beltline = floor + (height - floor) * 0.55
-
-    # lower body (full length) and the cabin above the beltline
-    _add_box(bm, -width / 2, width / 2, -length / 2, length / 2, floor, beltline, CAR_BODY)
-
-    cabin_half = width * 0.47
-    cabin_front = length * 0.46
-    cabin_back = -length * 0.47
-    rake = min(0.45, length * 0.09)
-    rear_rake = 0.12
-    bottom = [(-cabin_half, cabin_back, beltline), (cabin_half, cabin_back, beltline),
-              (cabin_half, cabin_front, beltline), (-cabin_half, cabin_front, beltline)]
-    top = [(-cabin_half, cabin_back + rear_rake, height),
-           (cabin_half, cabin_back + rear_rake, height),
-           (cabin_half, cabin_front - rake, height),
-           (-cabin_half, cabin_front - rake, height)]
-    _add_prism(bm, bottom, top, CAR_BODY)
-
-    # roof cap, slightly proud of the cabin so the silhouette reads as a bus
-    _add_box(bm, -width * 0.48, width * 0.48,
-             -length * 0.46, length * 0.44, height, height + 0.06, CAR_BODY)
-
-    # windshield: on the raked front plane, pushed out along its normal
-    rise = height - beltline
-    normal = math.hypot(rise, rake) or 1.0
-    offset_y, offset_z = rise / normal * 0.015, rake / normal * 0.015
-    glass_half = cabin_half - 0.07
-    _add_quad(bm,
-              (-glass_half, cabin_front + offset_y, beltline + offset_z),
-              (glass_half, cabin_front + offset_y, beltline + offset_z),
-              (glass_half, cabin_front - rake + offset_y, height + offset_z),
-              (-glass_half, cabin_front - rake + offset_y, height + offset_z), CAR_GLASS)
-
-    # side windows, one quad per side (just outside the cabin wall)
-    for side in (-1.0, 1.0):
-        x = side * (cabin_half + 0.015)
-        y0, y1 = cabin_back + 0.40, cabin_front - 0.50
-        z0, z1 = beltline + 0.16, height - 0.14
-        points = [(x, y0, z0), (x, y1, z0), (x, y1, z1), (x, y0, z1)]
-        _add_quad(bm, *(points if side > 0 else list(reversed(points))), CAR_GLASS)
-
-    # rear window, on the raked back plane
-    _add_quad(bm,
-              (-glass_half, cabin_back - 0.015, beltline + 0.20),
-              (glass_half, cabin_back - 0.015, beltline + 0.20),
-              (glass_half, cabin_back + rear_rake - 0.015, height - 0.14),
-              (-glass_half, cabin_back + rear_rake - 0.015, height - 0.14), CAR_GLASS)
-
-    # head and tail lights
-    lamp_half = width * 0.13
-    for side in (-1.0, 1.0):
-        centre = side * width * 0.30
-        _add_box(bm, centre - lamp_half, centre + lamp_half,
-                 length / 2, length / 2 + 0.02,
-                 floor + height * 0.16, floor + height * 0.16 + 0.18, CAR_HEAD)
-        _add_box(bm, centre - lamp_half, centre + lamp_half,
-                 -length / 2 - 0.02, -length / 2,
-                 floor + height * 0.30, floor + height * 0.30 + 0.30, CAR_TAIL)
-
-    # wheels: bottoms on the ground, outer faces proud of the body sides
-    wheelbase = 2.0 * vehicle.AXLE_FRACTION * length
-    wheel_x = width / 2 - 0.02
-    for side in (-1.0, 1.0):
-        for front in (-1.0, 1.0):
-            _add_wheel(bm, side * wheel_x, front * wheelbase / 2,
-                       wheel_radius, 0.13, 16, CAR_TIRE)
-
-    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
-    bm.to_mesh(mesh)
-    bm.free()
-    mesh.update()
-    return mesh
 
 
 # ---------------------------------------------------------------------------
@@ -1062,6 +978,124 @@ def _parent(obj: bpy.types.Object, root: bpy.types.Object) -> None:
         obj.matrix_parent_inverse = root.matrix_world.inverted()
 
 
+def _parent_identity(obj: bpy.types.Object, parent: bpy.types.Object) -> None:
+    """Parent without cancelling the parent's transform (local origin at 0)."""
+    obj.parent = parent
+    obj.matrix_parent_inverse = Matrix.Identity(4)
+    obj.location = (0.0, 0.0, 0.0)
+    obj.rotation_euler = (0.0, 0.0, 0.0)
+    obj.scale = (1.0, 1.0, 1.0)
+
+
+def _ensure_empty(name: str, target: bpy.types.Collection) -> bpy.types.Object:
+    """Reuse (or replace) an empty; a mesh with the old name is removed."""
+    obj = bpy.data.objects.get(name)
+    if obj is not None and obj.type != "EMPTY":
+        data = obj.data
+        bpy.data.objects.remove(obj, do_unlink=True)
+        if data is not None and data.users == 0 and isinstance(data, bpy.types.Mesh):
+            bpy.data.meshes.remove(data)
+        obj = None
+    if obj is None:
+        obj = bpy.data.objects.new(name, None)
+        obj.empty_display_type = "PLAIN_AXES"
+        obj.empty_display_size = 1.0
+        link_to_collection(obj, target)
+    elif target not in obj.users_collection:
+        link_to_collection(obj, target)
+    return obj
+
+
+def _ensure_vehicle(scene: bpy.types.Scene, settings, target: bpy.types.Collection,
+                    root: bpy.types.Object, length: float, width: float,
+                    height: float, style: str = vehicle.STYLE_2ROW) -> tuple:
+    """Build/update ``AVM_Car`` as ``vehicle -> pivot_* -> part_*``.
+
+    The scene keeps the ``AVM_`` root name; Export Bowl / Export Vehicle rename
+    only the root to ``vehicle``.  Objects are updated in place (the same
+    identity-rebuild rule as the rest of the AVM scene).
+    """
+    car = _ensure_empty(CAR_NAME, target)
+    car.location = (0.0, 0.0, settings.car_clearance)
+    _parent(car, root)
+
+    cards = vehicle.parts(length, width, height, style)
+    radius = vehicle.wheel_radius(height)
+    part_names = {card["node"] for card in cards}
+    pivot_names = {card["pivot"] for card in cards if card["pivot"]}
+    keep = part_names | pivot_names
+
+    # Drop r3 / stale parts from a previous style.  A stale pivot's part is
+    # removed too (it is in the same list); a kept part is re-parented below.
+    def in_car(obj) -> bool:
+        while obj is not None:
+            if obj is car:
+                return True
+            obj = obj.parent
+        return False
+
+    for obj in list(bpy.data.objects):
+        if obj is car or not in_car(obj):
+            continue
+        if (obj.name.startswith("part_") or obj.name.startswith("pivot_")) \
+                and obj.name not in keep:
+            bpy.data.objects.remove(obj, do_unlink=True)
+
+    visible = bool(settings.show_car)
+    pivots = []
+    pivot_objects = {}
+    # Pass 1: every pivot exists before its parts are parented (the tail lamps
+    # hang off pivot_door_tail, which is declared after them in the card list).
+    for card in cards:
+        pivot_name = card["pivot"]
+        if not pivot_name:
+            continue
+        pivot = _ensure_empty(pivot_name, target)
+        _parent_identity(pivot, car)
+        pivot.location = tuple(vehicle.to_blender(card["motion"]["pivot_pos"]))
+        pivot.hide_render = not visible
+        pivot.hide_set(not visible)
+        pivots.append(pivot)
+        pivot_objects[pivot_name] = pivot
+
+    # Pass 2: parts, each local to its own pivot or to its mounting pivot.
+    parts = []
+    for card in cards:
+        pivot_name = card["pivot"]
+        if pivot_name:
+            parent = pivot_objects[pivot_name]
+            parent_pos = tuple(vehicle.to_blender(card["motion"]["pivot_pos"]))
+        elif card["parent"] != vehicle.FRAME:
+            parent = pivot_objects.get(card["parent"]) \
+                or bpy.data.objects.get(card["parent"]) or car
+            parent_pos = tuple(parent.location)
+        else:
+            parent = car
+            parent_pos = None
+
+        obj = bpy.data.objects.get(card["node"])
+        if obj is not None and obj.type != "MESH":
+            bpy.data.objects.remove(obj, do_unlink=True)
+            obj = None
+        if obj is None:
+            placeholder = bpy.data.meshes.new(card["node"])
+            obj = bpy.data.objects.new(card["node"], placeholder)
+            link_to_collection(obj, target)
+        elif target not in obj.users_collection:
+            link_to_collection(obj, target)
+
+        mesh = vehicle_mesh.build(card, length, width, height, radius, style,
+                                  parent_pos=parent_pos)
+        names = vehicle_mesh.material_names(card["id"])
+        _assign_mesh(obj, mesh, vehicle_mesh.materials_for(names))
+        _parent_identity(obj, parent)
+        obj.hide_render = not visible
+        obj.hide_set(not visible)
+        parts.append(obj)
+
+    return car, parts, pivots
+
+
 def view_targets(scene: bpy.types.Scene) -> List[bpy.types.Object]:
     """The subject of the default view: the blocks, the car and the cameras.
 
@@ -1221,20 +1255,13 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
     ground.hide_render = not settings.show_ground
 
     # car ------------------------------------------------------------------
+    # A hierarchy now: the root is an empty (exported as ``vehicle``), each
+    # moving part hangs off its ``pivot_*`` and every part has its own mesh and
+    # contract material slot (M2 model contract).
     car_length, car_width = settings.car_size()
-    car = bpy.data.objects.get(CAR_NAME)
-    if car is None:
-        car = _new_mesh_object(CAR_NAME, _quad_mesh("AVM_Car", 1.0, 1.0), target)
-    car_mesh = _minibus_mesh("AVM_Car", car_length, car_width, settings.car_height)
-    _assign_mesh(car, car_mesh, (
-        _principled("AVM_Car_Mat", *avm_layout.MINIBUS_MATERIALS["body"]),
-        _principled("AVM_Car_Glass_Mat", *avm_layout.MINIBUS_MATERIALS["glass"]),
-        _principled("AVM_Car_Tire_Mat", *avm_layout.MINIBUS_MATERIALS["tire"]),
-        _principled("AVM_Car_Head_Mat", *avm_layout.MINIBUS_MATERIALS["head"]),
-        _principled("AVM_Car_Tail_Mat", *avm_layout.MINIBUS_MATERIALS["tail"]),
-    ))
-    car.location = (0.0, 0.0, settings.car_clearance)
-    _parent(car, root)
+    car, car_parts, car_pivots = _ensure_vehicle(
+        scene, settings, target, root, car_length, car_width, settings.car_height,
+        settings.car_style)
     car.hide_render = not settings.show_car
 
     # calibration blocks ---------------------------------------------------
@@ -1299,6 +1326,8 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
         "root": root,
         "ground": ground,
         "car": car,
+        "parts": car_parts,
+        "pivots": car_pivots,
         "blocks": block_objects,
         "cameras": camera_objects,
         "props": props,
