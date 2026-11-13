@@ -723,7 +723,7 @@ def test_vehicle():
           str(doc["model"]))
     check("the manifest has the three whole-vehicle paint variants",
           [variant["id"] for variant in doc["appearance"]["variants"]]
-          == ["factory_teal", "fleet_white", "exec_black"],
+          == ["factory_teal", "taxi_orange", "exec_black"],
           str([variant["id"] for variant in doc["appearance"]["variants"]]))
     check("transparency is not part of the manifest",
           "opacity" not in json.dumps(doc))

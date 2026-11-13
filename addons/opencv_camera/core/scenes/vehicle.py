@@ -106,11 +106,12 @@ APPEARANCE: Dict = {
             },
         },
         {
-            "id": "fleet_white",
+            # The ride-hailing orange: linear RGB ~ #FF7000 after sRGB encode.
+            "id": "taxi_orange",
             "materials": {
-                "paint_body": {"base_color": [0.90, 0.91, 0.90, 1.0], "roughness": 0.45},
-                "paint_door": {"base_color": [0.90, 0.91, 0.90, 1.0], "roughness": 0.45},
-                "paint_mirror": {"base_color": [0.82, 0.83, 0.82, 1.0], "roughness": 0.45},
+                "paint_body": {"base_color": [1.00, 0.16, 0.00, 1.0], "roughness": 0.45},
+                "paint_door": {"base_color": [1.00, 0.16, 0.00, 1.0], "roughness": 0.45},
+                "paint_mirror": {"base_color": [0.86, 0.12, 0.00, 1.0], "roughness": 0.45},
             },
         },
         {
