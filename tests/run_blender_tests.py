@@ -1580,6 +1580,12 @@ def test_avm_vehicle_hierarchy():
     setup_scene(resolution=64, samples=1)
     check("add AVM scene", bpy.ops.opencv_cam.avm_add_scene() == {"FINISHED"})
 
+    settings = bpy.context.scene.avm_scene
+    settings.car_follow_core = False
+    settings.car_length = vehicle.BODY_LENGTH_M
+    settings.car_width = vehicle.BODY_WIDTH_M
+    settings.car_height = vehicle.BODY_HEIGHT_M
+    bpy.ops.opencv_cam.avm_rebuild()
     car = bpy.data.objects["AVM_Car"]
     check("the car root is a container empty", car.type == "EMPTY")
     cards = vehicle.parts()
@@ -1719,11 +1725,11 @@ def test_avm_vehicle_motion():
         return low, high, opened
 
     low, high, opened = moved("door_r1l")
-    check("left front door opens outward", opened[0].x < low.x - 0.15,
-          f"{opened[0].x:.2f} vs {low.x:.2f}")
+    check("left front door slides rearward", opened[0].y < low.y - 0.5,
+          f"{opened[0].y:.2f} vs {low.y:.2f}")
     low, high, opened = moved("door_r1r")
-    check("right front door opens outward", opened[1].x > high.x + 0.15,
-          f"{opened[1].x:.2f} vs {high.x:.2f}")
+    check("right front door slides rearward", opened[0].y < low.y - 0.5,
+          f"{opened[0].y:.2f} vs {low.y:.2f}")
     low, high, opened = moved("door_r2l")
     check("sliding door moves rearward", opened[0].y < low.y - 0.5,
           f"{opened[0].y:.2f} vs {low.y:.2f}")
@@ -2369,11 +2375,11 @@ def test_drive_scene():
           and meta["vehicle"]["ground_clearance"] == settings.car_clearance,
           str(meta["vehicle"]))
     check("the vehicle block is the shared minibus geometry, at a readable precision",
-          body == {"length": 4.8, "width": 2.4, "height": 2.88},
+          body == {"length": 5.445, "width": 2.085, "height": 2.655},
           str(body))
     check("the vehicle block carries the axle anchors",
-          meta["vehicle"]["axles"] == {"wheel_base": 3.2, "rear_track": 1.8,
-                                       "rear_center_offset": 2.8},
+          meta["vehicle"]["axles"] == {"wheel_base": 3.68, "rear_track": 1.56,
+                                       "rear_center_offset": 3.12},
           str(meta["vehicle"]["axles"]))
     check("the exported width is the AVM-era body width, from the one source",
           body["width"] == avm_falcon.STEERING["body_width"] == vehicle.BODY_WIDTH_M,
@@ -2659,12 +2665,24 @@ def test_drive_matches_avm_defaults():
 
     check("build the AVM scene for comparison",
           bpy.ops.opencv_cam.avm_add_scene() == {"FINISHED"})
+    # The preset ties the AVM car to the camera rig core; compare the display
+    # vehicle itself, which both scenes build from the shared geometry module.
+    settings = bpy.context.scene.avm_scene
+    settings.car_follow_core = False
+    settings.car_length = vehicle.BODY_LENGTH_M
+    settings.car_width = vehicle.BODY_WIDTH_M
+    settings.car_height = vehicle.BODY_HEIGHT_M
+    bpy.ops.opencv_cam.avm_rebuild()
     avm = {key: bpy.data.objects[avm_cameras.object_name("AVM_Cam_", key)]
            for key in avm_cameras.CAMERAS}
     avm_body = tuple(bpy.data.materials["paint_body"].diffuse_color)
 
     check("build the Drive scene for comparison",
           bpy.ops.opencv_cam.drive_add_scene() == {"FINISHED"})
+    drive_settings = bpy.context.scene.drive_scene
+    drive_settings.car_length = vehicle.BODY_LENGTH_M
+    drive_settings.car_width = vehicle.BODY_WIDTH_M
+    drive_settings.car_height = vehicle.BODY_HEIGHT_M
     drive = {key: bpy.data.objects[avm_cameras.object_name("DRIVE_Cam_", key)]
              for key in avm_cameras.CAMERAS}
     drive_body = tuple(bpy.data.materials["DRIVE_Car_Mat"].diffuse_color)

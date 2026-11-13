@@ -89,6 +89,13 @@ def main():
         settings.bowl_include_vehicle = True
         if args.ground_model:
             settings.ground_model = os.path.abspath(args.ground_model)
+        # Display vehicle vs recorded rig: the preset ties the car footprint to
+        # the camera rig core and raises its height to the mount, but the model
+        # is the bus itself (5445 x 2085 x 2655 mm), independent of the AVM mask.
+        settings.car_follow_core = False
+        settings.car_length = vehicle.BODY_LENGTH_M
+        settings.car_width = vehicle.BODY_WIDTH_M
+        settings.car_height = vehicle.BODY_HEIGHT_M
         bpy.ops.opencv_cam.avm_rebuild()
         if args.checker:
             add_checker_texture()

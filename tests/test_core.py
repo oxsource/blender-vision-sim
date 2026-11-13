@@ -451,7 +451,7 @@ def test_avm_falcon_config():
           avm_falcon.build_config(field, cameras, {}, input_sizes,
                                   "x")["cameras"][0]["enable"] is False)
     check("falcon steering line",
-          config["steering_line"]["wheel_base"] == 3.2
+          config["steering_line"]["wheel_base"] == 3.68
           and config["steering_line"]["segments"] == 64
           and config["steering_line"]["back_prewarp"] is True)
 
@@ -643,16 +643,16 @@ def test_vehicle():
     """The ego vehicle's geometry: one source, and the export's shape."""
     check("the body box is the minibus the presets calibrate",
           (vehicle.BODY_LENGTH_M, vehicle.BODY_WIDTH_M, vehicle.BODY_HEIGHT_M)
-          == (4.8, 2.4, 2.88),
+          == (5.445, 2.085, 2.655),
           str((vehicle.BODY_LENGTH_M, vehicle.BODY_WIDTH_M, vehicle.BODY_HEIGHT_M)))
     check("the axles are the app's steering geometry",
           (vehicle.WHEEL_BASE_M, vehicle.REAR_TRACK_M, vehicle.REAR_CENTER_OFFSET_M)
-          == (3.2, 1.8, 2.8),
+          == (3.68, 1.56, 3.12),
           str((vehicle.WHEEL_BASE_M, vehicle.REAR_TRACK_M, vehicle.REAR_CENTER_OFFSET_M)))
     check("the rear axle is the mesh wheel position, not the steering anchor",
-          vehicle.AXLE_FRACTION == 0.31
-          and vehicle.center_to_rear_axle() == [0.0, -1.488, 0.0]
-          and vehicle.center_to_rear_axle(5.5) == [0.0, -1.705, 0.0],
+          vehicle.AXLE_FRACTION == vehicle.REAR_AXLE_FRACTION
+          and vehicle.center_to_rear_axle() == [0.0, -1.9525, 0.0]
+          and vehicle.center_to_rear_axle(5.5) == [0.0, -1.972222, 0.0],
           str(vehicle.center_to_rear_axle()))
     check("the Falcon steering config reads the shared body width",
           avm_falcon.STEERING["body_width"] == vehicle.BODY_WIDTH_M
@@ -667,21 +667,21 @@ def test_vehicle():
           defaults["frame"] == "vehicle" and defaults["frame"] == vehicle.FRAME,
           str(defaults["frame"]))
     check("the clip block carries the body box in metres",
-          defaults["body"] == {"length": 4.8, "width": 2.4, "height": 2.88},
+          defaults["body"] == {"length": 5.445, "width": 2.085, "height": 2.655},
           str(defaults["body"]))
     check("the clip block carries the centre -> rear-axle transform",
-          defaults["center_to_rear_axle"] == [0.0, -1.488, 0.0],
+          defaults["center_to_rear_axle"] == [0.0, -1.9525, 0.0],
           str(defaults.get("center_to_rear_axle")))
     check("the clip block carries the clearance and the axles",
           defaults["ground_clearance"] == 0.0
-          and defaults["axles"] == {"wheel_base": 3.2, "rear_track": 1.8,
-                                    "rear_center_offset": 2.8},
+          and defaults["axles"] == {"wheel_base": 3.68, "rear_track": 1.56,
+                                    "rear_center_offset": 3.12},
           str(defaults["axles"]))
     overridden = vehicle.block(length=5.5, width=2.1, height=3.0, clearance=0.2)
     check("an override flows into the block",
           overridden["body"] == {"length": 5.5, "width": 2.1, "height": 3.0}
           and overridden["ground_clearance"] == 0.2
-          and overridden["center_to_rear_axle"] == [0.0, -1.705, 0.0],
+          and overridden["center_to_rear_axle"] == [0.0, -1.972222, 0.0],
           str(overridden["body"]))
     check("the block has no per-camera dimension",
           set(defaults) == {"frame", "body", "ground_clearance",
@@ -709,7 +709,7 @@ def test_vehicle():
     scaled = vehicle.parts(5.5, 2.4, 2.88)
     wheel = next(card for card in scaled if card["id"] == "wheel_fl")
     check("pivots follow a custom body length",
-          wheel["motion"]["pivot_pos"] == [-1.18, 0.36, -1.705],
+          wheel["motion"]["pivot_pos"] == [-1.177, 0.3905, -1.7449],
           str(wheel["motion"]["pivot_pos"]))
 
     doc = vehicle.manifest()
@@ -723,7 +723,7 @@ def test_vehicle():
           str(doc["model"]))
     check("the manifest has the three whole-vehicle paint variants",
           [variant["id"] for variant in doc["appearance"]["variants"]]
-          == ["factory_teal", "taxi_orange", "exec_black"],
+          == ["sky_blue", "taxi_orange", "exec_black"],
           str([variant["id"] for variant in doc["appearance"]["variants"]]))
     check("transparency is not part of the manifest",
           "opacity" not in json.dumps(doc))

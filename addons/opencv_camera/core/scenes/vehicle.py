@@ -42,10 +42,11 @@ __all__ = [
 #: the frame every number here is expressed in
 FRAME = "vehicle"
 
-#: the nominal body box [m]
-BODY_LENGTH_M = 4.8
-BODY_WIDTH_M = 2.4
-BODY_HEIGHT_M = 2.88
+#: the nominal body box [m] - the Skyworth "Metro Elf" (NJL6541EVF):
+#: 5445 x 2085 x 2655 mm, low floor, 3680 mm wheelbase.
+BODY_LENGTH_M = 5.445
+BODY_WIDTH_M = 2.085
+BODY_HEIGHT_M = 2.655
 
 #: how far the body sits above the ground [m]
 GROUND_CLEARANCE_M = 0.0
@@ -53,17 +54,24 @@ GROUND_CLEARANCE_M = 0.0
 #: the axle geometry [m] - the anchors a 3D vehicle projection needs.  The
 #: defaults are the app's ``SteeringPerfs`` (``avm_falcon.STEERING``), which now
 #: reads them from here instead of carrying its own copy.
-WHEEL_BASE_M = 3.2
-REAR_TRACK_M = 1.8
-REAR_CENTER_OFFSET_M = 2.8
+WHEEL_BASE_M = 3.68
+REAR_TRACK_M = 1.56
+REAR_CENTER_OFFSET_M = 3.12
 
-#: where the generated car meshes actually put the wheels: each axle sits
-#: ``AXLE_FRACTION`` of the body length ahead of / behind the centre.  The meshes
-#: in ``bl/scenes/*/builder.py`` read this, so the rendered axle and the exported
-#: :func:`center_to_rear_axle` cannot drift apart.  Note this is *not* the
-#: steering ``axles`` block above: ``SteeringPerfs`` is a projection anchor, while
-#: this is the physical wheel position in the vehicle frame.
-AXLE_FRACTION = 0.31
+#: tyre size 215/75R17.5 -> ~0.38 m radius; the M2 contract keeps 0.36.
+FRONT_OVERHANG_M = 0.995
+REAR_OVERHANG_M = 0.770
+
+#: where the generated car meshes actually put the wheels, as a fraction of the
+#: body length from the centre.  The bus axles are asymmetric (front overhang
+#: 0.995 m, rear 0.770 m), unlike the old minibus.  The meshes in
+#: ``bl/scenes/*/`` read :func:`axle_offsets`, so the rendered axle and the
+#: exported :func:`center_to_rear_axle` cannot drift apart.  Note this is *not*
+#: the steering ``axles`` block above: ``SteeringPerfs`` is a projection anchor,
+#: while this is the physical wheel position in the vehicle frame.
+FRONT_AXLE_FRACTION = (BODY_LENGTH_M / 2.0 - FRONT_OVERHANG_M) / BODY_LENGTH_M
+REAR_AXLE_FRACTION = (BODY_LENGTH_M / 2.0 - REAR_OVERHANG_M) / BODY_LENGTH_M
+AXLE_FRACTION = REAR_AXLE_FRACTION
 
 #: the default wheel radius [m]; the M2 contract fixes it at 0.36 for the
 #: 2.88 m tall minibus (a wheel outside 0.30..0.40 would break the style table).
@@ -88,21 +96,22 @@ STYLE_3ROW = "minibus_3row"
 #: ``part_contract.json``; ``glass`` is a fixed material and never varies.
 #: There is deliberately no opacity: the app sets that through a future C API.
 APPEARANCE: Dict = {
-    "default": "factory_teal",
-    "fallback": {"unknown_variant": "factory_teal", "missing_slot": "keep_glb"},
-    "fixed": {"glass": {"base_color": [0.06, 0.10, 0.11, 1.0], "roughness": 0.15}},
+    "default": "sky_blue",
+    "fallback": {"unknown_variant": "sky_blue", "missing_slot": "keep_glb"},
+    "fixed": {"glass": {"base_color": [0.025, 0.035, 0.045, 1.0], "roughness": 0.15}},
     "variants": [
         {
-            "id": "factory_teal",
+            # The reference bus: light cyan body (linear ~#67D2EA after sRGB).
+            "id": "sky_blue",
             "materials": {
-                "paint_body": {"base_color": [0.16, 0.42, 0.37, 1.0], "roughness": 0.45},
-                "paint_door": {"base_color": [0.16, 0.42, 0.37, 1.0], "roughness": 0.45},
-                "trim_door_inner": {"base_color": [0.10, 0.10, 0.11, 1.0], "roughness": 0.70},
-                "paint_mirror": {"base_color": [0.12, 0.30, 0.27, 1.0], "roughness": 0.45},
-                "tire": {"base_color": [0.04, 0.04, 0.04, 1.0], "roughness": 0.85},
+                "paint_body": {"base_color": [0.13, 0.62, 0.82, 1.0], "roughness": 0.35},
+                "paint_door": {"base_color": [0.13, 0.62, 0.82, 1.0], "roughness": 0.35},
+                "trim_door_inner": {"base_color": [0.52, 0.53, 0.55, 1.0], "roughness": 0.70},
+                "paint_mirror": {"base_color": [0.10, 0.50, 0.68, 1.0], "roughness": 0.35},
+                "tire": {"base_color": [0.03, 0.03, 0.03, 1.0], "roughness": 0.85},
                 "rim": {"base_color": [0.55, 0.57, 0.60, 1.0], "roughness": 0.35},
-                "lamp_lens_front": {"base_color": [0.95, 0.95, 0.85, 1.0], "roughness": 0.20},
-                "lamp_lens_rear": {"base_color": [0.55, 0.06, 0.05, 1.0], "roughness": 0.30},
+                "lamp_lens_front": {"base_color": [0.95, 0.95, 0.90, 1.0], "roughness": 0.20},
+                "lamp_lens_rear": {"base_color": [0.55, 0.05, 0.05, 1.0], "roughness": 0.30},
             },
         },
         {
@@ -181,22 +190,28 @@ def parts(length: Optional[float] = None, width: Optional[float] = None,
         return card(part_id, f"part_{part_id}", pivot_name, pivot_name,
                     ["paint_door", "trim_door_inner"], False, None, motion)
 
-    #: base pivots for the 4.8 x 2.4 x 2.88 m box
+    #: base pivots for the 5.445 x 2.085 x 2.655 m Metro Elf box.  The door
+    #: hinges sit on the front edge of their span (glTF z = -y_forward), so the
+    #: hinge above a swinging front door and the handle edge of a sliding door
+    #: both stay on the door's leading edge.
+    half_width = BODY_WIDTH_M / 2.0
+    front_axle, rear_axle = axle_offsets()
+    spans = door_spans()
     base = {
-        "hood": [0.0, 1.70, -2.30],
-        "wheel_fl": [-1.18, WHEEL_RADIUS_M, -1.488],
-        "wheel_fr": [1.18, WHEEL_RADIUS_M, -1.488],
-        "wheel_rl": [-1.18, WHEEL_RADIUS_M, 1.488],
-        "wheel_rr": [1.18, WHEEL_RADIUS_M, 1.488],
-        "mirror_l": [-1.18, 1.85, -1.50],
-        "mirror_r": [1.18, 1.85, -1.50],
-        "door_r1l": [-1.20, 0.30, -1.55],
-        "door_r1r": [1.20, 0.30, -1.55],
-        "door_r2l": [-1.20, 0.30, -0.25],
-        "door_r2r": [1.20, 0.30, -0.25],
-        "door_r3l": [-1.20, 0.30, 0.95],
-        "door_r3r": [1.20, 0.30, 0.95],
-        "door_tail": [0.0, 2.10, 2.35],
+        "hood": [0.0, 0.84, -2.66],
+        "wheel_fl": [-half_width + 0.02, WHEEL_RADIUS_M, -front_axle],
+        "wheel_fr": [half_width - 0.02, WHEEL_RADIUS_M, -front_axle],
+        "wheel_rl": [-half_width + 0.02, WHEEL_RADIUS_M, rear_axle],
+        "wheel_rr": [half_width - 0.02, WHEEL_RADIUS_M, rear_axle],
+        "mirror_l": [-half_width, 1.98, -1.70],
+        "mirror_r": [half_width, 1.98, -1.70],
+        "door_r1l": [-half_width, 0.30, -spans["r1"][1]],
+        "door_r1r": [half_width, 0.30, -spans["r1"][1]],
+        "door_r2l": [-half_width, 0.30, -spans["r2"][1]],
+        "door_r2r": [half_width, 0.30, -spans["r2"][1]],
+        "door_r3l": [-half_width, 0.30, -spans["r3"][1]],
+        "door_r3r": [half_width, 0.30, -spans["r3"][1]],
+        "door_tail": [0.0, 2.35, 2.56],
     }
 
     result = [
@@ -223,14 +238,13 @@ def parts(length: Optional[float] = None, width: Optional[float] = None,
                  (0.0, 1.0, 0.0), 90.0, 1, optional=True),
         rotating("mirror_r", "pivot_mirror_r", ["paint_mirror"], "mirror_fold",
                  (0.0, 1.0, 0.0), 90.0, -1, optional=True),
-        rotating("door_r1l", "pivot_door_r1l",
-                 ["paint_door", "trim_door_inner"], "open_ratio",
-                 (0.0, 1.0, 0.0), 70.0, -1),
-        rotating("door_r1r", "pivot_door_r1r",
-                 ["paint_door", "trim_door_inner"], "open_ratio",
-                 (0.0, 1.0, 0.0), 70.0, 1),
-        sliding("door_r2l", "pivot_door_r2l", "slide_offset", 0.75, 1),
-        sliding("door_r2r", "pivot_door_r2r", "slide_offset", 0.75, 1),
+        # The Metro Elf's passenger doors are sliders, not swing doors: both
+        # leaves translate rearward outside the body skin (a plug door pops out
+        # and runs back).  Travel is the leaf width, so the opening is clear.
+        sliding("door_r1l", "pivot_door_r1l", "slide_offset", 0.95, 1),
+        sliding("door_r1r", "pivot_door_r1r", "slide_offset", 0.95, 1),
+        sliding("door_r2l", "pivot_door_r2l", "slide_offset", 0.95, 1),
+        sliding("door_r2r", "pivot_door_r2r", "slide_offset", 0.95, 1),
     ])
     if style == STYLE_3ROW:
         result.extend([
@@ -318,6 +332,34 @@ def axles(wheel_base: Optional[float] = None, rear_track: Optional[float] = None
         "rear_track": _m(REAR_TRACK_M if rear_track is None else rear_track),
         "rear_center_offset": _m(
             REAR_CENTER_OFFSET_M if rear_center_offset is None else rear_center_offset),
+    }
+
+
+def axle_offsets(length: Optional[float] = None) -> Tuple[float, float]:
+    """Physical front / rear axle offsets [m] from the body centre.
+
+    Both are positive distances in the vehicle frame (+Y forward): the front
+    axle is ahead of the centre, the rear axle behind it.  The bus axle layout
+    is asymmetric (front overhang 0.995 m, rear 0.770 m).
+    """
+    body_length = BODY_LENGTH_M if length is None else float(length)
+    return (body_length * FRONT_AXLE_FRACTION,
+            body_length * REAR_AXLE_FRACTION)
+
+
+def door_spans(length: Optional[float] = None) -> Dict[str, Tuple[float, float]]:
+    """Side-door spans in the Blender frame (+Y forward), metres.
+
+    r1 is the front door, r2 the sliding door; r3 only exists in the 3-row
+    style and is kept inside the rear bay.  The mesh builder and the pivots
+    both read this table, so a seam cannot drift away from its hinge.
+    """
+    body_length = BODY_LENGTH_M if length is None else float(length)
+    scale = body_length / BODY_LENGTH_M
+    return {
+        "r1": (0.35 * scale, 1.35 * scale),
+        "r2": (-1.25 * scale, -0.25 * scale),
+        "r3": (-2.20 * scale, -1.30 * scale),
     }
 
 

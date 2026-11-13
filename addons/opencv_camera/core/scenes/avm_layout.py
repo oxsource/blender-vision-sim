@@ -61,11 +61,11 @@ CAMERAS: Tuple[str, ...] = avm_cameras.CAMERAS
 #: vehicle looks identical in the two scenes (the Drive Scene's car is otherwise
 #: self-contained).
 MINIBUS_MATERIALS: Dict[str, Tuple[Tuple[float, float, float, float], float]] = {
-    "body":  ((0.16, 0.42, 0.37, 1.0), 0.45),   # teal body
-    "glass": ((0.06, 0.10, 0.11, 1.0), 0.15),   # tinted glass
-    "tire":  ((0.04, 0.04, 0.04, 1.0), 0.85),   # rubber
-    "head":  ((0.95, 0.95, 0.85, 1.0), 0.20),   # head lights
-    "tail":  ((0.55, 0.06, 0.05, 1.0), 0.30),   # tail lights
+    "body":  ((0.13, 0.62, 0.82, 1.0), 0.35),   # sky-blue body
+    "glass": ((0.025, 0.035, 0.045, 1.0), 0.15),  # tinted glass
+    "tire":  ((0.03, 0.03, 0.03, 1.0), 0.85),   # rubber
+    "head":  ((0.95, 0.95, 0.90, 1.0), 0.20),   # head lights
+    "tail":  ((0.55, 0.05, 0.05, 1.0), 0.30),   # tail lights
 }
 
 BLOCK_FRONT_LEFT, BLOCK_FRONT_RIGHT = "front_left", "front_right"

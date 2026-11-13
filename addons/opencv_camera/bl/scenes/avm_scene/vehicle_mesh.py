@@ -232,145 +232,211 @@ def _finish(name: str, bm: bmesh.types.BMesh) -> bpy.types.Mesh:
 
 def _body_mesh(name: str, length: float, width: float, height: float,
                radius: float, style: str) -> bpy.types.Mesh:
-    """The static shell: floor, door-cut side walls, pillars and the roof.
+    """The static shell of the Metro Elf: low-floor pod with a wrap-around
+    glass band, black bumper/skirt, arched wheel openings and a crowned roof.
 
     The side walls stop at the door openings (the doors cover them when closed),
     so an open door really reveals the interior instead of a solid body side.
     """
     bm = bmesh.new()
-    floor = radius * 0.7
-    beltline = floor + (height - floor) * 0.55
+    w2 = width / 2.0
+    l2 = length / 2.0
+    bottom = 0.20
+    floor = radius * 0.9
+    belt = 0.82
+    glass_top = height - 0.14
+    roof_side = height - 0.06
+    roof_half = w2 - 0.10
     scale = length / vehicle.BODY_LENGTH_M
-    cabin_half = width * 0.47
-    cabin_front = length * 0.46
-    cabin_back = -length * 0.47
-    rake = min(0.45, length * 0.09)
-    rear_rake = 0.12
-
-    # door spans (Blender +Y = forward), matching the pivot cards
-    r1_front, r1_rear = 1.55 * scale, 0.35 * scale
-    r2_front, r2_rear = 0.25 * scale, -0.95 * scale
-    r3_front, r3_rear = -0.95 * scale, -1.90 * scale
+    spans = vehicle.door_spans(length)
+    # door_spans returns (rear edge, front edge) in Blender +Y forward.
+    r1_rear, r1_front = spans["r1"]
+    r2_rear, r2_front = spans["r2"]
     three_row = style == vehicle.STYLE_3ROW
+    r3_rear, r3_front = spans["r3"]
+    skin = 0.07
 
-    _box(bm, -width / 2, width / 2, -length / 2, length / 2,
-         floor, floor + 0.06, PAINT)
-    # front fascia: the head lamps mount on this panel instead of floating
-    _box(bm, -width / 2, width / 2, length / 2 - 0.06, length / 2,
-         floor, beltline, PAINT)
-    # front / rear bumpers (still part of the static body shell)
-    _box(bm, -width * 0.49, width * 0.49, length / 2 - 0.10, length / 2 + 0.03,
-         floor, floor + 0.26, PAINT)
-    _box(bm, -width * 0.49, width * 0.49, -length / 2 - 0.03, -length / 2 + 0.10,
-         floor, floor + 0.26, PAINT)
-    # head-lamp housings, proud of the fascia
-    lamp_half = width * 0.145
+    # Floor, roof and the structural rails.  The roof gets a chamfer strip on
+    # each side so the silhouette reads as a rounded pod, not a box.
+    _box(bm, -w2, w2, -l2, l2, bottom, bottom + 0.06, PAINT)
+    _box(bm, -roof_half, roof_half, -l2 + 0.06, l2 - 0.06,
+         roof_side, height, PAINT)
     for side in (-1.0, 1.0):
-        centre = side * width * 0.30
-        _box(bm, centre - lamp_half, centre + lamp_half,
-             length / 2 - 0.03, length / 2 + 0.005,
-             height * 0.34, height * 0.42, PAINT)
+        outer = side * (w2 - 0.005)
+        inner = side * roof_half
+        _quad(bm, [
+            (inner, -l2 + 0.06, roof_side),
+            (outer, -l2 + 0.06, glass_top),
+            (outer, l2 - 0.06, glass_top),
+            (inner, l2 - 0.06, roof_side),
+        ] if side > 0 else [
+            (outer, -l2 + 0.06, glass_top),
+            (inner, -l2 + 0.06, roof_side),
+            (inner, l2 - 0.06, roof_side),
+            (outer, l2 - 0.06, glass_top),
+        ], PAINT)
+    # Front and rear roof caps close the chamfer.
+    _quad(bm, [(-roof_half, l2 - 0.06, roof_side), (roof_half, l2 - 0.06, roof_side),
+               (w2 - 0.005, l2 - 0.06, glass_top), (-(w2 - 0.005), l2 - 0.06, glass_top)],
+          PAINT)
+    _quad(bm, [(-(w2 - 0.005), -l2 + 0.06, glass_top), (w2 - 0.005, -l2 + 0.06, glass_top),
+               (roof_half, -l2 + 0.06, roof_side), (-roof_half, -l2 + 0.06, roof_side)],
+          PAINT)
 
-    lower_walls = [(r1_front, length / 2), (r1_rear, r2_front)]
-    upper_pillars = [(r1_front, length / 2), (r1_front - 0.05, r1_front),
-                     (r2_front, r2_front + 0.05)]
+    # Front fascia below the windshield: low cyan nose, black bumper band and
+    # the recess the light bar sits in.
+    _box(bm, -w2, w2, l2 - 0.06, l2, bottom, belt, PAINT)
+    _box(bm, -w2 + 0.03, w2 - 0.03, l2 - 0.03, l2 + 0.015, bottom, 0.40, BODY_GLASS)
+    # Black centre grille with the light-bar recess above it; the cyan bumper
+    # corners stay visible around it, as on the reference.
+    _box(bm, -w2 * 0.55, w2 * 0.55, l2 - 0.02, l2 + 0.008, 0.42, 0.70, BODY_GLASS)
+    _box(bm, -w2 + 0.05, w2 - 0.05, l2 - 0.02, l2 + 0.005, 0.71, 0.80, BODY_GLASS)
+    # Rear fascia below the rear window.
+    _box(bm, -w2, w2, -l2, -l2 + 0.06, bottom, belt, PAINT)
+    _box(bm, -w2 + 0.03, w2 - 0.03, -l2 - 0.015, -l2 + 0.03, bottom, 0.58, BODY_GLASS)
+    # Black skirt strip along both sides.
+    for side in (-1.0, 1.0):
+        x = side * (w2 + 0.002)
+        _quad(bm, [(x, -l2 + 0.08, bottom), (x, l2 - 0.08, bottom),
+                   (x, l2 - 0.08, 0.36), (x, -l2 + 0.08, 0.36)]
+              if side > 0 else
+              [(x, l2 - 0.08, bottom), (x, -l2 + 0.08, bottom),
+               (x, -l2 + 0.08, 0.36), (x, l2 - 0.08, 0.36)], BODY_GLASS)
+
+    # Side walls: lower panels between the doors and the upper pillars between
+    # the glass bays.  The front/rear returns close the corners.
+    lower = [(r1_front, l2 - 0.06)]
+    pillars = [(r1_front - 0.05, r1_front + 0.05), (r2_front - 0.05, r2_front + 0.05),
+               (r2_rear - 0.05, r2_rear + 0.05)]
     if three_row:
-        lower_walls += [(r2_rear, r3_front + 0.05), (-length / 2, r3_rear)]
-        upper_pillars += [(r3_front, r3_front + 0.05), (-length / 2, r3_rear)]
+        lower += [(r2_rear, r3_front), (-l2 + 0.06, r3_rear)]
+        pillars += [(r3_front - 0.05, r3_front + 0.05), (r3_rear - 0.05, r3_rear + 0.05)]
     else:
-        lower_walls.append((-length / 2, r2_rear))
-        upper_pillars.append((-length / 2, r2_rear))
+        lower.append((-l2 + 0.06, r2_rear))
     for side in (-1.0, 1.0):
-        outer = side * width / 2
-        inner = outer - side * 0.07
-        for y0, y1 in lower_walls:
+        outer = side * w2
+        inner = outer - side * skin
+        for y0, y1 in lower:
             _box(bm, min(outer, inner), max(outer, inner),
-                 min(y0, y1), max(y0, y1), floor, beltline, PAINT)
-        outer = side * cabin_half
-        inner = outer - side * 0.06
-        for y0, y1 in upper_pillars:
+                 min(y0, y1), max(y0, y1), bottom, belt, PAINT)
+        for y0, y1 in pillars:
             _box(bm, min(outer, inner), max(outer, inner),
-                 min(y0, y1), max(y0, y1), beltline, height - 0.06, PAINT)
-    # firewall between the front seats and the bonnet
-    _box(bm, -cabin_half, cabin_half, r1_front, r1_front + 0.06,
-         floor, beltline, PAINT)
-    # roof
-    _box(bm, -width / 2, width / 2, cabin_back, cabin_front,
-         height - 0.06, height, PAINT)
+                 min(y0, y1), max(y0, y1), belt, glass_top, BODY_GLASS)
 
-    rise = height - beltline
-    normal = math.hypot(rise, rake) or 1.0
-    offset_y, offset_z = rise / normal * 0.015, rake / normal * 0.015
-    glass_half = cabin_half - 0.07
+    # Glass band: one pane per bay between the doors/pillars, inset 3 mm.
+    x_glass = w2 - 0.003
+    bays = [(r1_front + 0.06, l2 - 0.09),
+            (r2_front + 0.06, r1_rear - 0.06),
+            (-l2 + 0.09, r2_rear - 0.06)]
+    if three_row:
+        bays.append((r3_front + 0.06, r2_rear - 0.06))
+    for side in (-1.0, 1.0):
+        x = side * x_glass
+        for y0, y1 in bays:
+            if y1 - y0 < 0.04:
+                continue
+            _quad(bm, [(x, y0, belt), (x, y1, belt), (x, y1, glass_top), (x, y0, glass_top)]
+                  if side > 0 else
+                  [(x, y1, belt), (x, y0, belt), (x, y0, glass_top), (x, y1, glass_top)],
+                  BODY_GLASS)
+
+    # Windshield: nearly vertical, raked 0.32 m over its height.
     _quad(bm, [
-        (-glass_half, cabin_front + offset_y, beltline + offset_z),
-        (glass_half, cabin_front + offset_y, beltline + offset_z),
-        (glass_half, cabin_front - rake + offset_y, height + offset_z),
-        (-glass_half, cabin_front - rake + offset_y, height + offset_z),
+        (-(w2 - 0.07), l2 - 0.02, belt),
+        (w2 - 0.07, l2 - 0.02, belt),
+        (w2 - 0.09, l2 - 0.34, glass_top),
+        (-(w2 - 0.09), l2 - 0.34, glass_top),
     ], BODY_GLASS)
+    # Rear window, 8 cm narrower than the body.
     _quad(bm, [
-        (-glass_half, cabin_back - 0.015, beltline + 0.20),
-        (glass_half, cabin_back - 0.015, beltline + 0.20),
-        (glass_half, cabin_back + rear_rake - 0.015, height - 0.14),
-        (-glass_half, cabin_back + rear_rake - 0.015, height - 0.14),
+        (-(w2 - 0.10), -l2 + 0.005, belt),
+        (w2 - 0.10, -l2 + 0.005, belt),
+        (w2 - 0.12, -l2 + 0.03, glass_top - 0.02),
+        (-(w2 - 0.12), -l2 + 0.03, glass_top - 0.02),
     ], BODY_GLASS)
+
+    # Wheel arches: a black flat ring on each side around the physical axles.
+    front_y, rear_y = vehicle.axle_offsets(length)
+    for side in (-1.0, 1.0):
+        x = side * (w2 + 0.003)
+        for cy in (front_y, -rear_y):
+            segments = 10
+            for i in range(segments):
+                a0 = math.pi * i / segments
+                a1 = math.pi * (i + 1) / segments
+                outer, inner = radius + 0.10, radius + 0.035
+                points = [
+                    (x, cy + outer * math.cos(a0), radius + outer * math.sin(a0)),
+                    (x, cy + outer * math.cos(a1), radius + outer * math.sin(a1)),
+                    (x, cy + inner * math.cos(a1), radius + inner * math.sin(a1)),
+                    (x, cy + inner * math.cos(a0), radius + inner * math.sin(a0)),
+                ]
+                _quad(bm, points if side > 0 else list(reversed(points)), BODY_GLASS)
+
+    # Roof sensor blister, flush with the roof (the reference's front pod).
+    _box(bm, -0.18, 0.18, l2 - 1.05, l2 - 0.60, height - 0.05, height, BODY_GLASS)
     return _finish(name, bm)
 
 
 def _interior_mesh(name: str, length: float, width: float, height: float,
                    radius: float, style: str) -> bpy.types.Mesh:
-    """Simple cabin furniture: floor mat, seats, dash, console, wheel."""
+    """Simple cabin furniture: floor mat, two front seats, bench rows, dash."""
     bm = bmesh.new()
-    floor = radius * 0.7
-    beltline = floor + (height - floor) * 0.55
-    cabin_half = width * 0.47
-
-    _box(bm, -width * 0.42, width * 0.42, -length * 0.38, length * 0.36,
-         floor + 0.06, floor + 0.08, PAINT)
+    l2 = length / 2.0
+    floor = radius * 0.9
+    _box(bm, -width * 0.42, width * 0.42, -l2 + 0.35, l2 - 0.45,
+         floor, floor + 0.04, PAINT)
 
     def seat(cx: float, cy: float) -> None:
-        _box(bm, cx - 0.25, cx + 0.25, cy - 0.25, cy + 0.25,
-             floor + 0.08, floor + 0.38, PAINT)
-        _box(bm, cx - 0.25, cx + 0.25, cy - 0.25, cy - 0.15,
-             floor + 0.38, floor + 0.92, PAINT)
-        _box(bm, cx - 0.12, cx + 0.12, cy - 0.23, cy - 0.11,
+        _box(bm, cx - 0.24, cx + 0.24, cy - 0.22, cy + 0.22,
+             floor + 0.06, floor + 0.36, PAINT)
+        _box(bm, cx - 0.24, cx + 0.24, cy - 0.24, cy - 0.12,
+             floor + 0.36, floor + 0.92, PAINT)
+        _box(bm, cx - 0.11, cx + 0.11, cy - 0.23, cy - 0.11,
              floor + 0.92, floor + 1.08, PAINT)
 
-    seat(-0.55, 1.05)
-    seat(0.55, 1.05)
-
     def bench(cy: float) -> None:
-        _box(bm, -0.80, 0.80, cy - 0.25, cy + 0.25,
-             floor + 0.08, floor + 0.38, PAINT)
-        _box(bm, -0.80, 0.80, cy - 0.25, cy - 0.15,
-             floor + 0.38, floor + 0.95, PAINT)
-        for x in (-0.50, 0.0, 0.50):
-            _box(bm, x - 0.10, x + 0.10, cy - 0.23, cy - 0.11,
-                 floor + 0.95, floor + 1.08, PAINT)
+        _box(bm, -0.78, 0.78, cy - 0.24, cy + 0.24,
+             floor + 0.06, floor + 0.36, PAINT)
+        _box(bm, -0.78, 0.78, cy - 0.26, cy - 0.14,
+             floor + 0.36, floor + 0.98, PAINT)
+        for x in (-0.48, 0.0, 0.48):
+            _box(bm, x - 0.10, x + 0.10, cy - 0.24, cy - 0.12,
+                 floor + 0.98, floor + 1.10, PAINT)
 
-    bench(-0.35)
+    seat(-0.52, l2 - 1.05)
+    seat(0.52, l2 - 1.05)
+    bench(0.45)
+    bench(-0.95)
     if style == vehicle.STYLE_3ROW:
-        bench(-1.30)
+        bench(-1.90)
 
-    # dashboard + centre console
-    _box(bm, -cabin_half + 0.05, cabin_half - 0.05, 1.38, 1.52,
-         beltline - 0.32, beltline + 0.04, PAINT)
-    _box(bm, -0.18, 0.18, 0.75, 1.38, floor + 0.35, floor + 0.62, PAINT)
-    # steering wheel (left-hand drive) + column
-    _ring(bm, (-0.55, 1.30, beltline - 0.16), 0.18, 0.14, 0.025, 16, PAINT)
-    _cylinder(bm, (-0.55, 1.42, beltline - 0.16), 0.035, 0.10, "Y", 8, PAINT)
+    # Boarding steps at the side doors: a light tread just inside the skin so
+    # an open sliding leaf shows a readable entrance, not a black hole.
+    spans = vehicle.door_spans(length)
+    for key in ("r1", "r2"):
+        y0, y1 = spans[key]
+        for side in (-1.0, 1.0):
+            x0, x1 = side * (width * 0.34), side * (width * 0.48)
+            _box(bm, min(x0, x1), max(x0, x1), y0 + 0.06, y1 - 0.06,
+                 0.18, 0.34, PAINT)
+
+    # Dashboard + centre console.
+    _box(bm, -width * 0.45, width * 0.45, l2 - 0.45, l2 - 0.30,
+         0.92, 1.18, PAINT)
+    _box(bm, -0.16, 0.16, l2 - 1.10, l2 - 0.45, floor + 0.30, floor + 0.58, PAINT)
+    _ring(bm, (-0.52, l2 - 0.62, 1.00), 0.17, 0.13, 0.025, 16, PAINT)
+    _cylinder(bm, (-0.52, l2 - 0.50, 1.00), 0.03, 0.10, "Y", 8, PAINT)
     return _finish(name, bm)
 
 
 def _hood_mesh(name: str, length: float, width: float, height: float,
                radius: float, pivot) -> bpy.types.Mesh:
+    """The front service flap, flush with the nose below the light bar."""
     bm = bmesh.new()
-    floor = radius * 0.7
-    beltline = floor + (height - floor) * 0.55
-    # A bonnet surface on the beltline, hinged at its front edge.
-    _box(bm, -width * 0.42, width * 0.42,
-         length / 2 - 0.85, length / 2 - 0.02,
-         beltline, beltline + 0.06, PAINT)
+    l2 = length / 2.0
+    _box(bm, -width * 0.30, width * 0.30, l2 - 0.72, l2 - 0.06,
+         0.82, 0.85, PAINT)
     _offset(bm, pivot)
     return _finish(name, bm)
 
@@ -378,49 +444,58 @@ def _hood_mesh(name: str, length: float, width: float, height: float,
 def _door_mesh(name: str, length: float, width: float, height: float,
                radius: float, y0: float, y1: float, side: str,
                pivot) -> bpy.types.Mesh:
-    """A side door: outer paint, inner trim and a tall glass window."""
+    """A flush side door: paint below the beltline, one tall glass pane above."""
     bm = bmesh.new()
     thickness = 0.05
-    if side == "l":
-        x_outer, x_inner = -width / 2, -width / 2 + thickness
-    else:
-        x_outer, x_inner = width / 2, width / 2 - thickness
-    floor = radius * 0.7
-    beltline = floor + (height - floor) * 0.55
-    z0, z1 = 0.30 * (height / vehicle.BODY_HEIGHT_M), height - 0.02
+    sign = -1.0 if side == "l" else 1.0
+    # 1 cm proud of the body skin: a sliding leaf runs outside the body when
+    # it opens, so it must not z-fight with the rear quarter it passes over.
+    x_outer = sign * (width / 2.0 + 0.01)
+    x_inner = x_outer - sign * thickness
+    bottom = 0.20
+    belt = 0.82
+    glass_top = height - 0.14
     faces = _box(bm, min(x_outer, x_inner), max(x_outer, x_inner),
-                 y0, y1, z0, z1, PAINT)
+                 y0 + 0.008, y1 - 0.008, bottom, belt, PAINT)
     inner_face = faces[3] if side == "l" else faces[5]
     inner_face.material_index = TRIM
-    glass_x = x_outer + (-0.002 if side == "l" else 0.002)
-    _quad(bm, [
-        (glass_x, y0 + 0.12, beltline + 0.02),
-        (glass_x, y1 - 0.12, beltline + 0.02),
-        (glass_x, y1 - 0.12, z1 - 0.08),
-        (glass_x, y0 + 0.12, z1 - 0.08),
-    ], GLASS)
-    # handle, just below the window
-    handle_x = x_outer + (-0.03 if side == "l" else 0.03)
-    _box(bm, min(x_outer, handle_x), max(x_outer, handle_x),
-         y1 - 0.38, y1 - 0.20, beltline - 0.24, beltline - 0.18, PAINT)
+    # The upper half is glass edge to edge: the reference's side window band is
+    # continuous, with only the door seams interrupting it.
+    _box(bm, min(x_outer, x_inner), max(x_outer, x_inner),
+         y0 + 0.008, y1 - 0.008, belt, glass_top, GLASS)
     _offset(bm, pivot)
     return _finish(name, bm)
 
 
 def _tail_mesh(name: str, length: float, width: float, height: float,
                pivot) -> bpy.types.Mesh:
+    """The rear door: paint below the beltline, one large rear window above."""
     bm = bmesh.new()
-    z0, z1 = height * 0.28, height * 0.73
-    y0, y1 = -length / 2 - 0.03, -length / 2 + 0.03
-    faces = _box(bm, -width * 0.42, width * 0.42, y0, y1, z0, z1, PAINT)
+    l2 = length / 2.0
+    bottom = 0.20
+    belt = 0.82
+    glass_top = height - 0.14
+    faces = _box(bm, -width * 0.49, width * 0.49, -l2 - 0.02, -l2 + 0.03,
+                 bottom, glass_top, PAINT)
     faces[4].material_index = TRIM  # +Y (inner) face
     _quad(bm, [
-        (-width * 0.34, y0 - 0.002, z0 + 0.35),
-        (width * 0.34, y0 - 0.002, z0 + 0.35),
-        (width * 0.34, y0 - 0.002, z1 - 0.08),
-        (-width * 0.34, y0 - 0.002, z1 - 0.08),
+        (-width * 0.39, -l2 - 0.022, belt),
+        (width * 0.39, -l2 - 0.022, belt),
+        (width * 0.39, -l2 - 0.022, glass_top - 0.05),
+        (-width * 0.39, -l2 - 0.022, glass_top - 0.05),
     ], GLASS)
     _offset(bm, pivot)
+    return _finish(name, bm)
+
+
+def _mirror_mesh(name: str, side: str) -> bpy.types.Mesh:
+    """A long stalk with a vertical paddle housing (the reference's mirrors)."""
+    bm = bmesh.new()
+    sign = -1.0 if side == "l" else 1.0
+    x0, x1 = sign * 1.02, sign * 1.34
+    _box(bm, min(x0, x1), max(x0, x1), 1.92, 1.97, 1.94, 1.98, PAINT)
+    px0, px1 = sign * 1.28, sign * 1.40
+    _box(bm, min(px0, px1), max(px0, px1), 1.55, 1.80, 1.78, 2.10, PAINT)
     return _finish(name, bm)
 
 
@@ -448,15 +523,25 @@ def _mirror_mesh(name: str, side: str) -> bpy.types.Mesh:
 def _lamp_mesh(name: str, length: float, width: float, height: float,
                front: bool, side: str, pivot=None) -> bpy.types.Mesh:
     bm = bmesh.new()
-    half = width * 0.13
-    centre = (-1.0 if side == "l" else 1.0) * width * 0.30
+    l2 = length / 2.0
+    sign = -1.0 if side == "l" else 1.0
     if front:
-        y0, y1 = length / 2 - 0.01, length / 2 + 0.02
-        z0, z1 = height * 0.35, height * 0.41
+        # A horizontal light-bar segment on each side of the nose.
+        centre = sign * width * 0.27
+        half = width * 0.17
+        _box(bm, centre - half, centre + half, l2 + 0.012, l2 + 0.045,
+             0.725, 0.785, PAINT)
     else:
-        y0, y1 = -length / 2 - 0.02, -length / 2 + 0.01
-        z0, z1 = height * 0.42, height * 0.52
-    _box(bm, centre - half, centre + half, y0, y1, z0, z1, PAINT)
+        # Vertical C-shape at the rear corners: outer bar plus two short arms
+        # pointing inward, which is what reads as "tail lamp" from behind.
+        inner = sign * (width * 0.34)
+        outer = sign * (width * 0.46)
+        _box(bm, min(inner, outer), max(inner, outer), -l2 - 0.045, -l2 - 0.012,
+             0.86, 1.54, PAINT)
+        _box(bm, min(inner, outer), max(inner, outer), -l2 - 0.045, -l2 - 0.012,
+             1.46, 1.54, PAINT)
+        _box(bm, min(inner, outer), max(inner, outer), -l2 - 0.045, -l2 - 0.012,
+             0.86, 0.94, PAINT)
     if pivot is not None:
         _offset(bm, pivot)
     return _finish(name, bm)
@@ -482,17 +567,10 @@ def build(part: dict, length: float, width: float, height: float,
         return _interior_mesh(name, length, width, height, radius, style)
     if part_id == "hood":
         return _hood_mesh(name, length, width, height, radius, pivot)
-    if part_id.startswith("door_r1"):
+    if part_id.startswith("door_r"):
         side = part_id[-1]
-        y0, y1 = 0.35 * length / vehicle.BODY_LENGTH_M, 1.55 * length / vehicle.BODY_LENGTH_M
-        return _door_mesh(name, length, width, height, radius, y0, y1, side, pivot)
-    if part_id.startswith("door_r2"):
-        side = part_id[-1]
-        y0, y1 = -0.95 * length / vehicle.BODY_LENGTH_M, 0.25 * length / vehicle.BODY_LENGTH_M
-        return _door_mesh(name, length, width, height, radius, y0, y1, side, pivot)
-    if part_id.startswith("door_r3"):
-        side = part_id[-1]
-        y0, y1 = -1.90 * length / vehicle.BODY_LENGTH_M, -0.95 * length / vehicle.BODY_LENGTH_M
+        key = part_id[len("door_"):len("door_r") + 1]
+        y0, y1 = vehicle.door_spans(length)[key]
         return _door_mesh(name, length, width, height, radius, y0, y1, side, pivot)
     if part_id == "door_tail":
         return _tail_mesh(name, length, width, height, pivot)
