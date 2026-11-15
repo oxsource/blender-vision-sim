@@ -41,6 +41,16 @@ def parse_args():
                         help="put a checker baseColorTexture on paint_body/paint_door (V3)")
     parser.add_argument("--ground-model", default="",
                         help="ground .glb to import instead of the bundled bowl")
+    # Body box of the displayed car.  The defaults are the reference vehicle
+    # (Metro Elf); pass the recorded clip's own box to render a car that matches
+    # the AVM mask and the camera mounts - a longer body puts the front/rear
+    # mounts inside the chassis occluder and blinds those routes.
+    parser.add_argument("--length", type=float, default=vehicle.BODY_LENGTH_M,
+                        help="body length [m] (default %(default)s)")
+    parser.add_argument("--width", type=float, default=vehicle.BODY_WIDTH_M,
+                        help="body width [m] (default %(default)s)")
+    parser.add_argument("--height", type=float, default=vehicle.BODY_HEIGHT_M,
+                        help="body height [m] (default %(default)s)")
     return parser.parse_args(argv)
 
 
@@ -89,13 +99,13 @@ def main():
         settings.bowl_include_vehicle = True
         if args.ground_model:
             settings.ground_model = os.path.abspath(args.ground_model)
-        # Display vehicle vs recorded rig: the preset ties the car footprint to
-        # the camera rig core and raises its height to the mount, but the model
-        # is the bus itself (5445 x 2085 x 2655 mm), independent of the AVM mask.
+        # Display vehicle vs recorded rig: the car is the model itself, sized by
+        # --length/--width/--height (default: the reference vehicle), independent
+        # of the AVM mask.
         settings.car_follow_core = False
-        settings.car_length = vehicle.BODY_LENGTH_M
-        settings.car_width = vehicle.BODY_WIDTH_M
-        settings.car_height = vehicle.BODY_HEIGHT_M
+        settings.car_length = args.length
+        settings.car_width = args.width
+        settings.car_height = args.height
         bpy.ops.opencv_cam.avm_rebuild()
         if args.checker:
             add_checker_texture()

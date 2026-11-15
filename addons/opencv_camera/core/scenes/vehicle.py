@@ -286,7 +286,13 @@ def manifest(style_id: str = "minibus_2row", style_name: str = "2-row minibus",
     dimensions = body(body_length, body_width, body_height)
     dimensions["ground_clearance"] = _m(
         GROUND_CLEARANCE_M if clearance is None else clearance)
-    anchors = axles()
+    # The anchors describe THIS model.  Every wheel pivot is scaled with the body
+    # (see _scaled_pivot), so the axle geometry scales with it too; quoting the
+    # reference car's absolute values on a shorter body would claim a 3.68 m
+    # wheelbase under a 4.8 m box.  At the reference dimensions this is identity.
+    anchors = axles(wheel_base=WHEEL_BASE_M * (body_length / BODY_LENGTH_M),
+                    rear_track=REAR_TRACK_M * (body_width / BODY_WIDTH_M),
+                    rear_center_offset=REAR_CENTER_OFFSET_M * (body_length / BODY_LENGTH_M))
     anchors["axle_fraction"] = AXLE_FRACTION
     anchors["wheel_radius"] = wheel_radius(body_height)
     return {
