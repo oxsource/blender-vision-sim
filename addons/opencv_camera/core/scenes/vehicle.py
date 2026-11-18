@@ -99,6 +99,14 @@ APPEARANCE: Dict = {
     "default": "sky_blue",
     "fallback": {"unknown_variant": "sky_blue", "missing_slot": "keep_glb"},
     "fixed": {"glass": {"base_color": [0.025, 0.035, 0.045, 1.0], "roughness": 0.15}},
+    # Lit colours per lens.  Without this section the runtime falls back to a
+    # single amber constant, which makes the rear lenses read as turn signals
+    # instead of lit tail lamps.  The front pair is a warm white against the
+    # near-white lens; the rear pair stays clearly red when it lights.
+    "lamps_on": {
+        "lamp_lens_front": {"base_color": [1.0, 0.95, 0.85, 1.0]},
+        "lamp_lens_rear": {"base_color": [0.95, 0.08, 0.06, 1.0]},
+    },
     "variants": [
         {
             # The reference bus: light cyan body (linear ~#67D2EA after sRGB).
