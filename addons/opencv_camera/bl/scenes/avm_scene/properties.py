@@ -229,6 +229,15 @@ class AVMSceneSettings(bpy.types.PropertyGroup):
         description="Camera that drives the render resolution (all four share it)",
         update=_schedule_active)
     cameras: CollectionProperty(type=AVMCameraSettings)
+    #: core footprint the current mount poses belong to - hidden state, not a
+    #: parameter: a rebuild shifts the cameras by the difference to the current
+    #: core (:func:`core.scenes.avm_layout.mount_offsets`) and re-records it, so a
+    #: slider drag never compounds.  ``core`` *is* the body, so this follows
+    #: unconditionally; there is no switch to leave the rig behind.  0 = unknown,
+    #: i.e. the poses were not taken from a field yet (an old .blend): record, but
+    #: do not move anything.
+    mount_core_w: FloatProperty(name="Mount Core W", default=0.0, options={"HIDDEN"})
+    mount_core_h: FloatProperty(name="Mount Core H", default=0.0, options={"HIDDEN"})
 
     # -- bowl export --------------------------------------------------------
     bowl_include_vehicle: BoolProperty(

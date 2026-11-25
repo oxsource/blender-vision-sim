@@ -243,8 +243,22 @@ def apply(settings, data: Dict) -> str:
     fmt = detect_format(data)
     _set_field(settings, avm_layout.from_store(data))
     if fmt == FORMAT_FULL:
-        _apply_avm(settings, data.get("avm") or {})
+        avm = data.get("avm") or {}
+        _apply_avm(settings, avm)
+        if _carries_pose(avm):
+            # the file's poses were solved for the file's field, so they become
+            # the baseline the core-follow offset is measured from.  A file
+            # without poses keeps the old baseline, so the mounts move with the
+            # imported core like any other core edit.
+            settings.mount_core_w = settings.core_w
+            settings.mount_core_h = settings.core_h
     return fmt
+
+
+def _carries_pose(avm: Dict) -> bool:
+    """Does this ``avm`` block actually write camera transforms?"""
+    return any("location" in record or "rotation" in record
+               for record in avm.get("cameras") or [])
 
 
 def _set_field(settings, field: avm_layout.FieldSpec) -> None:

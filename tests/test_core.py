@@ -237,6 +237,36 @@ def test_avm_layout():
           avm_layout.block_rects(wider) == blocks
           and avm_layout.geometry(wider).half_x == geo.half_x + 0.5)
 
+    # camera mounts follow the core footprint (the body face they ride)
+    check("mount offsets are zero for an unchanged core",
+          all(dx == 0.0 and dy == 0.0
+              for dx, dy in avm_layout.mount_offsets(field, field).values()))
+    broad = field.replaced(core_w=300.0)
+    offsets = avm_layout.mount_offsets(field, broad)
+    check("widening the core pushes the side mounts out by half the change",
+          approx(offsets[avm_layout.LEFT][0], -0.3)
+          and approx(offsets[avm_layout.RIGHT][0], 0.3)
+          and offsets[avm_layout.FRONT] == (0.0, 0.0)
+          and offsets[avm_layout.BACK] == (0.0, 0.0), str(offsets))
+    check("widening the core does not move a mount along the length",
+          all(dy == 0.0 for _, dy in offsets.values()))
+    # the invariant behind the rule: the mount moves exactly as far as the block
+    # inner edge (c_in = core / 2 + inner), so the solved pose keeps its geometry
+    check("mount offset equals the block inner-edge shift",
+          approx(offsets[avm_layout.LEFT][0],
+                 -(avm_layout.geometry(broad).c_in_x - geo.c_in_x)))
+    longer = field.replaced(core_h=580.0)
+    offsets = avm_layout.mount_offsets(field, longer)
+    check("lengthening the core pushes the end mounts out by half the change",
+          approx(offsets[avm_layout.FRONT][1], 0.5)
+          and approx(offsets[avm_layout.BACK][1], -0.5)
+          and offsets[avm_layout.LEFT] == (0.0, 0.0)
+          and offsets[avm_layout.RIGHT] == (0.0, 0.0), str(offsets))
+    check("inner is not a body face: it moves no mount",
+          all(dx == 0.0 and dy == 0.0
+              for dx, dy in avm_layout.mount_offsets(
+                  field, field.replaced(inner_w=80.0, inner_h=120.0)).values()))
+
     # the points(camera) contract: byte-for-byte the config's points_3d
     path = _avm_config_path()
     if os.path.exists(path):

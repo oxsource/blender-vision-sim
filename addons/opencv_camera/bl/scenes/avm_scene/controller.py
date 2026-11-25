@@ -87,6 +87,12 @@ def load_preset_into(settings, preset) -> None:
 
     apply_preset_poses(records)
 
+    # the preset poses were solved for the preset field: that pair is the
+    # baseline the core-follow offset is measured from, so a later core edit
+    # shifts the mounts instead of compounding with a stale baseline
+    settings.mount_core_w = settings.core_w
+    settings.mount_core_h = settings.core_h
+
 
 def apply_preset_poses(records) -> None:
     """Write preset mount poses onto the camera objects that already exist."""

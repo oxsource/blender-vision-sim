@@ -903,6 +903,21 @@ def test_avm_scene_builder():
 
     # editing only schedules the debounced rebuild (a no-op in background)
     revision = settings.revision
+    # `core` is the body footprint: measure how far the block, the camera and the
+    # car body sit from the body face, then re-measure after the core edit
+    body = bpy.data.objects["part_body"]
+    body_width = body.dimensions.x
+    block = bpy.data.objects["AVM_Block_FrontLeft"]
+    left = bpy.data.objects["AVM_Cam_Left"]
+    front = bpy.data.objects["AVM_Cam_Front"]
+    right = bpy.data.objects["AVM_Cam_Right"]
+    half = settings.core_w * 0.005               # body half width, metres
+    gap = abs(block.location.x) - 0.5 - half     # block inner edge -> body side
+    overhang = abs(left.location.x) - half       # camera -> body side
+    check("the block gap is the inner parameter", approx(gap, 0.2, 1e-6), f"{gap:.6f}")
+    check("the side camera sits just outside the body", 0.0 < overhang < 0.2,
+          f"{overhang:.4f}")
+
     settings.core_w = 300.0
     check("editing does not rebuild in background", settings.revision == revision)
     check("manual rebuild", bpy.ops.opencv_cam.avm_rebuild() == {"FINISHED"})
@@ -912,6 +927,49 @@ def test_avm_scene_builder():
           f"{bpy.data.objects['AVM_Block_FrontLeft'].location.x:.4f}")
     check("rebuild keeps the same objects",
           bpy.data.objects.get("AVM_Ground") is not None)
+
+    # A mount is rigid on the body face it rides, so a core edit carries it: the
+    # side cameras move by half the width change - exactly as far as the block
+    # inner edge - the end cameras do not, and the angles stay as solved.
+    check("side cameras follow core_w",
+          approx(left.location.x, -1.579709, 1e-4)
+          and approx(right.location.x, 1.485362, 1e-4),
+          f"left {left.location.x:.4f} / right {right.location.x:.4f}")
+    check("core_w does not move a camera along the length",
+          approx(front.location.y, 2.466796, 1e-4)
+          and approx(left.location.y, -0.025104, 1e-4),
+          f"front y {front.location.y:.4f}")
+    check("following the core does not rotate the camera",
+          abs(math.degrees(front.rotation_euler[0]) - 20.4365) < 1e-2)
+    check("the mount baseline advanced with the core",
+          approx(settings.mount_core_w, 300.0, 1e-6)
+          and approx(settings.mount_core_h, 480.0, 1e-6),
+          f"{settings.mount_core_w} x {settings.mount_core_h}")
+
+    # the point of all of it: car, blocks and cameras keep their relative layout
+    half = settings.core_w * 0.005
+    check("the car body grew with core_w",
+          approx(body.dimensions.x - body_width, 0.6, 1e-4),
+          f"{body_width:.3f} -> {body.dimensions.x:.3f}")
+    check("the blocks kept their gap to the widened body",
+          approx(abs(block.location.x) - 0.5 - half, gap, 1e-6),
+          f"{abs(block.location.x) - 0.5 - half:.6f} vs {gap:.6f}")
+    check("the side camera kept its overhang from the widened body",
+          approx(abs(left.location.x) - half, overhang, 1e-6),
+          f"{abs(left.location.x) - half:.6f} vs {overhang:.6f}")
+
+    body_length = body.dimensions.y
+    settings.core_h = 540.0
+    bpy.ops.opencv_cam.avm_rebuild()
+    check("end cameras follow core_h",
+          approx(front.location.y, 2.766796, 1e-4)
+          and approx(bpy.data.objects["AVM_Cam_Back"].location.y, -2.736533, 1e-4),
+          f"front y {front.location.y:.4f}")
+    check("core_h does not move the side cameras",
+          approx(left.location.x, -1.579709, 1e-4), f"{left.location.x:.4f}")
+    check("the car body grew with core_h",
+          approx(body.dimensions.y - body_length, 0.6, 1e-4),
+          f"{body_length:.3f} -> {body.dimensions.y:.3f}")
 
     # props follow their counts
     settings.prop_carts = 0
@@ -926,11 +984,31 @@ def test_avm_scene_builder():
     settings.prop_boxes = 4
     settings.prop_pedestrians = 3
     bpy.ops.opencv_cam.avm_rebuild()
+    check("a rebuild at an unchanged core leaves the mounts alone",
+          approx(left.location.x, -1.579709, 1e-4)
+          and approx(front.location.y, 2.766796, 1e-4),
+          f"{left.location.x:.4f} / {front.location.y:.4f}")
 
     check("reset defaults", bpy.ops.opencv_cam.avm_reset_defaults() == {"FINISHED"})
     check("reset restored the field", approx(settings.core_w, 240.0, 1e-6))
     check("reset restored the block",
           approx(bpy.data.objects["AVM_Block_FrontLeft"].location.x, -1.9, 1e-6))
+    check("reset restored the mount pose",
+          approx(left.location.x, -1.279709, 1e-4)
+          and approx(front.location.y, 2.466796, 1e-4),
+          f"{left.location.x:.4f} / {front.location.y:.4f}")
+    check("reset restored the mount baseline",
+          approx(settings.mount_core_w, 240.0, 1e-6)
+          and approx(settings.mount_core_h, 480.0, 1e-6))
+
+    # the only genuine way to move the blocks and leave the car alone is `inner`
+    settings.inner_w = 80.0
+    bpy.ops.opencv_cam.avm_rebuild()
+    check("inner moves the blocks and not the rig",
+          approx(bpy.data.objects["AVM_Block_FrontLeft"].location.x, -2.5, 1e-6)
+          and approx(left.location.x, -1.279709, 1e-4),
+          f"block {bpy.data.objects['AVM_Block_FrontLeft'].location.x:.3f} / "
+          f"left {left.location.x:.4f}")
 
     check("remove scene", bpy.ops.opencv_cam.avm_remove_scene() == {"FINISHED"})
     check("root cleared", settings.root is None)
@@ -1087,7 +1165,7 @@ def test_avm_io_covers_every_setting():
     # parameters, so they are expected to stay out of the JSON
     skip = {"name", "root", "revision", "io_status",
             "coverage_status", "coverage_matrix", "corners_status",
-            "bowl_include_vehicle",
+            "bowl_include_vehicle", "mount_core_w", "mount_core_h",
             "points_2d", "points_2d_ok", "points_2d_error",
             "points_2d_revision", "points_2d_signature"}
     props = [prop for prop in settings.bl_rna.properties

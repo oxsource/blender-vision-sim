@@ -41,6 +41,7 @@ __all__ = [
     "BLOCK_FRONT_LEFT", "BLOCK_FRONT_RIGHT", "BLOCK_BACK_LEFT", "BLOCK_BACK_RIGHT",
     "BLOCKS",
     "FieldSpec", "FieldGeometry",
+    "MOUNT_FACE", "mount_offsets",
     "geometry", "block_rects", "scene_size", "points", "point_names",
     "load_preset", "preset_path", "field_from_preset", "cameras_from_preset",
     "core_intrinsics", "core_distortion",
@@ -201,6 +202,44 @@ def points(camera: str, field: FieldSpec) -> List[List[float]]:
     if camera in (BACK, RIGHT):  # front / left keep the values as-is
         values = [(-x, -y) for x, y in values]
     return [[x, y, 0.0] for x, y in values]
+
+
+# ---------------------------------------------------------------------------
+# camera mount: which body face carries which camera
+# ---------------------------------------------------------------------------
+#: camera role -> the core face it is mounted on, as ``(axis, sign)`` with
+#: ``axis`` 0 = x (width) / 1 = y (length) and ``sign`` the face's outward
+#: direction.  The front / back cameras ride the length (``core_h``), the side
+#: cameras the width (``core_w``) - a mount is a rigid attachment to one face, so
+#: it moves with that face and with no other.
+MOUNT_FACE: Dict[str, Tuple[int, float]] = {
+    FRONT: (1, +1.0),
+    BACK: (1, -1.0),
+    LEFT: (0, -1.0),
+    RIGHT: (0, +1.0),
+}
+
+
+def mount_offsets(before: FieldSpec, after: FieldSpec) -> Dict[str, Tuple[float, float]]:
+    """Per-camera ``(dx, dy)`` in metres for a ``core`` footprint change.
+
+    This is what keeps a mount *correct* when the core sliders move.  A core
+    edit leaves ``inner`` alone, so ``c_in = core / 2 + inner`` - the block inner
+    edge, and therefore ``points_3d`` - moves outward by exactly ``Δcore / 2``.
+    A camera sitting on that body face moves by the same amount, so the
+    camera-to-block geometry the preset pose was solved from is unchanged; only
+    the position in the world moves.  ``inner`` itself is *not* followed: it is a
+    field parameter (the gap from the car to the blocks), not part of the car.
+
+    Rotation is deliberately untouched: a rigid mount does not turn when the
+    footprint stretches, and the angles were measured on the real vehicle.
+    """
+    dx = 0.5 * (after.core_w - before.core_w) * CM_TO_M
+    dy = 0.5 * (after.core_h - before.core_h) * CM_TO_M
+    offsets: Dict[str, Tuple[float, float]] = {}
+    for camera, (axis, sign) in MOUNT_FACE.items():
+        offsets[camera] = (sign * dx, 0.0) if axis == 0 else (0.0, sign * dy)
+    return offsets
 
 
 # ---------------------------------------------------------------------------

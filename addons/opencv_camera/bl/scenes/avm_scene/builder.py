@@ -1157,6 +1157,40 @@ def apply_camera_pose(camera: bpy.types.Object, location, rotation) -> None:
                                   matrix[8:12], matrix[12:16]))
 
 
+def apply_mount_follow(settings) -> None:
+    """Shift the camera mounts by the core footprint change since the last sync.
+
+    ``core`` *is* the body footprint (``car ≡ core``), so it is not a field knob
+    that may or may not carry the rig: growing the car moves its blocks (``c_in =
+    core / 2 + inner``) and has to move its cameras with it, or the mount pose is
+    left describing a car that no longer exists.  The mount pose still has a
+    single source (the camera object) and a rebuild still never *resets* it -
+    this only translates it by the amount
+    :func:`core.scenes.avm_layout.mount_offsets` computes, once per rebuild, and
+    re-records the core it was applied at so a slider drag cannot compound.
+
+    To move the blocks while the body stays put, edit ``inner`` (or ``core`` and
+    ``inner`` together): that is what the gap parameter is for, and it is the one
+    edit that genuinely leaves the car - and therefore its rig - alone.
+    """
+    field = settings.field_spec()
+    if settings.mount_core_w <= 0.0 or settings.mount_core_h <= 0.0:
+        settings.mount_core_w = field.core_w
+        settings.mount_core_h = field.core_h
+        return
+    offsets = avm_layout.mount_offsets(
+        avm_layout.FieldSpec(core_w=settings.mount_core_w,
+                             core_h=settings.mount_core_h), field)
+    for name, (dx, dy) in offsets.items():
+        camera = bpy.data.objects.get(f"{CAMERA_PREFIX}{CAMERA_SUFFIX[name]}")
+        if camera is None or (abs(dx) < 1e-9 and abs(dy) < 1e-9):
+            continue
+        camera.location.x += dx
+        camera.location.y += dy
+    settings.mount_core_w = field.core_w
+    settings.mount_core_h = field.core_h
+
+
 # ---------------------------------------------------------------------------
 # build / rebuild
 # ---------------------------------------------------------------------------
@@ -1282,7 +1316,10 @@ def rebuild(scene: bpy.types.Scene, settings) -> Dict[str, List]:
     # cameras --------------------------------------------------------------
     # The camera object's own transform is the mount pose (so CV Extrinsics and
     # the AVM panels show the same thing); a rebuild never resets it, only the
-    # preset / import do.
+    # preset / import do.  A core edit is the one thing that *moves* it: the
+    # mount is rigid on the body, so it follows the footprint (see
+    # apply_mount_follow).
+    apply_mount_follow(settings)
     camera_objects = []
     for index, name in enumerate(avm_layout.CAMERAS):
         record = settings.camera(name)
